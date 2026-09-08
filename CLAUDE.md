@@ -14,12 +14,20 @@ Personal GitHub project (public, MIT). Not related to any employer repository.
 ## Layout
 
 - `src/loosy_goose/spectral.py` — PPMI, inverse participation ratio, truncated SVD
+- `src/loosy_goose/transcript.py` — `Transcript`/`Turn`/`Block`; tolerant Claude Code JSONL loader (unknown record/block types are counted in `Transcript.meta`, never fatal) and generic `[{role, content}]` loader
+- `src/loosy_goose/segment.py` — `Segment` units: prose split paragraph→sentence, code/tool_use atomic + protected, tool_result line-chunked (protected only if it looks like a code dump); `atoms` = identifiers/paths/numbers/URLs for the recall metric
+- `src/loosy_goose/tokens.py` — `count_tokens` via tiktoken `o200k_base` (model-agnostic rate proxy)
 - `src/loosy_goose/cli.py` — argparse entry point
 - `tests/` — pytest
 - `experiments/` — Phase 1 scripts; outputs in `experiments/output/` (gitignored)
+  - `fetch_public.py` — downloads trace-commons/agent-traces, SWE-Gym/OpenHands-SFT-Trajectories, oasst2 validation into `data/public/`, writes `SOURCES.md` with revision hashes
+  - `pick_local.py` — copies 5 local Claude Code sessions nearest {5K,20K,50K,100K,200K} tokens into `data/local/sessions/`
+  - `corpus_stats.py` — per-transcript segment/token/protected/atom table
 - `data/local/` — user's own session logs, gitignored, **never committed**
-- `data/public/` — public fixtures
+- `data/public/` — public dataset downloads, gitignored for now; committing a curated, license-attributed fixture subset is a pending user decision
 - `.claude/` — local-only personal agent env, excluded via `.git/info/exclude`, not part of the repo
+
+Optional extra `embed` (`uv sync --dev --extra embed`) pulls torch CPU + sentence-transformers for the embedding-SVD experiments; CI skips it.
 
 ## Conventions
 

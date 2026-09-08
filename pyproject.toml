@@ -12,6 +12,7 @@ requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.5.3",
     "scipy>=1.18.1",
+    "tiktoken>=0.14.0",
 ]
 
 [project.optional-dependencies]
@@ -28,7 +29,10 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "huggingface-hub>=1.30.0",
+    "matplotlib>=3.11.1",
     "mypy>=2.3.1",
+    "pyarrow>=25.0.1",
     "pytest>=9.1.1",
     "ruff>=0.16.6",
     "scipy-stubs>=1.18.1.0",

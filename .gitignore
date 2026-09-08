@@ -13,4 +13,6 @@ build/
 
 # User's own session logs used as a local dev corpus. Never committed.
 data/local/
+# Public dataset downloads. Curated, license-attributed fixtures are a separate later step.
+data/public/
 experiments/output/
