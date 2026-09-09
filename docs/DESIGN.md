@@ -1,8 +1,9 @@
 # Loosy-Goose — design
 
-Status: Phase 1 complete, Phase 2 (unified rate-distortion evaluation) not started.
+Status: Phase 1 complete, Phase 2 (unified rate-distortion evaluation) in progress.
 This document is the algorithm specification. For what the Phase 1 experiments actually
-measured and concluded, see [PHASE1.md](PHASE1.md).
+measured and concluded, see [PHASE1.md](PHASE1.md); for the Phase 2 plan, the decisions already
+locked and the ones still open, see [PHASE2.md](PHASE2.md).
 
 ## Problem
 
@@ -126,6 +127,11 @@ own similarity function, which inflates every result.
 - Whether the background prior should be generic, personalized from the user's own sessions, or
   both layered. The personalization prior is a committed roadmap item.
 - Segment-level versus span-level trimming for prose.
+- Whether "extractive" must mean *contiguous substring of the original*, or may mean
+  *reconstructs the original exactly given the emitted side table*. Path substitution
+  (`paths.py`) satisfies the second and not the first: the output plus the table expands back to
+  the source, but the emitted text alone does not appear verbatim in it. Undecided pending the
+  Phase 2 arms — see [PHASE2.md](PHASE2.md#still-open--do-not-treat-as-settled).
 
 ## References
 

@@ -1,6 +1,7 @@
 from loosy_goose.segment import (
     extract_atoms,
     looks_like_code_dump,
+    scannable,
     segment,
     split_prose,
     split_sentences,
@@ -139,3 +140,41 @@ def test_chunk_lines_bounds_a_single_overlong_line() -> None:
     assert all(len(s.text) <= 120 for s in segs)
     assert any("tok0" in s.text for s in segs)
     assert any("tail line" in s.text for s in segs)
+
+
+def test_scannable_decodes_a_json_payload_to_values_only() -> None:
+    payload = r'{"file_path": "app/main.py", "new_string": "import os\nimport sys", "limit": 2000}'
+    scanned = scannable(payload)
+    assert "import os\nimport sys" in scanned
+    assert "file_path" not in scanned
+    assert "2000" in scanned
+
+
+def test_scannable_leaves_non_json_text_alone() -> None:
+    for text in ("plain prose about app/main.py", "{not json at all", '["a", "b"]'):
+        assert scannable(text) == text
+
+
+def test_escaped_newlines_are_not_file_paths() -> None:
+    # The defect this guards: json.dumps renders an edit body's newlines as a literal
+    # backslash-n, and the path pattern read that backslash as a separator, inventing path
+    # atoms out of consecutive escapes. 8.7% of the corpus's distinct atoms were this.
+    payload = r'{"new_string": "return 1;\n\nstatic_thing = 2;\n"}'
+    atoms = extract_atoms(payload)
+    assert not any("\\" in a for a in atoms)
+    # And the identifier the escape used to be glued to survives intact.
+    assert "static_thing" in atoms
+
+
+def test_real_windows_path_inside_a_payload_is_an_atom() -> None:
+    # The mirror-image defect: a genuine backslash is doubled by the same serializer, and the
+    # pattern could not span the empty component, so these paths were invisible entirely.
+    payload = r'{"file_path": "venv\\Scripts\\pip.exe"}'
+    assert "venv\\Scripts\\pip.exe" in extract_atoms(payload)
+
+
+def test_nested_payload_values_are_scanned() -> None:
+    payload = '{"edits": [{"old_string": "a/b/old.py", "new_string": "a/b/new.py"}]}'
+    atoms = extract_atoms(payload)
+    assert "a/b/old.py" in atoms
+    assert "a/b/new.py" in atoms

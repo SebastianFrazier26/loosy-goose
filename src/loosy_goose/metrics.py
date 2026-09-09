@@ -12,22 +12,54 @@ from loosy_goose.supersede import apply_supersession
 from loosy_goose.tokens import count_tokens
 
 
-def compression_ratio(original: list[Segment], kept: list[Segment]) -> float:
+def compression_ratio(original: list[Segment], kept: list[Segment], extra_tokens: int = 0) -> float:
+    """`extra_tokens` covers anything the compressor emits that is not a kept segment — the path
+    substitution table, and any later side table. It is charged against the output size, so a
+    mechanism that buys recall by emitting a lookup pays for it in the same currency as selection.
+    """
     total = sum(count_tokens(s.text) for s in original)
     if total == 0:
         return 1.0
-    return sum(count_tokens(s.text) for s in kept) / total
+    return (sum(count_tokens(s.text) for s in kept) + extra_tokens) / total
 
 
-def _kept_atoms(kept: list[Segment]) -> set[str]:
-    return {a for s in kept for a in s.atoms}
+def _kept_atoms(kept: list[Segment], guaranteed: set[str] | None = None) -> set[str]:
+    """Atoms the output preserves: those in kept segments, plus any a side table spells out
+    verbatim. `guaranteed` is empty for every method that emits no table."""
+    have = {a for s in kept for a in s.atoms}
+    return have | guaranteed if guaranteed else have
 
 
-def atom_recall(original: list[Segment], kept: list[Segment]) -> float:
+def atom_recall(
+    original: list[Segment], kept: list[Segment], guaranteed: set[str] | None = None
+) -> float:
     wanted = {a for s in original for a in s.atoms}
     if not wanted:
         return 1.0
+    return len(wanted & _kept_atoms(kept, guaranteed)) / len(wanted)
+
+
+def atom_recall_earned(
+    original: list[Segment], kept: list[Segment], guaranteed: set[str] | None = None
+) -> float:
+    """Recall over only the atoms no table hands over — what selection still had to earn.
+
+    A path table guarantees 28.8% of the final-state atom set outright, so `atom_recall` would
+    jump by roughly that much for every method at once and stop discriminating between them.
+    This is the number methods get compared on once any table exists; with no table it is
+    identical to `atom_recall`.
+    """
+    wanted = {a for s in original for a in s.atoms} - (guaranteed or set())
+    if not wanted:
+        return 1.0
     return len(wanted & _kept_atoms(kept)) / len(wanted)
+
+
+def guaranteed_share(original: list[Segment], guaranteed: set[str] | None = None) -> float:
+    wanted = {a for s in original for a in s.atoms}
+    if not wanted or not guaranteed:
+        return 0.0
+    return len(wanted & guaranteed) / len(wanted)
 
 
 def final_state_atoms(original: list[Segment]) -> set[str]:
@@ -42,6 +74,7 @@ def atom_recall_final(
     original: list[Segment],
     kept: list[Segment],
     final_atoms: set[str] | None = None,
+    guaranteed: set[str] | None = None,
 ) -> float:
     """Atom recall against the final-state atom set rather than every atom ever mentioned. Pass
     `final_atoms` (from `final_state_atoms`) when scoring many (method, ratio) pairs on the same
@@ -49,11 +82,27 @@ def atom_recall_final(
     wanted = final_atoms if final_atoms is not None else final_state_atoms(original)
     if not wanted:
         return 1.0
+    return len(wanted & _kept_atoms(kept, guaranteed)) / len(wanted)
+
+
+def atom_recall_final_earned(
+    original: list[Segment],
+    kept: list[Segment],
+    final_atoms: set[str] | None = None,
+    guaranteed: set[str] | None = None,
+) -> float:
+    wanted = (final_atoms if final_atoms is not None else final_state_atoms(original)) - (
+        guaranteed or set()
+    )
+    if not wanted:
+        return 1.0
     return len(wanted & _kept_atoms(kept)) / len(wanted)
 
 
-def atom_recall_by_kind(original: list[Segment], kept: list[Segment]) -> dict[str, float]:
-    have = _kept_atoms(kept)
+def atom_recall_by_kind(
+    original: list[Segment], kept: list[Segment], guaranteed: set[str] | None = None
+) -> dict[str, float]:
+    have = _kept_atoms(kept, guaranteed)
     by_kind: dict[str, set[str]] = defaultdict(set)
     for s in original:
         by_kind[s.kind].update(s.atoms)
@@ -114,12 +163,19 @@ def evaluate(
     original_vectors: FloatArray | None = None,
     model_name: str = embed.SCORE_MODEL,
     final_atoms: set[str] | None = None,
+    guaranteed: set[str] | None = None,
+    extra_tokens: int = 0,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {
-        "compression_ratio": compression_ratio(original, kept),
-        "atom_recall": atom_recall(original, kept),
-        "atom_recall_by_kind": atom_recall_by_kind(original, kept),
-        "atom_recall_final": atom_recall_final(original, kept, final_atoms),
+        "compression_ratio": compression_ratio(original, kept, extra_tokens),
+        "atom_recall": atom_recall(original, kept, guaranteed),
+        "atom_recall_earned": atom_recall_earned(original, kept, guaranteed),
+        "atom_recall_by_kind": atom_recall_by_kind(original, kept, guaranteed),
+        "atom_recall_final": atom_recall_final(original, kept, final_atoms, guaranteed),
+        "atom_recall_final_earned": atom_recall_final_earned(
+            original, kept, final_atoms, guaranteed
+        ),
+        "guaranteed_share": guaranteed_share(original, guaranteed),
     }
     out.update(semantic_coverage(original, kept, model_name, original_vectors))
     return out

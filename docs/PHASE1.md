@@ -170,6 +170,12 @@ Extra dimensions bought nothing structural: k95/n stayed at 0.72–0.88 regardle
   with an eigen-flavoured labeller on top. That would still be a useful tool. It would not be
   the tool described in the design.
 
+  *Re-measured 2026-09-09, post atom-extractor fix. The answer is a split, not a win.* Spectral
+  beats budget-shaped TF-IDF on **atom recall** at every rate measured, and loses to it on
+  **semantic coverage** at every rate measured. Which of those two decides the question is a
+  design judgement, not a measurement, and it is open — see
+  [PHASE2.md](PHASE2.md#does-spectral-beat-tf-idf-a-split-verdict).
+
 ## Defects found while running Phase 1 — all fixed 2026-09-09
 
 Deferred during the runs so as not to desync them, then fixed before Phase 2. Measured across
@@ -203,6 +209,18 @@ Deferred during the runs so as not to desync them, then fixed before Phase 2. Me
    Phase 1 metrics and `code.quantize_tool_use`. A negative lookbehind protects real Windows
    paths, which `json.dumps` writes with doubled backslashes.
 
+4. **Atom extractor, the same escaping — found later, during Phase 2, and it affects the numbers
+   above.** Defect 3 fixed the *co-occurrence tokenizer*'s handling of `json.dumps` escapes. The
+   *atom extractor* had the identical hole and was not fixed at the same time: it invented path
+   atoms out of runs of escape characters (8.7% of the corpus's 32,344 distinct atoms), and
+   7,022 of the 7,156 junk mentions sat in `tool_use`, a protected kind that is almost always
+   retained — so the junk was almost always scored as recovered. **Every `atom_recall` reported
+   in this document is inflated by that.** The mirror-image half, real Windows paths inside tool
+   payloads matching nothing at all, means the same numbers also missed real losses. Fixed by
+   decoding the payload before matching; corpus atoms 32,344 to 27,189. Phase 1's *conclusions*
+   are unaffected — the inflation applies to every method alike, and the comparisons were
+   relative — but the absolute recall figures should not be quoted. See [PHASE2.md](PHASE2.md).
+
 **Still open, deliberately:** whether `tool_use` should be emitted as readable text rather than
 `json.dumps` output. That is an emit-format design decision, not a defect, and belongs with the
 quality-table implementation.
@@ -222,3 +240,6 @@ Chosen by implementation rather than by explicit decision. All currently kept as
 The unified rate-distortion runner: every method — A-labelled, B-selected, C-quantized, and the
 three baselines — on one curve per transcript at matched token budgets. That is the experiment
 that decides whether the eigen-machinery stays in the design.
+
+In progress. The plan, the decisions already locked with the options rejected, the verified
+nulls, and what remains open are in [PHASE2.md](PHASE2.md).

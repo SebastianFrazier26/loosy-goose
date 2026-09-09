@@ -5,10 +5,12 @@ from loosy_goose.budget import forced_mask, select_by_score, token_budget
 from loosy_goose.metrics import (
     atom_recall,
     atom_recall_by_kind,
+    atom_recall_earned,
     atom_recall_final,
     compression_ratio,
     evaluate,
     final_state_atoms,
+    guaranteed_share,
     semantic_coverage,
 )
 from loosy_goose.segment import Segment, SegmentKind, extract_atoms
@@ -133,11 +135,13 @@ def test_atom_recall_final_only_counts_the_last_read() -> None:
         for i, off in enumerate((10, 20, 30))
     ]
     final = final_state_atoms(reads)
-    assert final == set(reads[-1].atoms) == {"config.py", "file_path", "30"}
+    # `file_path` is a payload key, not a fact about the session, so it is not an atom; see
+    # segment.scannable.
+    assert final == set(reads[-1].atoms) == {"config.py", "30"}
 
     kept = [reads[-1]]
     # Historical recall: only the last read's atoms are present, out of every read's atoms.
-    assert atom_recall(reads, kept) == pytest.approx(3 / 5)
+    assert atom_recall(reads, kept) == pytest.approx(2 / 4)
     # Final-state recall: kept IS the segment whose atoms define the denominator, so it's total.
     assert atom_recall_final(reads, kept) == pytest.approx(1.0)
     assert atom_recall_final(reads, []) == pytest.approx(0.0)
@@ -192,3 +196,61 @@ def test_semantic_coverage_with_real_model() -> None:
         semantic_coverage([kitten], [cat])["coverage"]
         > semantic_coverage([finance], [cat])["coverage"]
     )
+
+
+def _guarantee_corpus() -> tuple[list[Segment], list[Segment]]:
+    segs = [
+        _seg(0, "edited src/alpha.py for the parser"),
+        _seg(1, "then touched src/beta.py and run_job"),
+    ]
+    return segs, [segs[0]]
+
+
+def test_guaranteed_atoms_count_as_recovered() -> None:
+    segs, kept = _guarantee_corpus()
+    assert "src/beta.py" not in set(kept[0].atoms)
+    plain = atom_recall(segs, kept)
+    with_table = atom_recall(segs, kept, guaranteed={"src/beta.py"})
+    assert with_table > plain
+
+
+def test_earned_recall_ignores_what_the_table_hands_over() -> None:
+    segs, kept = _guarantee_corpus()
+    guaranteed = {"src/alpha.py", "src/beta.py"}
+    # Both paths leave the denominator, so the score reflects only the non-path atoms, and a
+    # table cannot lift it the way it lifts atom_recall.
+    assert atom_recall_earned(segs, kept, guaranteed) < atom_recall(segs, kept, guaranteed)
+    assert atom_recall_earned(segs, kept, None) == pytest.approx(atom_recall(segs, kept))
+
+
+def test_earned_recall_gives_no_credit_for_a_guaranteed_atom_in_a_dropped_segment() -> None:
+    segs, kept = _guarantee_corpus()
+    only_dropped = atom_recall_earned(segs, kept, guaranteed={"src/beta.py"})
+    without = atom_recall_earned(segs, kept, guaranteed=set())
+    assert only_dropped > without  # the atom left the denominator, not the numerator
+
+
+def test_guaranteed_share_reports_how_much_was_free() -> None:
+    segs, _ = _guarantee_corpus()
+    wanted = {a for s in segs for a in s.atoms}
+    assert guaranteed_share(segs, None) == 0.0
+    assert guaranteed_share(segs, {"src/alpha.py"}) == pytest.approx(1 / len(wanted))
+    # An atom the transcript never mentions cannot inflate the share.
+    assert guaranteed_share(segs, {"nowhere/at/all.py"}) == 0.0
+
+
+def test_side_table_tokens_are_charged_against_the_output() -> None:
+    segs, kept = _guarantee_corpus()
+    bare = compression_ratio(segs, kept)
+    charged = compression_ratio(segs, kept, extra_tokens=50)
+    assert charged > bare
+    total = sum(count_tokens(s.text) for s in segs)
+    assert charged == pytest.approx(bare + 50 / total)
+
+
+def test_evaluate_reports_both_recall_columns() -> None:
+    segs, kept = _guarantee_corpus()
+    out = evaluate(segs, kept, guaranteed={"src/beta.py"}, extra_tokens=7)
+    assert out["atom_recall"] > out["atom_recall_earned"]
+    assert out["guaranteed_share"] > 0.0
+    assert out["compression_ratio"] > compression_ratio(segs, kept)

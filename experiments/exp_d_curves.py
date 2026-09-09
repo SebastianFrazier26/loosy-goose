@@ -16,11 +16,13 @@ withheld local_5k..local_200k labels leave the JSON, matching Phase 1's withhold
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +33,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from loosy_goose import embed, metrics
 from loosy_goose.budget import ProtectPolicy, forced_mask, select_by_score, token_budget
 from loosy_goose.code import quantize_segment
-from loosy_goose.segment import Segment, segment
+from loosy_goose.segment import ATOMS_VERSION, Segment, segment
 from loosy_goose.select import CompressConfig, Strategy, embed_segments, score_segments
 from loosy_goose.supersede import apply_supersession
 from loosy_goose.tokens import count_tokens
@@ -87,8 +89,46 @@ SPECTRAL_METHODS = (
     "supersede+band+leverage",
 )
 PROTECT_CODE_ONLY_METHODS = ("tfidf", "leverage")
+# Methods whose selection runs through CompressConfig, so a scoring knob such as drop_top can
+# change their behaviour. The band+ stacks are deliberately excluded from the drop_top variants:
+# they are the slowest methods in the sweep and banding is orthogonal to which directions the
+# scorer ignores, so paying for that cross now would buy an interaction we have no reason to
+# expect. See docs/PHASE1.md on measuring one thing at a time.
+SPECTRAL_SCORED = ("leverage", "ridge", "cur_residual", "supersede+leverage")
 
-MethodFn = Callable[[list[Segment], float, ProtectPolicy, Path], list[Segment]]
+
+@dataclass(frozen=True)
+class Variant:
+    """One configuration of the pipeline's knobs, swept alongside the baseline rather than
+    replacing it. Every record carries the variant that produced it, so variants accumulate in a
+    transcript's checkpoint instead of invalidating it — adding one re-runs only its own
+    combinations, not the whole grid."""
+
+    drop_top: int = 0
+    # Methods this variant is meaningful for; None means every method in METHODS. A scoring knob
+    # applied to `random` would just duplicate the baseline record at twice the cost.
+    applies_to: tuple[str, ...] | None = None
+
+    def key(self) -> str:
+        parts = [f"drop_top={self.drop_top}" if self.drop_top else ""]
+        return "+".join(p for p in parts if p) or "base"
+
+    def covers(self, method: str) -> bool:
+        return self.applies_to is None or method in self.applies_to
+
+    def compress_config(self, strategy: Strategy) -> CompressConfig:
+        return CompressConfig(strategy=strategy, drop_top=self.drop_top)
+
+
+BASE_VARIANT = Variant()
+VARIANTS: tuple[Variant, ...] = (
+    BASE_VARIANT,
+    Variant(drop_top=1, applies_to=SPECTRAL_SCORED),
+    Variant(drop_top=2, applies_to=SPECTRAL_SCORED),
+    Variant(drop_top=4, applies_to=SPECTRAL_SCORED),
+)
+
+MethodFn = Callable[[list[Segment], float, ProtectPolicy, Path, Variant], list[Segment]]
 
 
 def _spread(items: list[Any], n: int) -> list[Any]:
@@ -186,9 +226,9 @@ def _tfidf_scores(segments: list[Segment]) -> np.ndarray:
     return scores
 
 
-def _leverage_scores(segments: list[Segment], cache_dir: Path) -> np.ndarray:
+def _leverage_scores(segments: list[Segment], cache_dir: Path, variant: Variant) -> np.ndarray:
     x = embed_segments(segments, embed.SELECT_MODEL, cache_dir=cache_dir)
-    return score_segments(x, CompressConfig(strategy="leverage"))
+    return score_segments(x, variant.compress_config("leverage"))
 
 
 def _band(segments: list[Segment], quality: float) -> list[Segment]:
@@ -199,9 +239,13 @@ def _band(segments: list[Segment], quality: float) -> list[Segment]:
 
 def _run_plain_baseline(fn: Callable[..., list[Segment]]) -> MethodFn:
     def run(
-        segs: list[Segment], ratio: float, protect: ProtectPolicy, cache_dir: Path
+        segs: list[Segment],
+        ratio: float,
+        protect: ProtectPolicy,
+        cache_dir: Path,
+        variant: Variant,
     ) -> list[Segment]:
-        del cache_dir
+        del cache_dir, variant
         return fn(segs, ratio, protect=protect)
 
     return run
@@ -209,26 +253,30 @@ def _run_plain_baseline(fn: Callable[..., list[Segment]]) -> MethodFn:
 
 def _run_spectral(strategy: Strategy) -> MethodFn:
     def run(
-        segs: list[Segment], ratio: float, protect: ProtectPolicy, cache_dir: Path
+        segs: list[Segment],
+        ratio: float,
+        protect: ProtectPolicy,
+        cache_dir: Path,
+        variant: Variant,
     ) -> list[Segment]:
         x = embed_segments(segs, embed.SELECT_MODEL, cache_dir=cache_dir)
-        scores = score_segments(x, CompressConfig(strategy=strategy))
+        scores = score_segments(x, variant.compress_config(strategy))
         return select_by_score(segs, scores, ratio, protect)
 
     return run
 
 
 def _run_topics(
-    segs: list[Segment], ratio: float, protect: ProtectPolicy, cache_dir: Path
+    segs: list[Segment], ratio: float, protect: ProtectPolicy, cache_dir: Path, variant: Variant
 ) -> list[Segment]:
-    del cache_dir
+    del cache_dir, variant
     return topics_compress(segs, ratio, protect=protect)
 
 
 def _run_supersede_tfidf(
-    segs: list[Segment], ratio: float, protect: ProtectPolicy, cache_dir: Path
+    segs: list[Segment], ratio: float, protect: ProtectPolicy, cache_dir: Path, variant: Variant
 ) -> list[Segment]:
-    del cache_dir
+    del cache_dir, variant
     budget = token_budget(segs, ratio)
     remaining = apply_supersession(segs)
     scores = _tfidf_scores(remaining)
@@ -236,30 +284,30 @@ def _run_supersede_tfidf(
 
 
 def _run_supersede_leverage(
-    segs: list[Segment], ratio: float, protect: ProtectPolicy, cache_dir: Path
+    segs: list[Segment], ratio: float, protect: ProtectPolicy, cache_dir: Path, variant: Variant
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
     remaining = apply_supersession(segs)
-    scores = _leverage_scores(remaining, cache_dir)
+    scores = _leverage_scores(remaining, cache_dir, variant)
     return _select_with_budget(remaining, scores, budget, protect)
 
 
 def _run_band_leverage(
-    segs: list[Segment], ratio: float, protect: ProtectPolicy, cache_dir: Path
+    segs: list[Segment], ratio: float, protect: ProtectPolicy, cache_dir: Path, variant: Variant
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
     banded = _band(segs, ratio)
-    scores = _leverage_scores(banded, cache_dir)
+    scores = _leverage_scores(banded, cache_dir, variant)
     return _select_with_budget(banded, scores, budget, protect)
 
 
 def _run_supersede_band_leverage(
-    segs: list[Segment], ratio: float, protect: ProtectPolicy, cache_dir: Path
+    segs: list[Segment], ratio: float, protect: ProtectPolicy, cache_dir: Path, variant: Variant
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
     remaining = apply_supersession(segs)
     banded = _band(remaining, ratio)
-    scores = _leverage_scores(banded, cache_dir)
+    scores = _leverage_scores(banded, cache_dir, variant)
     return _select_with_budget(banded, scores, budget, protect)
 
 
@@ -277,26 +325,77 @@ METHODS: dict[str, MethodFn] = {
     "supersede+band+leverage": _run_supersede_band_leverage,
 }
 
-# Bump whenever a record's fields change shape or meaning (not when a method or ratio is added —
-# those are covered by the fingerprint's own keep_ratios/methods entries). A checkpoint written
-# under a different fingerprint is treated as absent; see _current_config()/main().
-SCHEMA_VERSION = 2
+# Bump only when a record's FIELDS change shape or meaning — that is the one thing a checkpoint
+# cannot recover from, so it discards the file. Adding a method, a ratio or a variant does not
+# bump this: those are new job identities, and analyse() simply runs the ones it is missing.
+# 3: records carry their own identity (variant_key/variant) and the file carries a
+# segments_digest, replacing the run-level config fingerprint.
+SCHEMA_VERSION = 3
 
 
-def _current_config() -> dict[str, Any]:
-    protects = sorted({"none"} | ({"code_only"} if PROTECT_CODE_ONLY_METHODS else set()))
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "keep_ratios": list(KEEP_RATIOS),
-        "methods": sorted(METHODS),
-        "protects": protects,
-    }
+def segments_digest(segments: list[Segment]) -> str:
+    """Fingerprint of the segmenter's output for a transcript.
+
+    This is the checkpoint's *input* identity, and it is the only thing that can invalidate a
+    whole file: if the loader or segmenter changes, every record was scored against text that no
+    longer exists. Downstream text transformations (banding, and later path substitution and the
+    per-kind shrinkers) are deliberately NOT in here — they belong to the variant that produced a
+    record, so a run with substitution on and a run with it off coexist in one checkpoint rather
+    than evicting each other.
+    """
+    h = hashlib.sha256()
+    # The atom extractor is part of the input identity even though it changes no segment text:
+    # atoms are the recall metric's denominator, so a changed extractor makes old records
+    # incomparable to new ones in exactly the way a changed segmenter does.
+    h.update(f"atoms={ATOMS_VERSION}".encode())
+    h.update(b"\x02")
+    for s in segments:
+        h.update(s.kind.encode("utf-8"))
+        h.update(b"\x00")
+        h.update(s.text.encode("utf-8"))
+        h.update(b"\x01")
+    return h.hexdigest()
+
+
+@dataclass(frozen=True)
+class Job:
+    method: str
+    protect: ProtectPolicy
+    ratio: float
+    variant: Variant
+
+    def identity(self) -> tuple[str, str, float, str]:
+        return (self.method, self.protect, self.ratio, self.variant.key())
+
+
+def plan_jobs() -> list[Job]:
+    """Every (method, protect, ratio, variant) combination the current configuration asks for.
+    Order puts the base variant first so an interrupted run still leaves a usable baseline."""
+    jobs: list[Job] = []
+    for variant in VARIANTS:
+        for name in METHODS:
+            if variant.covers(name):
+                jobs += [Job(name, "none", r, variant) for r in KEEP_RATIOS]
+        for name in PROTECT_CODE_ONLY_METHODS:
+            if variant.covers(name):
+                jobs += [Job(name, "code_only", r, variant) for r in KEEP_RATIOS]
+    return jobs
+
+
+def _record_identity(rec: dict[str, Any]) -> tuple[str, str, float, str]:
+    return (
+        str(rec["method"]),
+        str(rec["protect"]),
+        float(rec["keep_ratio"]),
+        str(rec.get("variant_key", BASE_VARIANT.key())),
+    )
 
 
 def _record(
     method: str,
     protect: ProtectPolicy,
     ratio: float,
+    variant: Variant,
     budget: int,
     original: list[Segment],
     kept: list[Segment],
@@ -321,6 +420,8 @@ def _record(
         # requested. That is a real ceiling, not a defect, but any comparison "at keep_ratio X"
         # is only a matched-budget comparison when this is true; see the head-to-head table.
         "budget_binding": kept_tokens >= 0.99 * budget,
+        "variant_key": variant.key(),
+        "variant": {"drop_top": variant.drop_top},
         "compression_ratio": ev["compression_ratio"],
         "atom_recall": ev["atom_recall"],
         "atom_recall_final": ev["atom_recall_final"],
@@ -332,9 +433,24 @@ def _record(
     }
 
 
-def analyse(label: str, public: bool, t: Transcript, cache_dir: Path) -> dict[str, Any]:
+def analyse(
+    label: str,
+    public: bool,
+    t: Transcript,
+    cache_dir: Path,
+    prior: dict[str, Any] | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Run every planned job that `prior` does not already hold, and merge the two.
+
+    `prior` is a checkpoint whose segments_digest already matched, so its records were scored
+    against the same segmenter output this run produces. Records it holds for jobs still in the
+    plan are reused verbatim; records for jobs no longer planned are kept too, since a variant
+    that has been commented out of VARIANTS is cheaper to leave on disk than to re-measure if it
+    comes back."""
     segs = segment(t)
     total_tokens = sum(count_tokens(s.text) for s in segs)
+    digest = segments_digest(segs)
     result: dict[str, Any] = {
         "label": label,
         "public": public,
@@ -342,11 +458,29 @@ def analyse(label: str, public: bool, t: Transcript, cache_dir: Path) -> dict[st
         "n_segments": len(segs),
         "total_tokens": total_tokens,
         "segments_by_kind": dict(Counter(s.kind for s in segs)),
-        "config": _current_config(),
+        "schema_version": SCHEMA_VERSION,
+        "segments_digest": digest,
         "records": [],
     }
     if len(segs) < 3:
         result["skipped"] = "too few segments"
+        return result
+
+    if prior is not None and prior.get("segments_digest") != digest:
+        # The segmenter or loader changed, so every prior record was scored against text that no
+        # longer exists. This is the one condition that invalidates a whole checkpoint; adding a
+        # variant does not.
+        if progress is not None:
+            progress("segments digest changed, discarding all prior records")
+        prior = None
+    kept_records = list(prior.get("records", [])) if prior else []
+    have = {_record_identity(r) for r in kept_records}
+    todo = [j for j in plan_jobs() if j.identity() not in have]
+    if progress is not None:
+        progress(f"{len(kept_records)} records reused, {len(todo)} to run")
+    if not todo:
+        result["records"] = kept_records
+        result["supersede_ceiling"] = prior.get("supersede_ceiling", 1.0) if prior else 1.0
         return result
 
     # The supersession pass does not depend on keep_ratio, so its ceiling is one number per
@@ -364,39 +498,28 @@ def analyse(label: str, public: bool, t: Transcript, cache_dir: Path) -> dict[st
     # cache_dir), so this one-time embed never overlaps with what a method scores on.
     original_vectors = embed.embed_texts([s.text for s in segs], embed.SCORE_MODEL)
 
-    records: list[dict[str, Any]] = []
-    for name, fn in METHODS.items():
-        for ratio in KEEP_RATIOS:
-            budget = token_budget(segs, ratio)
-            t0 = time.perf_counter()
-            kept = fn(segs, ratio, "none", cache_dir)
-            elapsed = time.perf_counter() - t0
-            records.append(
-                _record(
-                    name, "none", ratio, budget, segs, kept, original_vectors, final_atoms, elapsed
-                )
+    fresh: list[dict[str, Any]] = []
+    for job in todo:
+        fn = METHODS[job.method]
+        budget = token_budget(segs, job.ratio)
+        t0 = time.perf_counter()
+        kept = fn(segs, job.ratio, job.protect, cache_dir, job.variant)
+        elapsed = time.perf_counter() - t0
+        fresh.append(
+            _record(
+                job.method,
+                job.protect,
+                job.ratio,
+                job.variant,
+                budget,
+                segs,
+                kept,
+                original_vectors,
+                final_atoms,
+                elapsed,
             )
-    for name in PROTECT_CODE_ONLY_METHODS:
-        fn = METHODS[name]
-        for ratio in KEEP_RATIOS:
-            budget = token_budget(segs, ratio)
-            t0 = time.perf_counter()
-            kept = fn(segs, ratio, "code_only", cache_dir)
-            elapsed = time.perf_counter() - t0
-            records.append(
-                _record(
-                    name,
-                    "code_only",
-                    ratio,
-                    budget,
-                    segs,
-                    kept,
-                    original_vectors,
-                    final_atoms,
-                    elapsed,
-                )
-            )
-    result["records"] = records
+        )
+    result["records"] = kept_records + fresh
     return result
 
 
@@ -803,29 +926,140 @@ def _protect_cost_table(
     return out
 
 
+def _base_only(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The same results with every non-baseline variant's records removed.
+
+    Every table below this line was written when a checkpoint held exactly one configuration.
+    Feeding them the variant records too would silently average a drop_top=2 curve into the
+    baseline's, so variants are compared in their own table and nowhere else.
+    """
+    out: list[dict[str, Any]] = []
+    for r in results:
+        base = [
+            rec for rec in r.get("records", []) if _record_identity(rec)[3] == BASE_VARIANT.key()
+        ]
+        out.append({**r, "records": base})
+    return out
+
+
+def _variant_table(results: list[dict[str, Any]]) -> list[str]:
+    """Each variant against the baseline, per method, at the aggressive operating points.
+
+    Compared at matched ACHIEVED rate like every other cross-method table here: a scoring knob
+    can shift where a method lands, so comparing at a requested keep_ratio would confound the
+    knob's effect with a rate difference.
+    """
+    curves = _curves_by_method_variant(results)
+    keys = [v.key() for v in VARIANTS if v.key() != BASE_VARIANT.key()]
+    if not keys:
+        return []
+    header = f"{'method / variant':<34}" + "".join(
+        f"{'d recall_f@' + f'{1 / r:.0f}x':>16}" for r in AGGRESSIVE_RATES
+    )
+    out = [
+        "",
+        "== variants vs the base configuration ==",
+        "Difference in final-state atom recall against the same method's baseline curve, at",
+        "matched achieved compression. Positive means the variant is better. 'n/a' means one of",
+        "the two curves never reached that rate on any transcript.",
+        header,
+        "-" * len(header),
+    ]
+    for method in METHODS:
+        base = curves.get((method, BASE_VARIANT.key()))
+        if not base:
+            continue
+        for key in keys:
+            variant = curves.get((method, key))
+            if not variant:
+                continue
+            cells = []
+            for rate in AGGRESSIVE_RATES:
+                bv, _, _ = _weighted_at_rate(base, rate)
+                vv, _, _ = _weighted_at_rate(variant, rate)
+                cells.append("n/a" if bv is None or vv is None else f"{vv - bv:+.3f}")
+            out.append(f"{method + '  ' + key:<34}" + "".join(f"{c:>16}" for c in cells))
+    return out
+
+
+def _curves_by_method_variant(
+    results: list[dict[str, Any]],
+) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """_curves_by_method's shape, keyed on (method, variant_key) at protect=none instead of
+    (method, protect), for the variant comparison."""
+    out: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for r in results:
+        if "skipped" in r:
+            continue
+        by_key: dict[tuple[str, str], list[tuple[float, float]]] = defaultdict(list)
+        for rec in r["records"]:
+            method, protect, _, variant_key = _record_identity(rec)
+            if protect != "none":
+                continue
+            by_key[(method, variant_key)].append(
+                (float(rec["compression_ratio"]), float(rec["atom_recall_final"]))
+            )
+        for key, pts in by_key.items():
+            pts.sort(key=lambda p: p[0])
+            rates: list[float] = []
+            recall_final: list[float] = []
+            for rate, value in pts:
+                if rates and rate <= rates[-1] + 1e-9:
+                    continue
+                rates.append(rate)
+                recall_final.append(value)
+            out[key].append(
+                {
+                    "label": r["label"],
+                    "weight": float(r["total_tokens"]),
+                    "rates": rates,
+                    "recall_final": recall_final,
+                }
+            )
+    return out
+
+
+def _weighted_at_rate(curves: list[dict[str, Any]], rate: float) -> tuple[float | None, int, float]:
+    vals: list[float] = []
+    weights: list[float] = []
+    for c in curves:
+        v = _interp_at(c, rate, "recall_final")
+        if v is None:
+            continue
+        vals.append(v)
+        weights.append(c["weight"])
+    if not vals:
+        return None, 0, 0.0
+    return float(np.average(vals, weights=weights)), len(vals), 0.0
+
+
 def _write_summary(results: list[dict[str, Any]]) -> None:
-    idx = _index_records(results)
-    curves = _curves_by_method(results)
+    base_results = _base_only(results)
+    idx = _index_records(base_results)
+    curves = _curves_by_method(base_results)
     lines = [f"{len(results)} transcripts checkpointed.", ""]
     lines += _aggressive_rate_table(curves)
     lines += _knee_table(curves)
     lines += _aggregate_table(idx)
     lines += _head_to_head(curves)
     lines += _protect_cost_table(idx)
-    lines += _supersede_ceiling_table(results)
-    lines += _supersede_recall_cost_table(results, curves)
+    lines += _supersede_ceiling_table(base_results)
+    lines += _supersede_recall_cost_table(base_results, curves)
+    lines += _variant_table(results)
     text = "\n".join(lines)
     (OUT / "summary.txt").write_text(text + "\n", encoding="utf-8")
     print("\n" + text)
 
 
-def _load_checkpoint(
-    out_path: Path, force: bool, current_config: dict[str, Any]
-) -> tuple[dict[str, Any] | None, str | None]:
-    """Decide whether an existing checkpoint is reusable. Returns (cached_result, None) to reuse
-    it, or (None, reason) to re-run — reason is None only when there was no checkpoint to begin
-    with. Split out from main() so the reuse-vs-invalidate decision is unit-testable without a
-    real transcript or embedding model."""
+def _load_checkpoint(out_path: Path, force: bool) -> tuple[dict[str, Any] | None, str | None]:
+    """Load a checkpoint to build on. Returns (prior, None) when its records may be reused, or
+    (None, reason) when they may not — reason is None only when there was no checkpoint at all.
+
+    Unlike the run-level fingerprint this replaces, a mismatch here is rare by design: only an
+    unreadable file, `--force`, or a record-schema bump discards work. Whether the *segments*
+    still match is decided in analyse(), which is where they are computed. Split out from main()
+    so the decision is unit-testable without a transcript or an embedding model.
+    """
     if not out_path.exists():
         return None, None
     if force:
@@ -834,9 +1068,9 @@ def _load_checkpoint(
         candidate = json.loads(out_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
         return None, f"checkpoint unreadable ({type(exc).__name__})"
-    if candidate.get("config") == current_config:
-        return candidate, None
-    return None, "config fingerprint mismatch"
+    if candidate.get("schema_version") != SCHEMA_VERSION:
+        return None, (f"record schema {candidate.get('schema_version')!r} != {SCHEMA_VERSION}")
+    return candidate, None
 
 
 def main() -> int:
@@ -851,7 +1085,6 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     CACHE.mkdir(parents=True, exist_ok=True)
 
-    current_config = _current_config()
     results: list[dict[str, Any]] = []
     n_done = 0
     for label, public, t in _iter_sources(args.public_sample, args.swe_gym_sample):
@@ -860,21 +1093,26 @@ def main() -> int:
         if args.limit is not None and n_done >= args.limit:
             break
         out_path = OUT / f"{label}.json"
-        cached, skip_reason = _load_checkpoint(out_path, args.force, current_config)
-        if cached is not None:
-            print(f"[{label}] reused (config matches checkpoint)", flush=True)
-            results.append(cached)
-            n_done += 1
-            continue
-        reason = skip_reason or "no checkpoint"
-        print(f"[{label}] re-running ({reason})...", flush=True)
+        prior, discard_reason = _load_checkpoint(out_path, args.force)
+        if prior is None and discard_reason:
+            print(f"[{label}] prior checkpoint discarded ({discard_reason})", flush=True)
         t0 = time.perf_counter()
-        r = analyse(label, public, t, CACHE)
+        r = analyse(
+            label,
+            public,
+            t,
+            CACHE,
+            prior=prior,
+            progress=lambda msg, label=label: print(f"[{label}] {msg}", flush=True),  # type: ignore[misc]
+        )
         elapsed = time.perf_counter() - t0
         # Checkpoint immediately: a crash on the next transcript must not lose this one.
         out_path.write_text(json.dumps(r, indent=1), encoding="utf-8")
-        if r["records"]:
-            _plot(label, r["records"])
+        base_records = [
+            rec for rec in r["records"] if _record_identity(rec)[3] == BASE_VARIANT.key()
+        ]
+        if base_records:
+            _plot(label, base_records)
         print(f"[{label}] done in {elapsed:.1f}s, {len(r['records'])} records", flush=True)
         results.append(r)
         n_done += 1

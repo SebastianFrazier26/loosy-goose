@@ -48,6 +48,13 @@ class CompressConfig:
     energy: float = 0.95
     strategy: Strategy = "leverage"
     ridge_lambda: float = 1.0
+    # Mu & Viswanath's All-but-the-Top removes the top D directions, not just the mean, and
+    # Phase 1 found exactly the directions it targets: `ensure, modified, todo, proceed` and
+    # `file, updated, successfully, need` recur across unrelated transcripts, so a segment
+    # scoring high on them is scoring high on conversational boilerplate. Default 0 — the
+    # behaviour every Phase 1 and Phase 2 number was measured under — so this arrives as a
+    # sweep variant rather than silently invalidating those results.
+    drop_top: int = 0
 
 
 def _cache_key(model_name: str, texts: list[str]) -> str:
@@ -117,14 +124,30 @@ def rank_for_energy(s: FloatArray, threshold: float) -> int:
     return min(k, int(power.size))
 
 
-def leverage_scores(u: FloatArray, k: int) -> FloatArray:
+def clamp_drop_top(drop_top: int, k: int) -> int:
+    """Number of leading directions to discard, clamped so at least one direction survives.
+
+    Clamping rather than raising: the sweep runs over transcripts with as few as 20 segments,
+    where the retained rank can be smaller than the requested drop, and a whole transcript
+    failing because one config asked for too many is worse than that config quietly behaving
+    like a smaller one on that transcript.
+    """
+    if drop_top < 0:
+        raise ValueError("drop_top must be non-negative")
+    return min(drop_top, max(k - 1, 0))
+
+
+def leverage_scores(u: FloatArray, k: int, drop_top: int = 0) -> FloatArray:
     if k < 1 or k > u.shape[1]:
         raise ValueError(f"k must be in [1, {u.shape[1]}]")
-    scores: FloatArray = np.sum(u[:, :k] ** 2, axis=1)
+    # k is still read off the full spectrum: it answers "how many directions carry 95% of the
+    # variation", which is a property of the data, not of how many we then choose to ignore.
+    start = clamp_drop_top(drop_top, k)
+    scores: FloatArray = np.sum(u[:, start:k] ** 2, axis=1)
     return scores
 
 
-def ridge_leverage_scores(x: FloatArray, lam: float) -> FloatArray:
+def ridge_leverage_scores(x: FloatArray, lam: float, drop_top: int = 0) -> FloatArray:
     if lam < 0:
         raise ValueError("lam must be non-negative")
     u, s, _, _ = svd_energy(x)
@@ -135,6 +158,9 @@ def ridge_leverage_scores(x: FloatArray, lam: float) -> FloatArray:
     rank_tol = float(s.max()) * max(x.shape) * np.finfo(np.float64).eps if s.size else 0.0
     live = s > rank_tol
     shrink = np.where(live, s**2 / np.where(live, s**2 + lam, 1.0), 0.0)
+    # Ridge weights every direction rather than truncating, so dropping the top ones is a zeroed
+    # weight, not a slice. Clamped against the live rank for the same reason as leverage_scores.
+    shrink[: clamp_drop_top(drop_top, int(live.sum()))] = 0.0
     scores: FloatArray = np.sum((u**2) * shrink, axis=1)
     return scores
 
@@ -169,22 +195,23 @@ def cur_residual_order(z: FloatArray, tol: float = 1e-9) -> tuple[list[int], Flo
     return order, np.asarray(norms, dtype=np.float64)
 
 
-def cur_residual_scores(u: FloatArray, s: FloatArray, k: int) -> FloatArray:
+def cur_residual_scores(u: FloatArray, s: FloatArray, k: int, drop_top: int = 0) -> FloatArray:
     if k < 1 or k > u.shape[1]:
         raise ValueError(f"k must be in [1, {u.shape[1]}]")
     n = u.shape[0]
-    z = u[:, :k] * s[:k]
+    start = clamp_drop_top(drop_top, k)
+    z = u[:, start:k] * s[start:k]
     order, norms = cur_residual_order(z)
-    # At most k rows can be picked before the rank-k span is exhausted. Anything past that has
-    # zero residual by construction, so the tail is ordered by leverage instead of left as an
-    # index-ordered tie, scaled to sit strictly below every residual score.
+    # At most k - drop_top rows can be picked before the retained span is exhausted. Anything
+    # past that has zero residual by construction, so the tail is ordered by leverage instead of
+    # left as an index-ordered tie, scaled to sit strictly below every residual score.
     scores = np.zeros(n, dtype=np.float64)
     scores[order] = norms
     remaining = np.ones(n, dtype=bool)
     remaining[order] = False
     if remaining.any():
         floor = float(norms.min()) if norms.size else 1.0
-        lev = leverage_scores(u, k)[remaining]
+        lev = leverage_scores(u, k, drop_top)[remaining]
         top = float(lev.max()) if lev.size else 1.0
         scores[remaining] = 0.5 * floor * (lev / top if top > 0 else 0.0)
     return scores
@@ -211,13 +238,13 @@ def score_segments(x: FloatArray, config: CompressConfig) -> FloatArray:
     if n == 1:
         return np.ones(1, dtype=np.float64)
     if config.strategy == "ridge":
-        return ridge_leverage_scores(x, config.ridge_lambda)
+        return ridge_leverage_scores(x, config.ridge_lambda, config.drop_top)
     u, s, _, _ = svd_energy(x)
     k = rank_for_energy(s, config.energy)
     if config.strategy == "leverage":
-        return leverage_scores(u, k)
+        return leverage_scores(u, k, config.drop_top)
     if config.strategy == "cur_residual":
-        return cur_residual_scores(u, s, k)
+        return cur_residual_scores(u, s, k, config.drop_top)
     raise ValueError(f"unknown strategy: {config.strategy!r}")
 
 

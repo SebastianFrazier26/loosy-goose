@@ -1,27 +1,40 @@
 import json
 import sys
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from experiments import exp_d_curves as exp_d  # noqa: E402
 from experiments.exp_d_curves import (  # noqa: E402
+    BASE_VARIANT,
     KEEP_RATIOS,
     METHODS,
     PROTECT_CODE_ONLY_METHODS,
     SCHEMA_VERSION,
+    VARIANTS,
+    Job,
+    Variant,
     _band,
-    _current_config,
     _interp_at,
     _knee,
     _load_checkpoint,
+    _record_identity,
     _select_with_budget,
     _tfidf_scores,
+    plan_jobs,
+    segments_digest,
 )
 from loosy_goose.budget import ProtectPolicy, token_budget  # noqa: E402
-from loosy_goose.segment import Segment, SegmentKind, extract_atoms  # noqa: E402
+from loosy_goose.segment import (  # noqa: E402
+    ATOMS_VERSION,
+    Segment,
+    SegmentKind,
+    extract_atoms,
+)
 from loosy_goose.tokens import count_tokens  # noqa: E402
 
 
@@ -113,67 +126,124 @@ def test_methods_respect_the_shared_token_budget(
 
     monkeypatch.setattr("loosy_goose.select.embed_texts", fake_embed)
     budget = token_budget(segs, 0.5)
-    kept = METHODS[name](segs, 0.5, "none", tmp_path)
+    kept = METHODS[name](segs, 0.5, "none", tmp_path, BASE_VARIANT)
     assert sum(count_tokens(s.text) for s in kept) <= budget
     assert [s.id for s in kept] == sorted(s.id for s in kept)
 
 
-def test_current_config_fingerprint_covers_what_would_invalidate_a_checkpoint() -> None:
-    cfg = _current_config()
-    assert cfg["schema_version"] == SCHEMA_VERSION
-    assert cfg["keep_ratios"] == list(KEEP_RATIOS)
-    assert cfg["methods"] == sorted(METHODS)
-    assert set(cfg["protects"]) == {"none", "code_only"}
-    assert PROTECT_CODE_ONLY_METHODS  # sanity: the "code_only" branch above is exercised
-    # Deterministic and JSON-round-trippable, since it is compared against a loaded checkpoint.
-    assert _current_config() == json.loads(json.dumps(_current_config()))
+def test_variant_key_is_base_only_for_the_default_configuration() -> None:
+    assert BASE_VARIANT.key() == "base"
+    assert Variant(drop_top=2).key() == "drop_top=2"
 
 
-def test_load_checkpoint_reuses_a_matching_fingerprint(tmp_path: Path) -> None:
-    cfg = _current_config()
+def test_variant_applies_only_to_the_methods_it_names() -> None:
+    v = Variant(drop_top=1, applies_to=("leverage",))
+    assert v.covers("leverage")
+    assert not v.covers("random")
+    assert BASE_VARIANT.covers("random")
+
+
+def test_variant_threads_drop_top_into_the_compress_config() -> None:
+    assert BASE_VARIANT.compress_config("leverage").drop_top == 0
+    assert Variant(drop_top=3).compress_config("ridge").drop_top == 3
+
+
+def test_plan_jobs_covers_every_method_ratio_and_variant_exactly_once() -> None:
+    jobs = plan_jobs()
+    assert len({j.identity() for j in jobs}) == len(jobs)
+    base = [j for j in jobs if j.variant.key() == "base"]
+    expected = len(METHODS) * len(KEEP_RATIOS) + len(PROTECT_CODE_ONLY_METHODS) * len(KEEP_RATIOS)
+    assert len(base) == expected
+    # A scoring variant must not schedule work for methods it cannot change.
+    for job in jobs:
+        assert job.variant.covers(job.method)
+
+
+def test_plan_jobs_puts_the_baseline_first_so_an_interrupted_run_is_still_usable() -> None:
+    jobs = plan_jobs()
+    first_non_base = next(i for i, j in enumerate(jobs) if j.variant.key() != "base")
+    assert all(j.variant.key() == "base" for j in jobs[:first_non_base])
+
+
+def test_segments_digest_tracks_text_and_kind_but_not_ordering_of_unrelated_runs() -> None:
+    a = [_seg(0, "alpha"), _seg(1, "beta")]
+    b = [_seg(0, "alpha"), _seg(1, "beta")]
+    assert segments_digest(a) == segments_digest(b)
+    assert segments_digest(a) != segments_digest([_seg(0, "alpha"), _seg(1, "gamma")])
+    assert segments_digest(a) != segments_digest([_seg(0, "alpha", kind="code"), _seg(1, "beta")])
+
+
+def test_segments_digest_covers_the_atom_extractor_version() -> None:
+    # Atoms are the recall metric's denominator, so a changed extractor invalidates stored
+    # records exactly as a changed segmenter does, even though no segment text moves.
+    segs = [_seg(0, "alpha"), _seg(1, "beta")]
+    before = segments_digest(segs)
+    with mock.patch.object(exp_d, "ATOMS_VERSION", ATOMS_VERSION + 1):
+        assert segments_digest(segs) != before
+
+
+def test_record_identity_defaults_a_variantless_record_to_the_baseline() -> None:
+    # Records written before variants existed carry no variant_key; they are baseline records.
+    rec = {"method": "tfidf", "protect": "none", "keep_ratio": 0.5}
+    assert _record_identity(rec) == ("tfidf", "none", 0.5, "base")
+
+
+def test_job_identity_distinguishes_variants_of_the_same_method() -> None:
+    a = Job("leverage", "none", 0.5, BASE_VARIANT)
+    b = Job("leverage", "none", 0.5, Variant(drop_top=2))
+    assert a.identity() != b.identity()
+
+
+def test_load_checkpoint_reuses_a_matching_schema(tmp_path: Path) -> None:
     out_path = tmp_path / "t.json"
-    out_path.write_text(json.dumps({"label": "t", "config": cfg, "records": []}), encoding="utf-8")
-    cached, reason = _load_checkpoint(out_path, force=False, current_config=cfg)
-    assert cached is not None and cached["label"] == "t"
+    out_path.write_text(
+        json.dumps({"label": "t", "schema_version": SCHEMA_VERSION, "records": []}),
+        encoding="utf-8",
+    )
+    prior, reason = _load_checkpoint(out_path, force=False)
+    assert prior is not None and prior["label"] == "t"
     assert reason is None
 
 
-def test_load_checkpoint_invalidates_on_fingerprint_mismatch(tmp_path: Path) -> None:
-    cfg = _current_config()
-    stale_cfg = {**cfg, "keep_ratios": [*cfg["keep_ratios"], 0.07]}
+def test_load_checkpoint_discards_an_older_record_schema(tmp_path: Path) -> None:
+    # A record-shape change is the one thing a checkpoint cannot be salvaged from; adding a
+    # method or a variant must NOT land here, which is what the plan_jobs tests above cover.
     out_path = tmp_path / "t.json"
     out_path.write_text(
-        json.dumps({"label": "t", "config": stale_cfg, "records": []}), encoding="utf-8"
+        json.dumps({"label": "t", "schema_version": SCHEMA_VERSION - 1, "records": []}),
+        encoding="utf-8",
     )
-    cached, reason = _load_checkpoint(out_path, force=False, current_config=cfg)
-    assert cached is None
-    assert reason == "config fingerprint mismatch"
+    prior, reason = _load_checkpoint(out_path, force=False)
+    assert prior is None
+    assert reason is not None and "record schema" in reason
 
 
-def test_load_checkpoint_treats_a_missing_config_key_as_a_mismatch(tmp_path: Path) -> None:
-    # The exact regression this guards: a checkpoint written before "config" existed at all.
-    cfg = _current_config()
+def test_load_checkpoint_discards_a_checkpoint_with_no_schema_version(tmp_path: Path) -> None:
     out_path = tmp_path / "t.json"
     out_path.write_text(json.dumps({"label": "t", "records": []}), encoding="utf-8")
-    cached, reason = _load_checkpoint(out_path, force=False, current_config=cfg)
-    assert cached is None
-    assert reason == "config fingerprint mismatch"
+    prior, reason = _load_checkpoint(out_path, force=False)
+    assert prior is None and reason is not None
 
 
-def test_load_checkpoint_force_always_reruns_even_with_a_matching_fingerprint(
-    tmp_path: Path,
-) -> None:
-    cfg = _current_config()
+def test_load_checkpoint_force_always_reruns(tmp_path: Path) -> None:
     out_path = tmp_path / "t.json"
-    out_path.write_text(json.dumps({"label": "t", "config": cfg, "records": []}), encoding="utf-8")
-    cached, reason = _load_checkpoint(out_path, force=True, current_config=cfg)
-    assert cached is None
+    out_path.write_text(
+        json.dumps({"label": "t", "schema_version": SCHEMA_VERSION, "records": []}),
+        encoding="utf-8",
+    )
+    prior, reason = _load_checkpoint(out_path, force=True)
+    assert prior is None
     assert reason == "--force"
 
 
 def test_load_checkpoint_no_file_means_no_checkpoint(tmp_path: Path) -> None:
-    cached, reason = _load_checkpoint(tmp_path / "missing.json", force=False, current_config={})
-    assert cached is None and reason is None
+    prior, reason = _load_checkpoint(tmp_path / "missing.json", force=False)
+    assert prior is None and reason is None
+
+
+def test_variants_declare_at_least_one_non_baseline_configuration() -> None:
+    assert VARIANTS[0] == BASE_VARIANT
+    assert len({v.key() for v in VARIANTS}) == len(VARIANTS)
 
 
 def _curve(rates: list[float], recall_final: list[float]) -> dict[str, object]:
@@ -227,5 +297,5 @@ def test_plain_baselines_respect_protect_policy(
     monkeypatch.setattr("loosy_goose.select.embed_texts", fake_embed)
     forced = {"none": set(), "code_only": {8}}[protect]
     for name in ("tfidf", "leverage"):
-        kept = METHODS[name](segs, 0.5, protect, tmp_path)
+        kept = METHODS[name](segs, 0.5, protect, tmp_path, BASE_VARIANT)
         assert forced <= {s.id for s in kept}

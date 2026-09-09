@@ -10,6 +10,7 @@ so the findings survive independently of any one machine. Interpretation lives i
 | `exp_a_summary.txt` | `experiments/exp_a_ppmi.py` — PPMI-SVD eigen-topic stability and labels |
 | `exp_b_summary.txt` | `experiments/exp_b_embed.py` — embedding-SVD spectrum and leverage selection |
 | `exp_c_summary.txt` | `experiments/exp_c_code.py` — C1 banding, C2 supersession, C3 embedder comparison |
+| `exp_d_summary.txt` | `experiments/exp_d_curves.py` — Phase 2 rate-distortion grid at matched budgets, re-run 2026-09-09 after the atom-extractor fix |
 
 Full per-transcript JSON and plots are **not** committed; they land in the gitignored
 `experiments/output/` when the scripts run.

@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from loosy_goose.transcript import Block, Role, Transcript
 
 SegmentKind = Literal["prose", "code", "tool_result", "tool_use", "thinking"]
+
+# Bumped whenever extract_atoms changes what it returns. Experiment checkpoints mix records from
+# many runs, and atoms are the recall metric's denominator: without this in their input identity
+# a changed extractor would leave stale records loading silently beside new ones.
+ATOMS_VERSION = 2
 
 # Atom patterns. Deliberately tuned toward recall over precision: a false-positive atom only
 # makes the recall metric slightly harder to satisfy, whereas a missed identifier or number is
@@ -47,10 +53,51 @@ class Segment:
     atoms: list[str] = field(default_factory=list)
 
 
+def _json_values(node: Any, out: list[str]) -> None:
+    if isinstance(node, str):
+        out.append(node)
+    elif isinstance(node, dict):
+        for v in node.values():
+            _json_values(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _json_values(v, out)
+    elif node is not None:
+        out.append(str(node))
+
+
+def scannable(text: str) -> str:
+    r"""The text the atom patterns should run over.
+
+    A tool_use segment's text is `json.dumps` output (see transcript.py), so a newline inside an
+    edit body arrives as a literal backslash-n. The path pattern reads that backslash as a
+    separator and invents atoms like `n\n` — 8.7% of every distinct atom in the corpus — while a
+    genuine Windows path, doubled to `\\` by the same serializer, matches nothing at all.
+    Decoding removes both errors at once, and rescues identifiers that an escape had split.
+
+    Values only: the keys are the tool's parameter names, identical across every call and never a
+    fact about the session. A small JSON tool_result loses its field names to the same rule, which
+    is the accepted cost of not making atom extraction depend on segment kind.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("{"):
+        return text
+    try:
+        payload = json.loads(stripped)
+    except ValueError:
+        return text
+    if not isinstance(payload, dict):
+        return text
+    values: list[str] = []
+    _json_values(payload, values)
+    return "\n".join(values)
+
+
 def extract_atoms(text: str) -> list[str]:
     seen: dict[str, None] = {}
+    scan = scannable(text)
     for pat in _ATOM_PATTERNS:
-        for m in pat.finditer(text):
+        for m in pat.finditer(scan):
             atom = m.group(1) if pat.groups else m.group(0)
             atom = atom.strip().rstrip(".,;:")
             if not atom:
