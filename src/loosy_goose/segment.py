@@ -82,16 +82,49 @@ def _merge(pieces: list[str], max_chars: int) -> list[str]:
     return out
 
 
+def _hard_split(text: str, max_chars: int) -> list[str]:
+    # Sentence splitting leaves a piece unbounded whenever a paragraph carries no sentence
+    # punctuation — long list items, log dumps, minified payloads. One such paragraph measured
+    # 7,602 tokens, which pinned that transcript's keep ratio at 0.148 no matter what the
+    # selector chose, so every method scored identically on it. Prefer a newline, then a space;
+    # slice mid-word only when the run contains no break at all, since the loop must terminate.
+    out: list[str] = []
+    rest = text
+    while len(rest) > max_chars:
+        window = rest[:max_chars]
+        cut = max(window.rfind("\n"), window.rfind(" "))
+        if cut <= 0:
+            cut = max_chars
+        out.append(rest[:cut].strip())
+        rest = rest[cut:].lstrip()
+    if rest.strip():
+        out.append(rest.strip())
+    return [p for p in out if p]
+
+
+def _bounded(pieces: list[str], max_chars: int) -> list[str]:
+    out: list[str] = []
+    for piece in pieces:
+        if len(piece) <= max_chars:
+            out.append(piece)
+        else:
+            out.extend(_hard_split(piece, max_chars))
+    return out
+
+
 def split_prose(text: str, max_chars: int) -> list[str]:
     chunks: list[str] = []
     for para in _PARAGRAPH.split(text):
         para = para.strip()
-        if not para:
+        # Markdown rules and other punctuation-only paragraphs carry no meaning but do produce
+        # segments, and identical text embeds to identical vectors: one transcript held dozens
+        # of bare `---` separators, which dominated the top SVD directions outright.
+        if not para or not any(ch.isalnum() for ch in para):
             continue
         if len(para) <= max_chars:
             chunks.append(para)
             continue
-        chunks.extend(_merge(split_sentences(para), max_chars))
+        chunks.extend(_merge(_bounded(split_sentences(para), max_chars), max_chars))
     return chunks
 
 
@@ -111,6 +144,12 @@ def _chunk_lines(text: str, max_chars: int) -> list[str]:
         if buf and size + len(ln) + 1 > max_chars:
             out.append("\n".join(buf))
             buf, size = [], 0
+        # A single line can exceed max_chars on its own (one-line JSON payloads, base64 blobs),
+        # which is the same unbounded-segment hole as in split_prose and matters more here:
+        # tool_result is the largest channel by tokens in agentic transcripts.
+        if len(ln) > max_chars:
+            out.extend(_hard_split(ln, max_chars))
+            continue
         buf.append(ln)
         size += len(ln) + 1
     if buf:

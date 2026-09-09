@@ -108,3 +108,34 @@ def test_segment_ids_and_turns() -> None:
     assert [s.id for s in segs] == [0, 1, 2]
     assert [s.turn for s in segs] == [0, 1, 1]
     assert [s.role for s in segs] == ["user", "assistant", "assistant"]
+
+
+def test_split_prose_drops_markdown_horizontal_rules() -> None:
+    text = "First part.\n\n---\n\nSecond part.\n\n***\n\nThird part."
+    assert split_prose(text, 600) == ["First part.", "Second part.", "Third part."]
+
+
+def test_split_prose_keeps_paragraphs_that_merely_start_with_punctuation() -> None:
+    assert split_prose("- item one\n\n- item two", 600) == ["- item one", "- item two"]
+
+
+def test_split_prose_bounds_paragraphs_with_no_sentence_punctuation() -> None:
+    para = " ".join(f"word{i}" for i in range(400))
+    chunks = split_prose(para, 100)
+    assert len(chunks) > 1
+    assert all(len(c) <= 100 for c in chunks)
+    assert " ".join(chunks).split() == para.split()
+
+
+def test_split_prose_bounds_a_run_with_no_whitespace_at_all() -> None:
+    chunks = split_prose("x" * 500, 100)
+    assert chunks == ["x" * 100] * 5
+
+
+def test_chunk_lines_bounds_a_single_overlong_line() -> None:
+    long_line = " ".join(f"tok{i}" for i in range(300))
+    block = Block("tool_result", f"short line\n{long_line}\ntail line")
+    segs = segment(_transcript(block), max_prose_chars=120)
+    assert all(len(s.text) <= 120 for s in segs)
+    assert any("tok0" in s.text for s in segs)
+    assert any("tail line" in s.text for s in segs)

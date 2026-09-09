@@ -118,3 +118,30 @@ def test_differential_ppmi_rejects_bad_map() -> None:
     counts = sp.csr_matrix(np.ones((3, 3)))
     with pytest.raises(ValueError):
         differential_ppmi(counts, counts, np.arange(2))
+
+
+def test_tokenize_neutralises_json_escapes_from_tool_use_dumps() -> None:
+    # json.dumps leaves a newline as the two literal characters backslash and n, and the path
+    # branch of _TOKEN accepts a backslash as a separator, so these fused into one false
+    # identifier. `math\nimport` was a real vocabulary entry before this.
+    assert tokenize(r"import math\nimport os") == ["import", "math", "import", "os"]
+
+
+def test_tokenize_handles_tab_and_carriage_return_escapes() -> None:
+    assert tokenize(r"build_dir\tclang\rlinker") == ["build_dir", "clang", "linker"]
+
+
+def test_tokenize_leaves_single_backslash_paths_intact() -> None:
+    assert tokenize(r"see src\loosy_goose\segment.py now") == [
+        "see",
+        r"src\loosy_goose\segment.py",
+        "now",
+    ]
+
+
+def test_tokenize_does_not_corrupt_doubled_backslash_paths() -> None:
+    # json.dumps doubles backslashes in real Windows paths, which would otherwise present a
+    # second backslash immediately before an `n` and lose the directory name to the escape rule.
+    tokens = tokenize(r"open c:\\new\\report.txt now")
+    assert "new" in tokens
+    assert "ew" not in tokens

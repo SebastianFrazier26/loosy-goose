@@ -170,19 +170,42 @@ Extra dimensions bought nothing structural: k95/n stayed at 0.72–0.88 regardle
   with an eigen-flavoured labeller on top. That would still be a useful tool. It would not be
   the tool described in the design.
 
-## Known defects found while running Phase 1
+## Defects found while running Phase 1 — all fixed 2026-09-09
 
-Not yet fixed; deliberately deferred so as not to desync in-flight experiment runs.
+Deferred during the runs so as not to desync them, then fixed before Phase 2. Measured across
+33 transcripts, before and after:
 
-1. **Segmenter, markdown rules.** `---` horizontal rules become standalone prose segments.
-   Dozens of identical embeddings then hijack the top SVD directions (seen on
-   `trace-commons_47d9fc04`).
-2. **Segmenter, unbounded paragraphs.** An unbroken 7,602-token paragraph escapes
-   `max_prose_chars`; `split_prose`/`_merge` have no hard character-length fallback. Budget
-   sticks at 0.148 kept.
-3. **Transcript loader, escape leakage.** `transcript.py` JSON-dumps `tool_use` blocks, so
-   literal `\n` escapes reach the tokenizer (`n\n`, `math\nimport`). Fix by stripping `\\[ntr]`
-   in `tokenize`, unescaping upstream, or accepting it — undecided.
+| Defect | Before | After |
+| --- | --- | --- |
+| Punctuation-only prose segments (`---` rules) | 137 | **0** |
+| Duplicate prose segments | 364 | **305** |
+| Escape-corrupted tokens in `tool_use` | 27,650 | **1** |
+| Largest prose segment | 7,602 tokens | **347** |
+| Largest `tool_result` segment | — | **395** |
+
+1. **Segmenter, markdown rules.** `---` and `***` became standalone prose segments; identical
+   text embeds to identical vectors, and dozens of them dominated the top SVD directions on
+   `trace-commons_47d9fc04`. `split_prose` now drops any paragraph with no alphanumeric
+   character.
+2. **Segmenter, unbounded segments.** A paragraph with no sentence punctuation escaped
+   `max_prose_chars` entirely — one measured 7,602 tokens and pinned that transcript's keep
+   ratio at 0.148 for every method, making its curve meaningless. Added `_hard_split`, which
+   breaks on a newline, then a space, then mid-run as a last resort so the loop terminates. The
+   same hole existed in `_chunk_lines` for a single overlong `tool_result` line and is fixed
+   there too, which matters more since `tool_result` is the largest channel by tokens.
+   `code` and `tool_use` segments remain deliberately atomic — banding, not splitting, is how
+   those get quantized — so they still exceed the cap by design (max 11,319 and 8,741 tokens).
+3. **Tokenizer, escape leakage.** `transcript.py` JSON-dumps `tool_use` input, so newlines
+   survive as the literal characters `\` and `n`; the path branch of `_TOKEN` accepts a
+   backslash as a separator and fused them into false identifiers such as `math\nimport`
+   (`n\n` alone occurred 6,696 times). Fixed in `cooccur.tokenize` rather than in the loader,
+   because changing how `tool_use` is rendered would alter segment text and invalidate the
+   Phase 1 metrics and `code.quantize_tool_use`. A negative lookbehind protects real Windows
+   paths, which `json.dumps` writes with doubled backslashes.
+
+**Still open, deliberately:** whether `tool_use` should be emitted as readable text rather than
+`json.dumps` output. That is an emit-format design decision, not a defect, and belongs with the
+quality-table implementation.
 
 ## Flagged defaults awaiting confirmation
 
