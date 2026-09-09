@@ -11,8 +11,11 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.5.3",
+    "scikit-learn>=1.9.0",
     "scipy>=1.18.1",
     "tiktoken>=0.14.0",
+    "tree-sitter>=0.25,<0.26",
+    "tree-sitter-language-pack>=1.16.2",
 ]
 
 [project.optional-dependencies]
@@ -51,3 +54,4 @@ files = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: needs the embedding model; skipped when sentence_transformers is missing"]

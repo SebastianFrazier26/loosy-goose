@@ -1,6 +1,8 @@
 import numpy as np
 import numpy.typing as npt
 import scipy.linalg
+import scipy.sparse
+import scipy.sparse.linalg
 
 FloatArray = npt.NDArray[np.floating]
 
@@ -55,5 +57,23 @@ def truncated_svd(
     # Default eig_weight=0 (W = U_k, no singular-value scaling) follows Levy, Goldberg & Dagan
     # 2015: weighting by S hurts downstream similarity tasks, and Shin et al. 2018 analyse
     # exactly this unweighted form. eig_weight=1 recovers the classical U_k S_k factor.
+    w = u_k if eig_weight == 0.0 else u_k * (s_k**eig_weight)
+    return w, s_k, vt_k
+
+
+def truncated_svd_sparse(
+    m: scipy.sparse.csr_matrix, rank: int, eig_weight: float = 0.0, seed: int = 0
+) -> tuple[FloatArray, FloatArray, FloatArray]:
+    a = scipy.sparse.csr_matrix(m).astype(np.float64)
+    if a.ndim != 2:
+        raise ValueError("m must be 2-D")
+    # ARPACK needs k strictly below min(shape); the dense path handles the full-rank case.
+    if rank < 1 or rank >= min(a.shape):
+        raise ValueError(f"rank must be in [1, {min(a.shape) - 1}]")
+    rng = np.random.default_rng(seed)
+    v0 = rng.standard_normal(a.shape[1])
+    u, s, vt = scipy.sparse.linalg.svds(a, k=rank, v0=v0)
+    order = np.argsort(s)[::-1]
+    u_k, s_k, vt_k = u[:, order], s[order], vt[order, :]
     w = u_k if eig_weight == 0.0 else u_k * (s_k**eig_weight)
     return w, s_k, vt_k
