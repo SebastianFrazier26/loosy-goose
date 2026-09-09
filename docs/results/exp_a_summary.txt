@@ -1,0 +1,20 @@
+      transcript   tokens    |V|    k  part% st_top20 st_sp20 bg_top20 bg_sp20  sample sparse topics
+----------------------------------------------------------------------------------------------------
+      local/100k    69627   3857  200   16.7    0.764   0.360    0.731   0.504  (local session: withheld)
+      local/200k   122006   5542  200   13.7    0.816   0.545    0.761   0.612  (local session: withheld)
+       local/20k    15100   1418  200   22.6    0.649   0.441    0.656   0.562  (local session: withheld)
+       local/50k    30457   2209  200   20.3    0.668   0.414    0.677   0.557  (local session: withheld)
+        local/5k     3365    450  112   27.6    0.618   0.439    0.626   0.517  (local session: withheld)
+     tc/4c09dfa9     2132    107   19   26.3    0.820   0.820    0.805   0.805  optional/bin/fg/to/where/out | it/be/doesn/powershell/for/string | path/directory/downloaddir/new/itemtype/item
+     tc/11ef2190     2683    389   77   25.9    0.627   0.491    0.613   0.532  an/desc/dist/would/of/lang | been/it/plugin/has/installed/updated | disabled/btn/https/while/nav/and
+     tc/ba1b4916    21666   1884  200   17.2    0.723   0.553    0.742   0.631  venv\lib\site-packages\langdetect\lang_detect_exception.py/venv\lib\site-packages\langdetect\language.py/venv\lib\site-packages\langdetect\detector_factory.py/venv\lib\site-packages\langdetect\tests\test_detector.py/venv\lib\site-packages\langdetect\tests\test_language.py/venv\lib\site-packages\langdetect\detector.py | venv\lib\site-packages\httpx\_client.py/venv\lib\site-packages\httpx\_config.py/venv\lib\site-packages\httpx\_auth.py/venv\lib\site-packages\httpx\_content.py/venv\lib\site-packages\httpx\_api.py/venv\lib\site-packages\httpx\_decoders.py | venv\lib\site-packages\h11\_events.py/venv\lib\site-packages\h11\_headers.py/venv\lib\site-packages\h11\_connection.py/venv\lib\site-packages\h11\_readers.py/venv\lib\site-packages\h11\_abnf.py/venv\lib\site-packages\h11\_receivebuffer.py
+     tc/479c5e9f    34768   1927  200   21.1    0.749   0.464    0.690   0.603  o0/build_dir/clang/patsubst/srcs_parser/iinclude | lib/epilog_query/epilog_create/nlib/epilog_load_string/parent | lib_objs/cxx/cxxflags/exe/n\t/host
+     tc/c84c0ad3    22838   1542  200   20.7    0.692   0.404    0.666   0.516  replace/h3/gm/h1/h4/font | at/for/file/are/it/letter | mt/mr/mi/mv/mo/ms
+     tc/860618e1    60589   3254  200   15.6    0.742   0.398    0.723   0.481  not/are/be/of/terms/does | adj/by/button/level/const/are | as/from/for/and/non/if
+     tc/47d9fc04    57881   3444  200   13.3    0.742   0.558    0.709   0.594  x04/x02/x22/x3e/x1c/x10 | installing/kib/retrieving/oss/done/mirror | n/y/support/all/from/tail/linux_src
+     tc/da5d32d6    74680   4465  200   15.9    0.740   0.527    0.726   0.560  file_path/echo/out/dev/null/screencap/resize | false/true/or/are/sh/add | const/this/number/return/void/private
+      swe/row309     1237    172   31   31.1    0.736   0.703    0.709   0.707  you/means/me/have/directory/this | is/and/it/call/no/after | you/your/any/no/will/sure
+      swe/row419     4176    413  103   27.2    0.685   0.522    0.606   0.518  be/allowed/that/can/it/ve | should/this/for/your/lines/additional | data/copy/cls/scalars/index/elif
+      swe/row358     3637    424  106   26.0    0.663   0.471    0.593   0.533  import/from/moto/core/client/dynamodb | for/pk/update_item/call/client/workspace/getmoto__moto__4.0/moto/dynamodb/models | from/it/or/core/lines/jsonresterror
+      swe/row282     6572    624  156   26.4    0.629   0.408    0.626   0.535  import/from/mypy/typing/defaultdict/operators | ctx/or/line/range/return/classdef | arg_star/arg_named_opt/arg_pos/arg_opt/arg_star2/they
+      swe/row214    18709    570  142   23.1    0.773   0.611    0.756   0.626  your/function/it/be/command/execute | function/description/finish/it/begin/no | italic/bold/underline/sz/size/strike
