@@ -8,6 +8,7 @@ import numpy as np
 from loosy_goose import embed
 from loosy_goose.embed import FloatArray
 from loosy_goose.segment import Segment
+from loosy_goose.supersede import apply_supersession
 from loosy_goose.tokens import count_tokens
 
 
@@ -24,6 +25,28 @@ def _kept_atoms(kept: list[Segment]) -> set[str]:
 
 def atom_recall(original: list[Segment], kept: list[Segment]) -> float:
     wanted = {a for s in original for a in s.atoms}
+    if not wanted:
+        return 1.0
+    return len(wanted & _kept_atoms(kept)) / len(wanted)
+
+
+def final_state_atoms(original: list[Segment]) -> set[str]:
+    """Atoms that still describe something real once supersession is applied: superseded reads
+    and edits name paths/values that no longer reflect the session's end state. Always computed
+    from the ORIGINAL segment list so every method is scored against the same denominator,
+    regardless of what that method itself dropped."""
+    return {a for s in apply_supersession(original) for a in s.atoms}
+
+
+def atom_recall_final(
+    original: list[Segment],
+    kept: list[Segment],
+    final_atoms: set[str] | None = None,
+) -> float:
+    """Atom recall against the final-state atom set rather than every atom ever mentioned. Pass
+    `final_atoms` (from `final_state_atoms`) when scoring many (method, ratio) pairs on the same
+    transcript, to avoid re-running supersession detection on every call."""
+    wanted = final_atoms if final_atoms is not None else final_state_atoms(original)
     if not wanted:
         return 1.0
     return len(wanted & _kept_atoms(kept)) / len(wanted)
@@ -90,11 +113,13 @@ def evaluate(
     kept: list[Segment],
     original_vectors: FloatArray | None = None,
     model_name: str = embed.SCORE_MODEL,
+    final_atoms: set[str] | None = None,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {
         "compression_ratio": compression_ratio(original, kept),
         "atom_recall": atom_recall(original, kept),
         "atom_recall_by_kind": atom_recall_by_kind(original, kept),
+        "atom_recall_final": atom_recall_final(original, kept, final_atoms),
     }
     out.update(semantic_coverage(original, kept, model_name, original_vectors))
     return out

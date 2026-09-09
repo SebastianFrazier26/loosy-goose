@@ -5,8 +5,10 @@ from loosy_goose.budget import forced_mask, select_by_score, token_budget
 from loosy_goose.metrics import (
     atom_recall,
     atom_recall_by_kind,
+    atom_recall_final,
     compression_ratio,
     evaluate,
+    final_state_atoms,
     semantic_coverage,
 )
 from loosy_goose.segment import Segment, SegmentKind, extract_atoms
@@ -114,6 +116,39 @@ def test_atom_recall_hand_built() -> None:
     assert by_kind["tool_use"] == 0.0
     # A kind with no atoms at all is trivially fully recalled.
     assert atom_recall_by_kind([_seg(0, "plain words only")], []) == {"prose": 1.0}
+
+
+def test_atom_recall_final_matches_atom_recall_when_nothing_superseded() -> None:
+    segs = _corpus()  # no repeated read/write paths, nothing for apply_supersession to drop
+    assert final_state_atoms(segs) == {a for s in segs for a in s.atoms}
+    for kept in ([segs[0]], segs[:3], segs, []):
+        assert atom_recall_final(segs, kept) == pytest.approx(atom_recall(segs, kept))
+
+
+def test_atom_recall_final_only_counts_the_last_read() -> None:
+    # Three reads of the same path with a distinguishing offset atom each; only the last read
+    # survives supersession, so only its atoms belong in the final-state denominator.
+    reads = [
+        _seg(i, f'{{"file_path": "config.py", "offset": {off}}}', kind="tool_use", protected=True)
+        for i, off in enumerate((10, 20, 30))
+    ]
+    final = final_state_atoms(reads)
+    assert final == set(reads[-1].atoms) == {"config.py", "file_path", "30"}
+
+    kept = [reads[-1]]
+    # Historical recall: only the last read's atoms are present, out of every read's atoms.
+    assert atom_recall(reads, kept) == pytest.approx(3 / 5)
+    # Final-state recall: kept IS the segment whose atoms define the denominator, so it's total.
+    assert atom_recall_final(reads, kept) == pytest.approx(1.0)
+    assert atom_recall_final(reads, []) == pytest.approx(0.0)
+    # A precomputed final_atoms set must be usable directly, without recomputing supersession.
+    assert atom_recall_final(reads, kept, final_atoms=final) == pytest.approx(1.0)
+
+
+def test_evaluate_reports_both_atom_recall_metrics() -> None:
+    segs = _corpus()
+    result = evaluate(segs, [segs[2]])
+    assert "atom_recall" in result and "atom_recall_final" in result
 
 
 def test_semantic_coverage_degenerate_cases_need_no_model() -> None:
