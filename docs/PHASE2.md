@@ -782,6 +782,23 @@ restored such text; what was wrong was the scored text and its re-extracted atom
 12. Unify the two sources of a tool's name (`supersede`'s positional rebuild against
     `Segment.tool_name`), immediately after the grid — see
     [Decided](#decided-2026-09-10) for why it waits.
+13. **Make both surveys regenerable, in one pass.** Two separate figures in this document cannot
+    currently be reproduced against the code that is actually running, for two different reasons,
+    and the fix is the same shape for both.
+    - The `tool_use` channel table was measured ad hoc: no committed script produces it, so it
+      cannot be re-derived at all. It is stale under `TRANSFORMS_VERSION` 2, which dropped the
+      tool name and changed `shrink_prose`'s whitespace, moving every column.
+    - `experiments/survey_paths.py` exists but carries its own hard-coded copies of the v1 path
+      patterns, deliberately, so running it today re-measures the old rules rather than the
+      current ones. Re-point it at `segment._FILE_EXTENSIONS`, the way `paths.py` already does,
+      and the numbers become regenerable by construction rather than by discipline.
+    Neither touches `src/`, so this is read-only measurement work that can land any time. Doing it
+    alongside item 4's depth sweep is the natural pairing — that sweep needs the same
+    instrumentation.
+    **Open sub-decision, not yet made:** whether these surveys read `data/local/` (counts only and
+    never quoted, as today, which keeps continuity with the existing figures) or restrict to the
+    public corpora (so every published number is reproducible by someone without the local
+    sessions, at the cost of changing what the numbers mean).
 
 Resumption and downstream task evaluation are deferred by decision, not forgotten.
 
