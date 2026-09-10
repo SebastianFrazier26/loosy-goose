@@ -8,10 +8,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from experiments.exp_e_analysis import (  # noqa: E402
+    BASE_VARIANT_KEY,
     KNEE_FLOOR,
     MIN_KIND_TRANSCRIPTS,
     _reported_kinds,
     build_curves,
+    grid_fingerprint,
     interp_at,
     knee,
     load_checkpoints,
@@ -23,6 +25,7 @@ def _record(method: str, rate: float, **over: Any) -> dict[str, Any]:
     rec: dict[str, Any] = {
         "method": method,
         "protect": "none",
+        "keep_ratio": rate,
         "compression_ratio": rate,
         "atom_recall": rate,
         "atom_recall_final": rate,
@@ -42,12 +45,32 @@ def _result(label: str, rates: list[float], tokens: float = 1000.0, **over: Any)
         "total_tokens": tokens,
         "n_segments": 10,
         "segments_by_kind": {"prose": 6, "code": 4},
-        "config": {"schema_version": 2},
+        "schema_version": 3,
         "supersede_ceiling": 0.5,
         "records": [_record("m", r) for r in rates],
     }
     out.update(over)
     return out
+
+
+def test_build_curves_ignores_every_non_baseline_variant() -> None:
+    # The defect this guards: this analysis keys on (method, protect) alone, so once variants
+    # started sharing a checkpoint it folded drop_top curves and path arms into the baseline's
+    # average without saying so. Records predating variants carry no key and are baseline.
+    result = _result("t", [0.2, 0.5])
+    result["records"] += [
+        _record("m", 0.3, variant_key="drop_top=2"),
+        _record("m", 0.4, variant_key="paths=full"),
+    ]
+    curves = build_curves([result])
+    assert curves[("m", "none")][0]["rates"] == [0.2, 0.5]
+
+
+def test_base_variant_key_matches_the_one_exp_d_writes() -> None:
+    # Duplicated as a literal to keep this module cheap to import; that makes drift the risk.
+    from experiments.exp_d_curves import BASE_VARIANT
+
+    assert BASE_VARIANT_KEY == BASE_VARIANT.key()
 
 
 def test_build_curves_sorts_and_drops_repeated_rates() -> None:
@@ -139,25 +162,82 @@ def test_reported_kinds_drops_channels_carried_by_too_few_transcripts() -> None:
     assert any(s.startswith("thinking") for s in skipped)
 
 
-def test_load_checkpoints_rejects_mixed_config_fingerprints(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *results: dict[str, Any]) -> None:
     import experiments.exp_e_analysis as mod
 
     monkeypatch.setattr(mod, "IN", tmp_path)
-    (tmp_path / "a.json").write_text(json.dumps(_result("a", [0.5])), encoding="utf-8")
-    stale = _result("b", [0.5], config={"schema_version": 1})
-    (tmp_path / "b.json").write_text(json.dumps(stale), encoding="utf-8")
-    with pytest.raises(SystemExit, match="config fingerprint"):
+    for r in results:
+        (tmp_path / f"{r['label']}.json").write_text(json.dumps(r), encoding="utf-8")
+
+
+def test_grid_fingerprint_reads_fields_that_still_exist_after_schema_3() -> None:
+    # The guard used to key on a run-level "config" key that SCHEMA_VERSION 3 removed, so every
+    # fingerprint was None, the set was always size 1, and it could never fire.
+    result = _result("a", [0.25, 0.5])
+    assert "config" not in result
+    fingerprint = grid_fingerprint(result)
+    assert fingerprint[0] == 3
+    assert fingerprint[1] == (0.25, 0.5)
+    assert fingerprint[2] == ("none",)
+
+
+def test_grid_fingerprint_ignores_which_methods_are_present() -> None:
+    # A method that failed on every ratio leaves the grid intact and shows up as a missing curve;
+    # only a changed ratio grid silently shifts every interpolation, so only that is fingerprinted.
+    a = _result("a", [0.25, 0.5])
+    b = _result("b", [0.25, 0.5])
+    b["records"] = [{**rec, "method": "other"} for rec in b["records"]]
+    assert grid_fingerprint(a) == grid_fingerprint(b)
+
+
+def test_load_checkpoints_rejects_a_different_ratio_grid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(tmp_path, monkeypatch, _result("a", [0.25, 0.5]), _result("b", [0.3, 0.6]))
+    with pytest.raises(SystemExit, match="disagree on the sweep grid"):
         load_checkpoints()
+
+
+def test_load_checkpoints_rejects_a_different_record_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(
+        tmp_path,
+        monkeypatch,
+        _result("a", [0.25, 0.5]),
+        _result("b", [0.25, 0.5], schema_version=2),
+    )
+    with pytest.raises(SystemExit, match="disagree on the sweep grid"):
+        load_checkpoints()
+
+
+def test_load_checkpoints_rejects_a_checkpoint_missing_a_protect_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    both = _result("a", [0.25, 0.5])
+    both["records"] += [_record("m", r, protect="code_only") for r in (0.25, 0.5)]
+    _write(tmp_path, monkeypatch, both, _result("b", [0.25, 0.5]))
+    with pytest.raises(SystemExit, match="disagree on the sweep grid"):
+        load_checkpoints()
+
+
+def test_load_checkpoints_tolerates_scattered_missing_cells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # exp_d now skips a job that raises rather than dying, so a checkpoint can be short a few
+    # cells. That must not lock the analysis out: the ratio still appears via the other methods,
+    # and the guard exists for a changed grid, not for an incomplete one.
+    full = _result("a", [0.25, 0.5])
+    full["records"] += [_record("other", r) for r in (0.25, 0.5)]
+    holed = _result("b", [0.25, 0.5])
+    holed["records"] += [_record("other", 0.25)]
+    _write(tmp_path, monkeypatch, full, holed)
+    assert {r["label"] for r in load_checkpoints()} == {"a", "b"}
 
 
 def test_load_checkpoints_rejects_empty_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import experiments.exp_e_analysis as mod
-
-    monkeypatch.setattr(mod, "IN", tmp_path)
-    (tmp_path / "a.json").write_text(json.dumps(_result("a", [], records=[])), encoding="utf-8")
+    _write(tmp_path, monkeypatch, _result("a", [], records=[]))
     with pytest.raises(SystemExit, match="no records"):
         load_checkpoints()

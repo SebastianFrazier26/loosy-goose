@@ -38,6 +38,12 @@ ROOT = Path(__file__).resolve().parents[1]
 IN = ROOT / "experiments" / "output" / "exp_d"
 OUT = ROOT / "experiments" / "output" / "exp_e"
 
+# The key exp_d writes for its baseline configuration. Records from any other variant are skipped
+# here — see build_curves. Duplicated as a literal rather than imported, because importing
+# exp_d_curves pulls in sentence-transformers and sklearn for a module that otherwise needs
+# neither, and this analysis exists to be cheap to re-run.
+BASE_VARIANT_KEY = "base"
+
 # Compression multipliers, not keep ratios: "3x" is the unit the project is actually steered by,
 # and a multiplier grid spaces the aggressive end (where the curves bend) more densely than a
 # uniform rate grid would.
@@ -67,6 +73,25 @@ PLOT_METHODS: tuple[str, ...] = (
 )
 
 
+def grid_fingerprint(result: dict[str, Any]) -> tuple[Any, ...]:
+    """What has to match across checkpoints before their curves can be averaged together.
+
+    This used to read a run-level "config" key. SCHEMA_VERSION 3 removed that key, so the guard
+    compared None with None on every checkpoint and could never fire — it stopped protecting
+    against exactly the mixture it exists to catch. These three come off the records themselves:
+    the ratio grid, because every table here interpolates over it, and the protect policies,
+    because a checkpoint swept at only one of them is a different experiment. The METHOD set is
+    deliberately absent: a method that fails on every ratio still leaves the grid intact and shows
+    up as a missing curve, whereas a changed ratio grid silently shifts every interpolation.
+    """
+    recs = result.get("records", [])
+    return (
+        result.get("schema_version"),
+        tuple(sorted({round(float(r["keep_ratio"]), 6) for r in recs if "keep_ratio" in r})),
+        tuple(sorted({str(r["protect"]) for r in recs if "protect" in r})),
+    )
+
+
 def load_checkpoints() -> list[dict[str, Any]]:
     files = sorted(IN.glob("*.json"))
     if not files:
@@ -74,11 +99,17 @@ def load_checkpoints() -> list[dict[str, Any]]:
     results = [json.loads(p.read_text(encoding="utf-8")) for p in files]
     # Same guard as exp_d's own fingerprint check, for the same reason: a checkpoint written
     # under a different metric set or ratio grid must not be silently averaged in with the rest.
-    configs = {json.dumps(r.get("config"), sort_keys=True) for r in results}
-    if len(configs) > 1:
+    groups: dict[tuple[Any, ...], list[str]] = defaultdict(list)
+    for r in results:
+        groups[grid_fingerprint(r)].append(str(r.get("label", "?")))
+    if len(groups) > 1:
+        detail = "; ".join(
+            f"schema={fp[0]} ratios={list(fp[1])} protect={list(fp[2])} -> {sorted(labels)}"
+            for fp, labels in sorted(groups.items(), key=lambda kv: sorted(kv[1]))
+        )
         raise SystemExit(
-            f"checkpoints disagree on config fingerprint ({len(configs)} distinct); "
-            "re-run exp_d_curves.py --force before analysing"
+            f"checkpoints disagree on the sweep grid ({len(groups)} distinct): {detail}. "
+            "Re-run exp_d_curves.py (add --force to rebuild the odd ones out) before analysing."
         )
     missing = [r["label"] for r in results if not r.get("records")]
     if missing:
@@ -117,6 +148,12 @@ def build_curves(results: list[dict[str, Any]]) -> dict[tuple[str, str], list[di
     dropped rather than averaged, since a stacked method that has exhausted its candidate pool
     reports the identical kept set at every higher keep_ratio — but carries every metric, per-kind
     ones included, instead of the four the head-to-head needed.
+
+    **Baseline records only.** This analysis was written when a checkpoint held exactly one
+    configuration, so it keyed on (method, protect) alone. Once variants landed, that silently
+    folded every drop_top curve and every path arm into the same average as the baseline — the
+    exact confusion exp_d_curves._base_only exists to prevent. Variants are compared in their own
+    tables over there, and never here.
     """
     names = _metric_names()
     out: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -125,6 +162,8 @@ def build_curves(results: list[dict[str, Any]]) -> dict[tuple[str, str], list[di
             list
         )
         for rec in r["records"]:
+            if rec.get("variant_key", BASE_VARIANT_KEY) != BASE_VARIANT_KEY:
+                continue
             by_key[(rec["method"], rec["protect"])].append(
                 (
                     float(rec["compression_ratio"]),

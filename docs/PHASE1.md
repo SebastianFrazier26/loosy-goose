@@ -165,16 +165,21 @@ Extra dimensions bought nothing structural: k95/n stayed at 0.72–0.88 regardle
 - **A** does not support the role the project was designed around; it survives as a labeller.
 - **B** is serviceable but the spectrum has no exploitable structure, and its scores are flat
   enough that the token budget does most of the work.
-- **No spectral method has yet been shown to beat budget-shaped TF-IDF.** Phase 2 has to
-  establish that or the honest conclusion is that Loosy-Goose is "supersede + band + TF-IDF"
-  with an eigen-flavoured labeller on top. That would still be a useful tool. It would not be
-  the tool described in the design.
+- **No spectral method has yet been shown to beat budget-shaped TF-IDF.** *Written during Phase
+  1, and the framing did not survive Phase 2.* The worry was that Loosy-Goose would turn out to
+  be "supersede + band + TF-IDF" with an eigen-flavoured labeller on top — still useful, but not
+  the tool the design describes. What the sweep actually showed is that there is no single
+  ranking to be had: the two distortion metrics disagree in opposite directions and both
+  selectors win one.
 
-  *Re-measured 2026-09-09, post atom-extractor fix. The answer is a split, not a win.* Spectral
-  beats budget-shaped TF-IDF on **atom recall** at every rate measured, and loses to it on
-  **semantic coverage** at every rate measured. Which of those two decides the question is a
-  design judgement, not a measurement, and it is open — see
-  [PHASE2.md](PHASE2.md#does-spectral-beat-tf-idf-a-split-verdict).
+  *Answered 2026-09-10, by rejecting the question.* Spectral beat budget-shaped TF-IDF on
+  **atom recall** at every rate measured and lost to it on **semantic coverage** at every rate
+  measured. The two metrics were built to disagree, so collapsing them into one winner throws
+  away the thing they were built to show. They are reported as two separate statistics
+  permanently, with no tie-break: spectral is the fidelity-favouring selector, TF-IDF the
+  coverage-favouring one. The absolute figures are being re-measured on `ATOMS_VERSION` 3, which
+  moved the atom set unevenly by kind, but that changes the numbers rather than the framing. See
+  [PHASE2.md](PHASE2.md#spectral-versus-tf-idf-two-statistics-not-one-verdict).
 
 ## Defects found while running Phase 1 — all fixed 2026-09-09
 
@@ -212,7 +217,8 @@ Deferred during the runs so as not to desync them, then fixed before Phase 2. Me
 4. **Atom extractor, the same escaping — found later, during Phase 2, and it affects the numbers
    above.** Defect 3 fixed the *co-occurrence tokenizer*'s handling of `json.dumps` escapes. The
    *atom extractor* had the identical hole and was not fixed at the same time: it invented path
-   atoms out of runs of escape characters (8.7% of the corpus's 32,344 distinct atoms), and
+   atoms out of runs of escape characters (8.7% of the corpus's 32,344 atoms, summed
+   per transcript — see the counting note below), and
    7,022 of the 7,156 junk mentions sat in `tool_use`, a protected kind that is almost always
    retained — so the junk was almost always scored as recovered. **Every `atom_recall` reported
    in this document is inflated by that.** The mirror-image half, real Windows paths inside tool
@@ -221,9 +227,50 @@ Deferred during the runs so as not to desync them, then fixed before Phase 2. Me
    are unaffected — the inflation applies to every method alike, and the comparisons were
    relative — but the absolute recall figures should not be quoted. See [PHASE2.md](PHASE2.md).
 
-**Still open, deliberately:** whether `tool_use` should be emitted as readable text rather than
-`json.dumps` output. That is an emit-format design decision, not a defect, and belongs with the
-quality-table implementation.
+5. **Four more extractor defects, found by audit during Phase 2 and fixed together.** Drive
+   letters were dropped from Windows paths (2,616 occurrences), `CONSTANT_CASE` identifiers were
+   invisible to the lowercase-only snake pattern (3,952), acronym-led identifiers such as
+   `DOMContentLoaded` were invisible to both camel patterns (1,318), and the file-extension
+   allowlist carried no C/C++/build/binary family (1,347). Separately, a backticked span
+   containing spaces used to become a single atom; it is now tokenised. Corpus atoms 27,189 to
+   27,668, per-transcript sums. **Unlike defect 4, this one does not apply evenly across methods**: the atom set grew
+   6.5% for `tool_result` and 5.3% for `tool_use` while *shrinking* 3.6% for prose, so the metric
+   now weights tool output about ten points more relative to prose than it did — and tool output
+   is what supersession and banding operate on. So Phase 1's conclusions are **not** assumed to
+   survive this one: the full grid is being re-measured against the corrected extractor, and any
+   verdict quoted below is provisional until that lands. See
+   [PHASE2.md](PHASE2.md#the-second-extractor-audit--atoms_version-3).
+
+6. **Defect 5's own widening was too wide — `ATOMS_VERSION` 4, 2026-09-10.** Adding the C/C++,
+   build and binary extension families made the bare-filename pattern read ordinary attribute
+   access as a filename: `self.c`, `obj.h`, `x.o`, `node.so`, `process.env`. Seven extensions
+   (`c`, `h`, `a`, `o`, `cc`, `so`, `mk`) and `env` are gone from the allowlist, a dotted chain is
+   no longer read as a filename unless what follows the dot is itself an allowlisted extension,
+   and `kts` was added so `build.gradle.kts` extracts whole. Measured on the public transcripts,
+   bare-filename matches fall 8,206 to 5,523. Every atom-derived figure in this document therefore
+   predates the extractor that is now live, defect 5's own before/after numbers included. See
+   [PHASE2.md](PHASE2.md#the-third-extractor-audit--atoms_version-4).
+
+**Counting note — three conventions, and they are not interchangeable.** An "atom count" in this
+project means one of three different things, and a reader who carries the wrong denominator
+through a paragraph will read every share in it wrong:
+
+- **per-transcript sums** — each transcript's distinct atoms, added across transcripts, so an
+  atom in two transcripts counts twice. This is the convention for the 32,344 / 27,189 / 27,668
+  figures above and in [PHASE2.md](PHASE2.md).
+- **global distinct union** — distinct across the whole corpus. Roughly a fifth smaller: 21,089
+  where the per-transcript sum says 27,189.
+- **atom mentions** — every occurrence, not every atom. This is what the `atoms` column of
+  `docs/results/corpus_stats.txt` holds, and that file uses no other convention. See
+  [docs/results/README.md](results/README.md).
+
+~~**Still open, deliberately:** whether `tool_use` should be emitted as readable text rather than
+`json.dumps` output.~~ **Decided and implemented, 2026-09-10.** The answer turned out not to be a
+prettier format but a far more aggressive shrinker; the format question came along for free, and
+calls now render as a call line rather than a JSON object (`code.render_call`, live and tested).
+The decision and the option rejected are in
+[PHASE2.md](PHASE2.md#decided-2026-09-10); the mechanism is in
+[PHASE2.md](PHASE2.md#the-tool_use-channel).
 
 ## Flagged defaults awaiting confirmation
 

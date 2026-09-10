@@ -25,36 +25,58 @@ from __future__ import annotations
 
 import json
 import re
+from bisect import bisect_right
 from dataclasses import dataclass, replace
 from typing import Any
 
-from loosy_goose.segment import Segment, extract_atoms, scannable
+from loosy_goose.segment import _FILE_EXTENSIONS, Segment, extract_atoms, scannable
 from loosy_goose.tokens import count_tokens
 
 DEFAULT_MARKER = "[P"
 
-# Mirrors the two path-shaped patterns in segment._ATOM_PATTERNS, so what the table guarantees is
-# the same population the recall metric counts. A path the extractor does not recognise as an
-# atom would be substituted for no measurable gain.
-_PATH_SLASH = re.compile(r"(?<![\w.])(?:[A-Za-z]:)?(?:[\w.-]+[\\/])+[\w.-]+")
-_PATH_BARE = re.compile(
-    r"(?<![\w./\\])[\w-]+\.(?:py|js|ts|tsx|jsx|json|md|txt|yml|yaml|toml|cs|rs|go|"
-    r"java|sql|sh|ps1|csv|ipynb|html|css|xml|cfg|ini|lock|pdf|png|jpg|jsonl)\b"
+# Bump whenever this module's OUTPUT changes for the same segments — which paths get tabulated,
+# how a marker is spelled, what substitution does to a segment. Experiment records for the path
+# arms are keyed on it, for the same reason `code.TRANSFORMS_VERSION` exists: `segments_digest`
+# fingerprints the segmenter's output and stops there, so a rewritten `paths.py` would otherwise
+# leave stored arm records looking valid while describing behaviour that no longer exists.
+PATHS_VERSION = 2
+
+# The two path-shaped patterns from segment._ATOM_PATTERNS, sharing that module's extension list
+# rather than restating it. They must stay identical: the table guarantees whatever it names, and
+# the recall metric only credits what the extractor recognises, so any divergence would let the
+# table claim atoms the metric never counts.
+_PATH_SLASH = re.compile(
+    r"(?<![\w.])(?:[A-Za-z]:[\\/](?:[\w.-]+[\\/])*[\w.-]+|(?:[\w.-]+[\\/])+[\w.-]+)"
 )
+_PATH_BARE = re.compile(r"(?<![\w./\\])[\w-]+\.(?:" + _FILE_EXTENSIONS + r")\b")
+
+
+def _path_spans(text: str) -> list[tuple[int, int]]:
+    """Spans of every path-shaped run, ascending. The slash pattern is applied first and its spans
+    are reserved, so a full path is not also counted as the bare filename it ends with.
+
+    Spans rather than strings because substitution needs the positions: only a span whose text is
+    a tabulated path in full may be replaced. Overlap is resolved by binary search over the slash
+    spans, which `finditer` already yields sorted and disjoint — scanning them per bare match was
+    quadratic, and this now runs over every segment of the corpus, not only over table building.
+    """
+    slash = [m.span() for m in _PATH_SLASH.finditer(text)]
+    starts = [a for a, _ in slash]
+    spans = list(slash)
+    for m in _PATH_BARE.finditer(text):
+        i = bisect_right(starts, m.start()) - 1
+        if i >= 0 and slash[i][1] > m.start():
+            continue
+        if i + 1 < len(slash) and slash[i + 1][0] < m.end():
+            continue
+        spans.append(m.span())
+    spans.sort()
+    return spans
 
 
 def find_paths(text: str) -> list[str]:
-    """Every path-shaped run in the text. The slash pattern is applied first and its spans are
-    reserved, so a full path is not also counted as the bare filename it ends with."""
-    taken: list[tuple[int, int]] = []
-    found: list[tuple[int, str]] = []
-    for pat in (_PATH_SLASH, _PATH_BARE):
-        for m in pat.finditer(text):
-            if any(a < m.end() and m.start() < b for a, b in taken):
-                continue
-            taken.append((m.start(), m.end()))
-            found.append((m.start(), m.group(0)))
-    return [s for _, s in sorted(found)]
+    """Every path-shaped run in the text, in order of appearance."""
+    return [text[a:b] for a, b in _path_spans(text)]
 
 
 @dataclass(frozen=True)
@@ -116,10 +138,30 @@ def build_table(
 
 
 def _sub_in_string(text: str, mapping: dict[str, str]) -> str:
-    # Longest first: substituting `main.py` before `src/main.py` would strand the directory.
-    for path in sorted(mapping, key=len, reverse=True):
-        text = text.replace(path, mapping[path])
-    return text
+    """Replace only whole path-shaped spans that the table names exactly.
+
+    A blind `str.replace` per table entry mangled any path the table does not hold but a tabulated
+    one is a prefix of: with `main.c` tabulated, `main.cpp` was emitted as `[P0]pp`. Sorting
+    longest-first only ever protected paths that were *both* in the table. `expand` still restored
+    such text, so the artefact stayed recoverable and nothing failed loudly — but the scored text
+    and its re-extracted atoms had lost a file the table never promised to carry.
+
+    Matching through `_path_spans` rather than a second, substitution-only notion of a path is
+    deliberate: the table's population, the recall metric and this must agree on where a path
+    starts and ends, or the table claims atoms the metric never counts.
+    """
+    out: list[str] = []
+    last = 0
+    for start, end in _path_spans(text):
+        marker = mapping.get(text[start:end])
+        if marker is not None:
+            out.append(text[last:start])
+            out.append(marker)
+            last = end
+    if not out:
+        return text
+    out.append(text[last:])
+    return "".join(out)
 
 
 def _sub_in_json(node: Any, mapping: dict[str, str]) -> Any:
