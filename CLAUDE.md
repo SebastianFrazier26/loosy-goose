@@ -1,7 +1,7 @@
 # Loosy-Goose — agent guide
 
 Lossy text compression for LLM context compaction via eigen-dimension semantic spaces.
-Personal GitHub project (public, MIT). Not related to any employer repository.
+Personal GitHub project (public, MIT).
 
 Read [docs/DESIGN.md](docs/DESIGN.md) before changing the algorithm and
 [docs/PHASE1.md](docs/PHASE1.md) before re-deciding anything Phase 1 already measured.
