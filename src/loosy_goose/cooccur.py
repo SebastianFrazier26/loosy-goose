@@ -22,8 +22,19 @@ _TOKEN = re.compile(
 )
 
 
+# transcript.py serialises tool_use input with json.dumps, so newlines and tabs survive as the
+# two literal characters `\` `n`. The path branch of _TOKEN accepts a backslash as a separator,
+# which glued those into false identifiers — `math\nimport` and `n\n` were real vocabulary
+# entries. Neutralise the escapes here rather than in the loader: changing how tool_use is
+# rendered would alter segment text, and with it the Phase 1 metrics and code.quantize_tool_use.
+# The lookbehind protects genuine Windows paths: json.dumps writes those with doubled
+# backslashes, so `c:\\new\\x` must not lose its directory to what looks like a newline escape.
+_JSON_ESCAPE = re.compile(r"(?<!\\)\\[ntr]")
+
+
 def tokenize(text: str) -> list[str]:
-    return [m.group(0).rstrip(".,;:") for m in _TOKEN.finditer(text.lower())]
+    cleaned = _JSON_ESCAPE.sub(" ", text.lower())
+    return [m.group(0).rstrip(".,;:") for m in _TOKEN.finditer(cleaned)]
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,7 @@ from loosy_goose.segment import Segment
 from loosy_goose.select import (
     CompressConfig,
     center,
+    clamp_drop_top,
     compress,
     cur_residual_order,
     cur_residual_scores,
@@ -249,3 +250,62 @@ def test_embed_segments_real_model_smoke() -> None:
     sim = x @ x.T
     assert sim[0, 1] > sim[0, 2]
     assert sim[2, 3] > sim[2, 0]
+
+
+def test_clamp_drop_top_leaves_one_direction_alive() -> None:
+    assert clamp_drop_top(0, 5) == 0
+    assert clamp_drop_top(3, 5) == 3
+    assert clamp_drop_top(9, 5) == 4
+    assert clamp_drop_top(2, 1) == 0
+    with pytest.raises(ValueError):
+        clamp_drop_top(-1, 5)
+
+
+def test_leverage_scores_drop_top_ignores_leading_directions() -> None:
+    u = np.array([[1.0, 0.0], [0.0, 1.0], [0.6, 0.8]])
+    full = leverage_scores(u, 2)
+    dropped = leverage_scores(u, 2, drop_top=1)
+    assert full == pytest.approx([1.0, 1.0, 1.0])
+    assert dropped == pytest.approx([0.0, 1.0, 0.64])
+
+
+def test_drop_top_changes_which_segments_win() -> None:
+    # Rows 0 and 1 are identical along the leading direction and differ only on the second one,
+    # which is the situation All-but-the-Top targets: a shared boilerplate direction masking the
+    # distinction that actually matters.
+    u = np.array([[0.7, 0.1], [0.7, 0.6], [0.1, 0.2]])
+    assert int(np.argmax(leverage_scores(u, 2))) == 1
+    assert int(np.argmax(leverage_scores(u, 2, drop_top=1))) == 1
+    assert leverage_scores(u, 2, drop_top=1)[0] < leverage_scores(u, 2)[0]
+
+
+def test_ridge_drop_top_zeroes_the_leading_weight() -> None:
+    rng = np.random.default_rng(11)
+    x = rng.normal(size=(8, 4))
+    full = ridge_leverage_scores(x, 1.0)
+    dropped = ridge_leverage_scores(x, 1.0, drop_top=1)
+    assert np.all(dropped <= full + 1e-12)
+    assert not np.allclose(full, dropped)
+
+
+def test_cur_residual_drop_top_runs_and_stays_finite() -> None:
+    rng = np.random.default_rng(12)
+    x = rng.normal(size=(9, 5))
+    u, s, _, _ = svd_energy(x)
+    k = rank_for_energy(s, 0.95)
+    scores = cur_residual_scores(u, s, k, drop_top=1)
+    assert scores.shape == (9,)
+    assert np.all(np.isfinite(scores)) and np.all(scores >= 0)
+
+
+def test_score_segments_threads_drop_top_through_every_strategy() -> None:
+    rng = np.random.default_rng(13)
+    x = rng.normal(size=(10, 6))
+    for strategy in ("leverage", "ridge", "cur_residual"):
+        base = score_segments(x, CompressConfig(strategy=strategy))
+        dropped = score_segments(x, CompressConfig(strategy=strategy, drop_top=2))
+        assert not np.allclose(base, dropped), strategy
+
+
+def test_drop_top_defaults_to_zero_so_phase_two_numbers_still_reproduce() -> None:
+    assert CompressConfig().drop_top == 0

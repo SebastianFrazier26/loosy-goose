@@ -24,10 +24,15 @@ summarizer rewrites anything, so the result is deterministic and auditable.
 Frontier-model context windows fill up. Built-in compaction is opaque, non-configurable, and
 model-specific. Loosy-Goose is grounded in the observation of Shin, Madotto & Fung (2018),
 [*Interpreting Word Embeddings with Eigenvector Analysis*](https://openreview.net/forum?id=rJfJiR5ooX)
-([code](https://github.com/HLTCHKUST/eigenvector-analysis)): the eigenvectors of a PPMI-SVD
+([PDF](https://web.archive.org/web/20250405190331if_/https://openreview.net/pdf?id=rJfJiR5ooX) ·
+[code](https://github.com/HLTCHKUST/eigenvector-analysis)): the eigenvectors of a PPMI-SVD
 embedding form semantically coherent word groups, and the *sparse* eigenvectors (high inverse
 participation ratio) carry the narrow, topical ones. That gives an interpretable basis in which
 to decide what a conversation can afford to lose.
+
+Where that paper meets the codec analogy — and the one point where the analogy inverts, which
+is the reason the paper is load-bearing rather than decorative — is
+[docs/DESIGN.md § Origin](docs/DESIGN.md#origin).
 
 ## Status
 
@@ -44,14 +49,18 @@ results. Headline findings, stated plainly:
 - The PPMI-SVD topical eigenvectors are **not stable** at single-conversation scale
   (aligned cosine 0.507 against a pre-registered 0.70 threshold), so that basis is demoted to
   a labeller.
-- **No spectral method has yet been shown to beat budget-shaped TF-IDF.** Phase 2 exists to
-  settle that.
+- **Spectral selection and budget-shaped TF-IDF split the two distortion metrics.** Spectral
+  keeps more concrete facts (atom recall) at every rate measured; TF-IDF better covers the
+  conversation's meaning (semantic coverage) at every rate measured. They are reported as two
+  statistics and deliberately not collapsed into one winner — the metrics were designed to
+  disagree, and averaging them away would hide the thing they exist to show.
 
 ## Documentation
 
 - [docs/DESIGN.md](docs/DESIGN.md) — algorithm specification, quality table, distortion metrics
 - [docs/PHASE1.md](docs/PHASE1.md) — experiment designs, pre-registered criteria, results, open defects
-- [docs/results/](docs/results/) — raw summary tables as emitted by the experiment scripts
+- [docs/PHASE2.md](docs/PHASE2.md) — Phase 2 plan, decisions with the option rejected, verified nulls, what is still open
+- [docs/results/](docs/results/) — raw summary tables as emitted by the experiment scripts, with a note on how stale each one is
 - [CLAUDE.md](CLAUDE.md) — repository guide for coding agents
 
 ## Run
@@ -100,7 +109,8 @@ Lint, format check and type check: `uv run ruff check . && uv run ruff format --
 ## Roadmap
 
 - **Done** — Phase 1: PPMI-SVD vs embedding-SVD vs code channel, on real and public transcripts
-- **Next** — Phase 2: unified rate-distortion curves, all methods and baselines at matched budgets
+- **In progress** — Phase 2: unified rate-distortion curves, all methods and baselines at matched
+  budgets. Plan, decisions and open questions in [docs/PHASE2.md](docs/PHASE2.md)
 - Core: segment → spectral → select → quantize → emit
 - CLI
 - MCP server

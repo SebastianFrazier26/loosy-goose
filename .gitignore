@@ -15,4 +15,10 @@ build/
 data/local/
 # Public dataset downloads. Curated, license-attributed fixtures are a separate later step.
 data/public/
-experiments/output/
+# Pattern is /* not /: git never descends into an excluded directory, so a
+# negation under `experiments/output/` can never re-include anything.
+experiments/output/*
+# Committed results only. Checkpoints stay out: 16MB of generated data, and the
+# local_* ones carry per-transcript metadata for the private corpus.
+!experiments/output/rebaseline_v4.log
+!experiments/output/exp_e_v4.out

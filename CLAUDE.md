@@ -65,6 +65,16 @@ Supporting:
 - User-visible changes get a dated line in `CHANGELOG.md`.
 - Tests cover the algorithmic core; thin CLI glue gets smoke tests only.
 - Selection and scoring must never share an embedding model — see `embed.py`.
+- **Any transform downstream of segmentation needs its own version stamp** in Experiment D's
+  record identity. `segments_digest` fingerprints the segmenter's *input* and deliberately stops
+  there, so that variants accumulate in a checkpoint rather than evicting each other — which
+  means a rewritten `code.py` or `paths.py` leaves stored records looking valid while describing
+  behaviour that no longer exists. Three stamps exist for this: `code.TRANSFORMS_VERSION`,
+  `paths.PATHS_VERSION`, and `exp_d_curves.BAND_QUALITY_VERSION` for the runner's own decision to
+  hand `quantize_segment` the sweep's keep ratio as its fidelity knob. The third is the one that
+  shows the rule is about transforms, not modules — it lives in the runner because that mapping
+  does. A fourth transform needs a fourth. See
+  [docs/PHASE2.md](docs/PHASE2.md#a-silent-staleness-trap-found-by-walking-into-it).
 
 ## Algorithm decisions (locked 2026-09-08)
 
@@ -87,10 +97,12 @@ Supporting:
 Supersession dedupe removes 25.9% of tokens losslessly and is the clearest win. AST banding
 beats whole-segment dropping at equal budget but only buys 1.33x alone. The PPMI-SVD *topical*
 eigenvectors fail a pre-registered 0.70 stability threshold (0.507 measured), so Experiment A
-is demoted to a labeller and Experiment B drives selection. No spectral method has yet been
-shown to beat budget-shaped TF-IDF. Do not re-run these; read
-[docs/PHASE1.md](docs/PHASE1.md), which also lists three known segmenter/loader defects and
-five implementation defaults still awaiting confirmation.
+is demoted to a labeller and Experiment B drives selection. Spectral and budget-shaped TF-IDF
+**split the two distortion metrics** — spectral wins atom recall at every rate, TF-IDF wins
+semantic coverage at every rate — and that split is reported as two statistics rather than
+resolved into a winner. Do not re-run these; read [docs/PHASE1.md](docs/PHASE1.md), which also
+lists the segmenter, loader and atom-extractor defects found since, and five implementation
+defaults still awaiting confirmation.
 
 ## Hard rules
 

@@ -45,7 +45,8 @@ def _file_op(payload: dict[str, Any], tool_name: str | None) -> tuple[Op, str] |
         return "read", path
     if tool_name:
         return None
-    # No tool name (Segment drops Block.meta): infer the operation from the payload shape.
+    # No tool name (the transcript record carried none): infer the operation from the payload
+    # shape.
     # Claude Code's Edit/Write/MultiEdit carry a body key; Read carries only path/offset/limit.
     # OpenHands' str_replace_editor multiplexes on `command`.
     command = payload.get("command")

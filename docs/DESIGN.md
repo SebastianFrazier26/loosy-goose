@@ -1,8 +1,44 @@
 # Loosy-Goose — design
 
-Status: Phase 1 complete, Phase 2 (unified rate-distortion evaluation) not started.
+Status: Phase 1 complete, Phase 2 (unified rate-distortion evaluation) in progress.
 This document is the algorithm specification. For what the Phase 1 experiments actually
-measured and concluded, see [PHASE1.md](PHASE1.md).
+measured and concluded, see [PHASE1.md](PHASE1.md); for the Phase 2 plan, the decisions already
+locked and the ones still open, see [PHASE2.md](PHASE2.md).
+
+## Origin
+
+The project starts from one paper and one analogy, and the distance between them is the whole
+design problem.
+
+The paper is Shin, Madotto & Fung (2018), *Interpreting Word Embeddings with Eigenvector
+Analysis* (NeurIPS IRASL workshop) — the PDF this project was seeded with. Its finding: the
+eigenvectors of a PPMI-SVD embedding are semantically coherent word groups, and the *sparse*
+eigenvectors, identified by a high inverse participation ratio, are the narrow topical ones
+while the dense ones carry frequency and corpus bias. That gives an interpretable basis in
+which to ask what a body of text can afford to lose, which is the question a compressor asks.
+OpenReview blocks scripted fetches; the PDF is reachable through the Wayback Machine, and both
+links are in the [References](#references) below.
+
+The analogy is JPEG: a transform that concentrates what matters, a quantizer that discards what
+does not, a decoder that tolerates loss. It supplies the *architecture* — see the stage table
+below — and it supplies the vocabulary the rest of this document is written in (quality table,
+DC coefficient, chroma subsampling).
+
+**The analogy inverts at the one point that matters**, which is why the paper is load-bearing
+rather than decorative: JPEG's energy sits in the low-frequency coefficients, so truncating the
+tail is nearly free, whereas in text embeddings the top directions are the bias directions and
+meaning lives in the sparse tail. A naive port of JPEG would keep exactly the wrong end. The
+inverse participation ratio is the instrument that tells the two ends apart.
+
+What was fixed at the outset and has held since: the output is **text**, not latent vectors, so
+any model can read it; the output is **extractive**, so no summarizer rewrites anything and the
+result is deterministic and auditable; distortion is measured by **embedding cosine plus atom
+recall**, never by reconstruction error. Phase 1 then measured the paper's own machinery at
+conversation scale and demoted it — the topical eigenvectors are not stable in a single session
+(0.507 aligned cosine against a pre-registered 0.70), so the topic basis became a labeller and
+an embedding-matrix SVD drives selection. That demotion is a Phase 1 result, recorded in
+[PHASE1.md](PHASE1.md); the paper's IPR distinction survives it and is still what justifies
+stripping top directions rather than keeping them.
 
 ## Problem
 
@@ -62,8 +98,15 @@ transcript --> segment --> spectral --> select --> quantize --> emit
    can look good purely by keeping more.
 4. **Quantize** (`code.py`, `supersede.py`). Band-limit rather than drop, plus lossless dedupe.
 5. **Emit.** Extractive: real spans of the original, kept, trimmed, or dropped. No summarizer
-   in the loop, so output is deterministic and every retained token traces to a source span.
+   in the loop, so output is deterministic and nothing is reworded or invented.
    Abstractive rewriting stays a later optional flag.
+
+   One deliberate exception, decided 2026-09-10: a **defined pointer is not invented content**.
+   Path substitution replaces a file path in retained text with `[P3]` and ships the table that
+   defines it in the same output. The marker appears nowhere in the source, so a retained span is
+   no longer literally quotable — but nothing was rewritten, the expansion is mechanical and
+   exact, and this is what a codec does. The property that matters is that no meaning was
+   generated, not that every character is contiguous with the original.
 
 ## The quality table
 
@@ -81,9 +124,20 @@ by different mechanisms and to different degrees.
 | --- | --- | --- |
 | prose | segment selection | Highest fidelity. User directives weighted up. |
 | code | AST-depth banding | Band 0 (imports, signatures, type and class declarations) is the DC coefficient and survives at any quality. Nested bodies are high-frequency detail. |
-| tool_use | field banding | Command and target path kept; bulky argument payloads banded. |
+| tool_use | shape routing plus a compact call rendering | Target path kept verbatim — it is the identifying fact and supersession's key. Every other value is routed by *shape*, not by key name: code-shaped to the AST bander, shell to stage elision, prose to passage elision. The call is emitted as a call line rather than a JSON object, and the tool's own name is not emitted with it (decided 2026-09-10). **This channel tolerates the most loss of any** (decided 2026-09-10). Its trimming depth **follows the global keep ratio**; see the note below. On the channel, **1.92x at depth 0.33**, which is where the rates this project targets put it; 2.21x is the depth-0.0 figure and is not what a real run realizes. |
 | tool_result | line chunking plus selection | Plus supersession dedupe. |
 | thinking | segment selection | Lowest default fidelity. |
+
+**The `tool_use` depth knob follows the global rate** (decided 2026-09-10, correcting this
+document). An earlier version of the row above said the knob was applied flat rather than scaled
+by the global rate. The code has never done that: `quantize_segment` takes a `tool_quality`
+override, it defaults to `quality`, and no caller in the sweep or the pipeline sets it, so the
+channel is trimmed at whatever rate the run asks of everything else. Rejected: changing the code
+to match what the doc claimed. Holding one channel's depth flat while every other kind scales is
+a second knob turning inside a grid whose whole discipline is one change at a time, and the case
+for a flat depth is an argument rather than a measurement. Sweeping the depth as its own variant
+stays queued as separate work — see [PHASE2.md](PHASE2.md#queue) — and only then is there
+evidence for holding it anywhere.
 
 Two lossless passes run before any lossy stage, because free wins should never be paid for
 with distortion:
@@ -100,12 +154,19 @@ Blau & Michaeli's perception-distortion tradeoff is the reason: a fluent decoder
 is one — optimizes perceptual plausibility, not fidelity. A compressed context that reads
 beautifully and has lost the one path name that mattered scores well on any surface metric.
 
-Two metrics, used together:
+Two metrics, reported side by side and **never collapsed into one score**:
 
 - **Atom recall.** Fraction of the original's identifiers, paths, numbers and URLs that
   survive. This is what catches "fluent but wrong". Reported per kind as well as overall.
 - **Semantic coverage.** Mean over original segments of the maximum cosine to any kept
   segment, plus whole-document cosine.
+
+They measure different things and they disagree — spectral selection wins the first at every
+rate measured, budget-shaped TF-IDF wins the second at every rate measured. **That disagreement
+is a result, not a tie to be broken** (decided 2026-09-10). Baseball keeps FRV and OAA as two
+defensive statistics rather than averaging them into a number that means less than either; the
+same applies here. A method is described by its position on both axes, and picking one to crown
+a winner would discard exactly the information the two-metric design was built to expose.
 
 Selection and scoring deliberately use **different embedding models** (`bge-small-en-v1.5` to
 select, `all-MiniLM-L6-v2` to score). Sharing one model would let the selector be graded by its
@@ -114,23 +175,37 @@ own similarity function, which inflates every result.
 ## Targets
 
 - Rate: 2–5x on real agentic transcripts, degrading gracefully rather than off a cliff.
-- Baselines any spectral method must beat at equal budget: random drop, recency-only, TF-IDF.
-  As of Phase 1 the spectral methods do **not** clearly beat budget-shaped TF-IDF. Settling
-  that is why Phase 2 exists.
+- Baselines any spectral method is measured against at equal budget: random drop, recency-only,
+  TF-IDF. Spectral and budget-shaped TF-IDF **split the two distortion metrics** rather than one
+  beating the other, and both are reported. There is no single scoreboard here by design.
 
 ## Open design questions
 
-- Whether the PPMI-SVD basis earns its cost at conversation scale, or survives only as a topic
-  labeller. Phase 1 evidence leans toward the latter.
+- ~~Whether the PPMI-SVD basis earns its cost at conversation scale, or survives only as a topic
+  labeller.~~ **Settled in Phase 1:** it survives only as a labeller. The topical eigenvectors
+  measured 0.507 aligned cosine against a threshold of 0.70 that was written down before the
+  measurement, and an embedding-matrix SVD drives selection instead. Rejected: keeping the basis
+  as a selector on the strength of its interpretability, which is what the pre-registered
+  threshold existed to stop. The IPR distinction the paper contributes is untouched by the
+  demotion and is still what justifies stripping top directions. See
+  [PHASE1.md](PHASE1.md); the same result is stated in `README.md` and `CLAUDE.md`.
 - How to drive the whole quality table from a single `--quality` knob.
 - Whether the background prior should be generic, personalized from the user's own sessions, or
   both layered. The personalization prior is a committed roadmap item.
 - Segment-level versus span-level trimming for prose.
+- ~~Whether "extractive" must mean *contiguous substring of the original*.~~ **Settled
+  2026-09-10:** it does not. A mechanically-defined pointer whose definition ships alongside it
+  is admissible in retained text; see the emit step above. The rejected alternative was requiring
+  every retained span to be quotable as-is, which would have ruled out path substitution's token
+  saving and its recall guarantee together, and every future side-table mechanism with them.
 
 ## References
 
-- Shin, Madotto & Fung (2018), *Interpreting Word Embeddings with Eigenvector Analysis*,
-  NeurIPS IRASL workshop. [OpenReview](https://openreview.net/forum?id=rJfJiR5ooX) ·
+- **Shin, Madotto & Fung (2018), *Interpreting Word Embeddings with Eigenvector Analysis*,
+  NeurIPS IRASL workshop** — the paper the project was seeded with; see
+  [Origin](#origin). [OpenReview](https://openreview.net/forum?id=rJfJiR5ooX) ·
+  [PDF via Wayback](https://web.archive.org/web/20250405190331if_/https://openreview.net/pdf?id=rJfJiR5ooX)
+  (OpenReview refuses scripted fetches; the Wayback copy is the one that resolves) ·
   [code](https://github.com/HLTCHKUST/eigenvector-analysis)
 - Levy & Goldberg (2014), *Neural Word Embedding as Implicit Matrix Factorization*
 - Levy, Goldberg & Dagan (2015), *Improving Distributional Similarity with Lessons Learned from
