@@ -1,0 +1,1581 @@
+16:25:16 [local_100k] 0 records reused, 600 to run
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 11617.63it/s]
+16:25:40 [local_100k] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+16:25:42 [local_100k] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+16:25:43 [local_100k] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+16:25:46 [local_100k] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+16:25:49 [local_100k] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+16:25:52 [local_100k] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+16:25:58 [local_100k] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+16:26:11 [local_100k] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+16:26:18 [local_100k] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+16:26:20 [local_100k] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|##########| 199/199 [00:00<00:00, 16094.61it/s]
+16:27:35 [local_100k] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+16:35:20 [local_100k] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+16:41:28 [local_100k] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+16:42:59 [local_100k] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+16:43:01 [local_100k] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+16:43:04 [local_100k] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+16:43:08 [local_100k] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+16:43:10 [local_100k] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+16:43:16 [local_100k] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+16:43:20 [local_100k] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+16:43:23 [local_100k] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+16:43:26 [local_100k] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+16:43:30 [local_100k] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+16:43:36 [local_100k] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+16:43:39 [local_100k] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+16:43:42 [local_100k] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+16:43:45 [local_100k] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+16:43:49 [local_100k] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+16:43:54 [local_100k] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+16:43:58 [local_100k] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+16:44:01 [local_100k] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+16:44:48 [local_100k] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+16:44:53 [local_100k] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+16:45:28 [local_100k] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+16:46:24 [local_100k] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+16:52:24 [local_100k] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+16:52:26 [local_100k] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+16:52:29 [local_100k] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+16:52:32 [local_100k] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+16:52:35 [local_100k] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+16:52:41 [local_100k] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+16:54:18 [local_100k] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+16:54:21 [local_100k] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+16:54:24 [local_100k] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+16:54:27 [local_100k] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+16:54:31 [local_100k] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+16:54:40 [local_100k] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+16:56:15 [local_100k] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+16:57:50 [local_100k] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+16:59:02 [local_100k] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+17:00:17 [local_100k] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+17:01:45 [local_100k] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+17:03:21 [local_100k] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+17:05:08 [local_100k] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+09:12:39 [local_100k] 540 records reused, 60 to run
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 4897.67it/s]
+09:15:12 [local_100k] job 10/60 ok=10 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|##########| 199/199 [00:00<00:00, 2224.73it/s]
+09:17:27 [local_100k] job 20/60 ok=20 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+09:18:58 [local_100k] job 30/60 ok=30 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+09:21:10 [local_100k] job 40/60 ok=40 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+09:23:55 [local_100k] job 50/60 ok=50 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+09:31:43 [local_100k] job 60/60 ok=60 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+09:31:44 [local_100k] done in 1144.9s, 600 records
+09:31:45 [local_200k] segments digest changed, discarding all prior records
+09:31:45 [local_200k] 0 records reused, 600 to run
+09:32:37 [local_200k] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+09:32:40 [local_200k] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+09:32:44 [local_200k] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+09:32:48 [local_200k] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+09:32:54 [local_200k] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+09:33:00 [local_200k] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+09:33:15 [local_200k] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+09:33:41 [local_200k] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+09:33:56 [local_200k] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+09:34:00 [local_200k] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+09:37:16 [local_200k] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+10:00:34 [local_200k] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+11:18:17 [local_100k] 600 records reused, 0 to run
+11:18:18 [local_100k] done in 0.4s, 600 records
+11:18:18 [local_200k] 120 records reused, 480 to run
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 9425.40it/s]
+11:22:11 [local_200k] job 10/480 ok=10 failed=0 supersede+band+leverage [base] protect=none r=0.7
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|##########| 199/199 [00:00<00:00, 3449.39it/s]
+11:27:28 [local_200k] job 20/480 ok=20 failed=0 tfidf [base] protect=code_only r=0.5
+11:27:32 [local_200k] job 30/480 ok=30 failed=0 leverage [base] protect=code_only r=0.3
+11:27:36 [local_200k] job 40/480 ok=40 failed=0 leverage [drop_top=1] protect=none r=0.2
+11:27:41 [local_200k] job 50/480 ok=50 failed=0 ridge [drop_top=1] protect=none r=0.1
+11:27:46 [local_200k] job 60/480 ok=60 failed=0 ridge [drop_top=1] protect=none r=0.9
+11:27:57 [local_200k] job 70/480 ok=70 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+11:28:03 [local_200k] job 80/480 ok=80 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+11:28:08 [local_200k] job 90/480 ok=90 failed=0 leverage [drop_top=2] protect=none r=0.3
+11:28:13 [local_200k] job 100/480 ok=100 failed=0 ridge [drop_top=2] protect=none r=0.2
+11:28:19 [local_200k] job 110/480 ok=110 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+11:28:30 [local_200k] job 120/480 ok=120 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+11:28:34 [local_200k] job 130/480 ok=130 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+11:28:38 [local_200k] job 140/480 ok=140 failed=0 leverage [drop_top=4] protect=none r=0.5
+11:28:44 [local_200k] job 150/480 ok=150 failed=0 ridge [drop_top=4] protect=none r=0.3
+11:28:51 [local_200k] job 160/480 ok=160 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+11:29:01 [local_200k] job 170/480 ok=170 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+11:29:06 [local_200k] job 180/480 ok=180 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+11:29:11 [local_200k] job 190/480 ok=190 failed=0 tfidf [paths=score_only] protect=none r=0.7
+11:30:41 [local_200k] job 200/480 ok=200 failed=0 leverage [paths=score_only] protect=none r=0.5
+11:30:47 [local_200k] job 210/480 ok=210 failed=0 ridge [paths=score_only] protect=none r=0.3
+11:32:08 [local_200k] job 220/480 ok=220 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+11:34:35 [local_200k] job 230/480 ok=230 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+11:48:20 [local_200k] job 240/480 ok=240 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+11:48:23 [local_200k] job 250/480 ok=250 failed=0 tfidf [paths=table_only] protect=none r=0.7
+11:48:27 [local_200k] job 260/480 ok=260 failed=0 leverage [paths=table_only] protect=none r=0.5
+11:48:31 [local_200k] job 270/480 ok=270 failed=0 ridge [paths=table_only] protect=none r=0.3
+11:48:36 [local_200k] job 280/480 ok=280 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+11:48:48 [local_200k] job 290/480 ok=290 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+11:51:51 [local_200k] job 300/480 ok=300 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+11:51:54 [local_200k] job 310/480 ok=310 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+11:51:58 [local_200k] job 320/480 ok=320 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+11:52:03 [local_200k] job 330/480 ok=330 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+11:52:08 [local_200k] job 340/480 ok=340 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+11:52:20 [local_200k] job 350/480 ok=350 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+11:55:22 [local_200k] job 360/480 ok=360 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+11:57:55 [local_200k] job 370/480 ok=370 failed=0 tfidf [paths=full] protect=none r=0.7
+12:00:19 [local_200k] job 380/480 ok=380 failed=0 leverage [paths=full] protect=none r=0.5
+12:02:52 [local_200k] job 390/480 ok=390 failed=0 ridge [paths=full] protect=none r=0.3
+12:06:36 [local_200k] job 400/480 ok=400 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+12:10:48 [local_200k] job 410/480 ok=410 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+12:15:02 [local_200k] job 420/480 ok=420 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+12:18:48 [local_200k] job 430/480 ok=430 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+12:24:18 [local_200k] job 440/480 ok=440 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+12:28:02 [local_200k] job 450/480 ok=450 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+12:34:49 [local_200k] job 460/480 ok=460 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+12:43:55 [local_200k] job 470/480 ok=470 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+13:06:12 [local_200k] job 480/480 ok=480 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+13:06:13 [local_200k] done in 6474.7s, 600 records
+13:06:13 [local_20k] segments digest changed, discarding all prior records
+13:06:13 [local_20k] 0 records reused, 600 to run
+13:06:18 [local_20k] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+13:06:18 [local_20k] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+13:06:19 [local_20k] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+13:06:20 [local_20k] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+13:06:22 [local_20k] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+13:06:23 [local_20k] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+13:06:24 [local_20k] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+13:06:35 [local_20k] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+13:06:41 [local_20k] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+13:06:42 [local_20k] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+13:07:07 [local_20k] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+13:09:28 [local_20k] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+13:11:33 [local_20k] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+13:12:02 [local_20k] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+13:12:03 [local_20k] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+13:12:05 [local_20k] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+13:12:07 [local_20k] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+13:12:08 [local_20k] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+13:12:10 [local_20k] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+13:12:11 [local_20k] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+13:12:13 [local_20k] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+13:12:15 [local_20k] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+13:12:17 [local_20k] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+13:12:18 [local_20k] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+13:12:20 [local_20k] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+13:12:22 [local_20k] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+13:12:24 [local_20k] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+13:12:26 [local_20k] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+13:12:28 [local_20k] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+13:12:30 [local_20k] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+13:12:32 [local_20k] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+13:12:44 [local_20k] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+13:12:46 [local_20k] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+13:12:58 [local_20k] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+13:13:22 [local_20k] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+13:15:31 [local_20k] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+13:15:31 [local_20k] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+13:15:33 [local_20k] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+13:15:34 [local_20k] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+13:15:36 [local_20k] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+13:15:39 [local_20k] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+13:16:06 [local_20k] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+13:16:07 [local_20k] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+13:16:09 [local_20k] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+13:16:11 [local_20k] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+13:16:12 [local_20k] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+13:16:16 [local_20k] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+13:16:43 [local_20k] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+13:17:10 [local_20k] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+13:17:34 [local_20k] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+13:17:59 [local_20k] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+13:18:28 [local_20k] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+13:18:56 [local_20k] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+13:19:24 [local_20k] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+13:19:52 [local_20k] job 550/600 ok=550 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+13:20:28 [local_20k] job 560/600 ok=560 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+13:20:53 [local_20k] job 570/600 ok=570 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+13:21:32 [local_20k] job 580/600 ok=580 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+13:22:18 [local_20k] job 590/600 ok=590 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+13:24:22 [local_20k] job 600/600 ok=600 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+13:24:22 [local_20k] done in 1089.0s, 600 records
+13:24:23 [local_50k] segments digest changed, discarding all prior records
+13:24:23 [local_50k] 0 records reused, 600 to run
+13:24:34 [local_50k] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+13:24:35 [local_50k] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+13:24:37 [local_50k] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+13:24:39 [local_50k] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+13:24:44 [local_50k] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+13:24:49 [local_50k] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+13:24:54 [local_50k] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+13:25:14 [local_50k] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+13:25:24 [local_50k] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+13:25:26 [local_50k] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+13:26:16 [local_50k] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+13:31:06 [local_50k] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+13:35:28 [local_50k] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+13:36:34 [local_50k] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+13:36:37 [local_50k] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+13:36:41 [local_50k] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+13:36:44 [local_50k] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+13:36:49 [local_50k] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+13:36:53 [local_50k] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+13:36:56 [local_50k] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+13:37:00 [local_50k] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+13:37:04 [local_50k] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+13:37:08 [local_50k] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+13:37:12 [local_50k] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+13:37:15 [local_50k] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+13:37:20 [local_50k] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+13:37:23 [local_50k] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+13:37:28 [local_50k] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+13:37:32 [local_50k] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+13:37:36 [local_50k] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+13:37:38 [local_50k] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+13:38:05 [local_50k] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+13:38:10 [local_50k] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+13:38:40 [local_50k] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+13:39:28 [local_50k] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+13:44:02 [local_50k] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+13:44:03 [local_50k] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+13:44:07 [local_50k] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+13:44:12 [local_50k] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+13:44:17 [local_50k] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+13:44:24 [local_50k] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+13:45:23 [local_50k] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+13:45:24 [local_50k] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+13:45:28 [local_50k] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+13:45:33 [local_50k] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+13:45:38 [local_50k] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+13:45:45 [local_50k] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+13:46:45 [local_50k] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+13:47:34 [local_50k] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+13:48:24 [local_50k] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+13:49:16 [local_50k] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+13:50:13 [local_50k] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+13:51:17 [local_50k] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+13:52:23 [local_50k] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+13:53:20 [local_50k] job 550/600 ok=550 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+13:54:39 [local_50k] job 560/600 ok=560 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+13:55:33 [local_50k] job 570/600 ok=570 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+13:56:56 [local_50k] job 580/600 ok=580 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+13:58:44 [local_50k] job 590/600 ok=590 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+14:03:34 [local_50k] job 600/600 ok=600 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+14:03:35 [local_50k] done in 2351.9s, 600 records
+14:03:35 [local_5k] segments digest changed, discarding all prior records
+14:03:35 [local_5k] 0 records reused, 600 to run
+14:03:37 [local_5k] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+14:03:37 [local_5k] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+14:03:37 [local_5k] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+14:03:38 [local_5k] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+14:03:38 [local_5k] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+14:03:38 [local_5k] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+14:03:39 [local_5k] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+14:03:40 [local_5k] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+14:03:40 [local_5k] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+14:03:41 [local_5k] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+14:03:49 [local_5k] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+14:04:37 [local_5k] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+14:05:13 [local_5k] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+14:05:22 [local_5k] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+14:05:22 [local_5k] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+14:05:23 [local_5k] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+14:05:23 [local_5k] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+14:05:23 [local_5k] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+14:05:24 [local_5k] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+14:05:24 [local_5k] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+14:05:25 [local_5k] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+14:05:25 [local_5k] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+14:05:26 [local_5k] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+14:05:27 [local_5k] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+14:05:27 [local_5k] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+14:05:28 [local_5k] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+14:05:29 [local_5k] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+14:05:30 [local_5k] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+14:05:31 [local_5k] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+14:05:31 [local_5k] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+14:05:31 [local_5k] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+14:05:37 [local_5k] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+14:05:38 [local_5k] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+14:05:41 [local_5k] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+14:05:48 [local_5k] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+14:06:26 [local_5k] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+14:06:26 [local_5k] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+14:06:27 [local_5k] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+14:06:27 [local_5k] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+14:06:27 [local_5k] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+14:06:29 [local_5k] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+14:06:42 [local_5k] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+14:06:42 [local_5k] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+14:06:43 [local_5k] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+14:06:43 [local_5k] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+14:06:44 [local_5k] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+14:06:45 [local_5k] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+14:06:58 [local_5k] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+14:07:08 [local_5k] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+14:07:20 [local_5k] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+14:07:32 [local_5k] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+14:07:46 [local_5k] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+14:08:00 [local_5k] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+14:08:14 [local_5k] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+14:08:25 [local_5k] job 550/600 ok=550 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+14:08:44 [local_5k] job 560/600 ok=560 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+14:08:56 [local_5k] job 570/600 ok=570 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+14:09:13 [local_5k] job 580/600 ok=580 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+14:09:30 [local_5k] job 590/600 ok=590 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+14:10:04 [local_5k] job 600/600 ok=600 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+14:10:05 [local_5k] done in 389.7s, 600 records
+14:10:05 [trace-commons_4c09dfa9] segments digest changed, discarding all prior records
+14:10:05 [trace-commons_4c09dfa9] 0 records reused, 600 to run
+14:10:07 [trace-commons_4c09dfa9] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+14:10:07 [trace-commons_4c09dfa9] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+14:10:07 [trace-commons_4c09dfa9] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+14:10:07 [trace-commons_4c09dfa9] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+14:10:07 [trace-commons_4c09dfa9] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+14:10:08 [trace-commons_4c09dfa9] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+14:10:08 [trace-commons_4c09dfa9] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+14:10:08 [trace-commons_4c09dfa9] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+14:10:08 [trace-commons_4c09dfa9] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+14:10:08 [trace-commons_4c09dfa9] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+14:10:08 [trace-commons_4c09dfa9] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+14:10:18 [trace-commons_4c09dfa9] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+14:10:26 [trace-commons_4c09dfa9] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+14:10:28 [trace-commons_4c09dfa9] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+14:10:28 [trace-commons_4c09dfa9] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+14:10:28 [trace-commons_4c09dfa9] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+14:10:29 [trace-commons_4c09dfa9] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+14:10:29 [trace-commons_4c09dfa9] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+14:10:29 [trace-commons_4c09dfa9] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+14:10:29 [trace-commons_4c09dfa9] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+14:10:29 [trace-commons_4c09dfa9] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+14:10:29 [trace-commons_4c09dfa9] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+14:10:29 [trace-commons_4c09dfa9] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+14:10:30 [trace-commons_4c09dfa9] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+14:10:30 [trace-commons_4c09dfa9] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+14:10:30 [trace-commons_4c09dfa9] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+14:10:30 [trace-commons_4c09dfa9] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+14:10:30 [trace-commons_4c09dfa9] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+14:10:30 [trace-commons_4c09dfa9] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+14:10:30 [trace-commons_4c09dfa9] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+14:10:31 [trace-commons_4c09dfa9] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+14:10:36 [trace-commons_4c09dfa9] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+14:10:37 [trace-commons_4c09dfa9] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+14:10:37 [trace-commons_4c09dfa9] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+14:10:41 [trace-commons_4c09dfa9] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+14:10:57 [trace-commons_4c09dfa9] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+14:10:57 [trace-commons_4c09dfa9] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+14:10:57 [trace-commons_4c09dfa9] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+14:10:57 [trace-commons_4c09dfa9] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+14:10:57 [trace-commons_4c09dfa9] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+14:10:57 [trace-commons_4c09dfa9] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+14:11:07 [trace-commons_4c09dfa9] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+14:11:07 [trace-commons_4c09dfa9] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+14:11:07 [trace-commons_4c09dfa9] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+14:11:07 [trace-commons_4c09dfa9] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+14:11:07 [trace-commons_4c09dfa9] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+14:11:08 [trace-commons_4c09dfa9] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+14:11:17 [trace-commons_4c09dfa9] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+14:11:25 [trace-commons_4c09dfa9] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+14:11:33 [trace-commons_4c09dfa9] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+14:11:41 [trace-commons_4c09dfa9] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+14:11:50 [trace-commons_4c09dfa9] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+14:11:59 [trace-commons_4c09dfa9] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+14:12:08 [trace-commons_4c09dfa9] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+14:12:16 [trace-commons_4c09dfa9] job 550/600 ok=550 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+14:12:32 [trace-commons_4c09dfa9] job 560/600 ok=560 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+14:12:42 [trace-commons_4c09dfa9] job 570/600 ok=570 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+14:12:51 [trace-commons_4c09dfa9] job 580/600 ok=580 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+14:13:06 [trace-commons_4c09dfa9] job 590/600 ok=590 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+14:13:25 [trace-commons_4c09dfa9] job 600/600 ok=600 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+14:13:25 [trace-commons_4c09dfa9] done in 200.0s, 600 records
+14:13:25 [trace-commons_11ef2190] segments digest changed, discarding all prior records
+14:13:25 [trace-commons_11ef2190] 0 records reused, 600 to run
+14:13:28 [trace-commons_11ef2190] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+14:13:28 [trace-commons_11ef2190] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+14:13:28 [trace-commons_11ef2190] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+14:13:28 [trace-commons_11ef2190] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+14:13:28 [trace-commons_11ef2190] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+14:13:29 [trace-commons_11ef2190] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+14:13:29 [trace-commons_11ef2190] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+14:13:30 [trace-commons_11ef2190] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+14:13:30 [trace-commons_11ef2190] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+14:13:30 [trace-commons_11ef2190] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+14:13:36 [trace-commons_11ef2190] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+14:13:46 [trace-commons_11ef2190] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+14:13:58 [trace-commons_11ef2190] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+14:14:02 [trace-commons_11ef2190] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+14:14:02 [trace-commons_11ef2190] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+14:14:03 [trace-commons_11ef2190] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+14:14:03 [trace-commons_11ef2190] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+14:14:03 [trace-commons_11ef2190] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+14:14:03 [trace-commons_11ef2190] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+14:14:04 [trace-commons_11ef2190] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+14:14:04 [trace-commons_11ef2190] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+14:14:04 [trace-commons_11ef2190] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+14:14:04 [trace-commons_11ef2190] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+14:14:05 [trace-commons_11ef2190] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+14:14:05 [trace-commons_11ef2190] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+14:14:05 [trace-commons_11ef2190] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+14:14:05 [trace-commons_11ef2190] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+14:14:05 [trace-commons_11ef2190] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+14:14:06 [trace-commons_11ef2190] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+14:14:06 [trace-commons_11ef2190] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+14:14:06 [trace-commons_11ef2190] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+14:14:11 [trace-commons_11ef2190] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+14:14:12 [trace-commons_11ef2190] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+14:14:17 [trace-commons_11ef2190] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+14:14:25 [trace-commons_11ef2190] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+14:14:37 [trace-commons_11ef2190] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+14:14:37 [trace-commons_11ef2190] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+14:14:37 [trace-commons_11ef2190] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+14:14:38 [trace-commons_11ef2190] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+14:14:38 [trace-commons_11ef2190] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+14:14:39 [trace-commons_11ef2190] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+14:14:49 [trace-commons_11ef2190] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+14:14:50 [trace-commons_11ef2190] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+14:14:50 [trace-commons_11ef2190] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+14:14:50 [trace-commons_11ef2190] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+14:14:50 [trace-commons_11ef2190] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+14:14:51 [trace-commons_11ef2190] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+14:15:02 [trace-commons_11ef2190] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+14:15:11 [trace-commons_11ef2190] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+14:15:21 [trace-commons_11ef2190] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+14:15:31 [trace-commons_11ef2190] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+14:15:42 [trace-commons_11ef2190] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+14:15:54 [trace-commons_11ef2190] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+14:16:06 [trace-commons_11ef2190] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+14:16:14 [trace-commons_11ef2190] job 550/600 ok=550 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+14:16:29 [trace-commons_11ef2190] job 560/600 ok=560 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+14:16:39 [trace-commons_11ef2190] job 570/600 ok=570 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+14:16:52 [trace-commons_11ef2190] job 580/600 ok=580 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+14:17:07 [trace-commons_11ef2190] job 590/600 ok=590 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+14:17:19 [trace-commons_11ef2190] job 600/600 ok=600 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+14:17:19 [trace-commons_11ef2190] done in 233.3s, 600 records
+14:17:20 [trace-commons_ba1b4916] segments digest changed, discarding all prior records
+14:17:20 [trace-commons_ba1b4916] 0 records reused, 600 to run
+14:17:28 [trace-commons_ba1b4916] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+14:17:29 [trace-commons_ba1b4916] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+14:17:30 [trace-commons_ba1b4916] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+14:17:32 [trace-commons_ba1b4916] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+14:17:35 [trace-commons_ba1b4916] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+14:17:39 [trace-commons_ba1b4916] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+14:17:43 [trace-commons_ba1b4916] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+14:17:59 [trace-commons_ba1b4916] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+14:18:07 [trace-commons_ba1b4916] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+14:18:09 [trace-commons_ba1b4916] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+14:18:36 [trace-commons_ba1b4916] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+14:24:15 [trace-commons_ba1b4916] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+14:28:12 [trace-commons_ba1b4916] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+14:28:48 [trace-commons_ba1b4916] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+14:28:50 [trace-commons_ba1b4916] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+14:28:52 [trace-commons_ba1b4916] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+14:28:55 [trace-commons_ba1b4916] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+14:28:58 [trace-commons_ba1b4916] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+14:29:01 [trace-commons_ba1b4916] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+14:29:04 [trace-commons_ba1b4916] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+14:29:07 [trace-commons_ba1b4916] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+14:29:11 [trace-commons_ba1b4916] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+14:29:14 [trace-commons_ba1b4916] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+14:29:18 [trace-commons_ba1b4916] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+14:29:20 [trace-commons_ba1b4916] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+14:29:23 [trace-commons_ba1b4916] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+14:29:24 [trace-commons_ba1b4916] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+14:29:27 [trace-commons_ba1b4916] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+14:29:30 [trace-commons_ba1b4916] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+14:29:32 [trace-commons_ba1b4916] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+14:29:33 [trace-commons_ba1b4916] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+14:29:55 [trace-commons_ba1b4916] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+14:29:58 [trace-commons_ba1b4916] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+14:30:20 [trace-commons_ba1b4916] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+14:30:41 [trace-commons_ba1b4916] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+14:33:58 [trace-commons_ba1b4916] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+14:33:59 [trace-commons_ba1b4916] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+14:34:01 [trace-commons_ba1b4916] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+14:34:04 [trace-commons_ba1b4916] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+14:34:06 [trace-commons_ba1b4916] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+14:34:11 [trace-commons_ba1b4916] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+14:35:04 [trace-commons_ba1b4916] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+14:35:06 [trace-commons_ba1b4916] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+14:35:08 [trace-commons_ba1b4916] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+14:35:10 [trace-commons_ba1b4916] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+14:35:13 [trace-commons_ba1b4916] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+14:35:18 [trace-commons_ba1b4916] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+14:36:13 [trace-commons_ba1b4916] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+14:37:09 [trace-commons_ba1b4916] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+14:37:58 [trace-commons_ba1b4916] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+14:38:48 [trace-commons_ba1b4916] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+14:39:42 [trace-commons_ba1b4916] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+14:40:33 [trace-commons_ba1b4916] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+14:41:28 [trace-commons_ba1b4916] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+14:42:16 [trace-commons_ba1b4916] job 550/600 ok=550 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+14:43:19 [trace-commons_ba1b4916] job 560/600 ok=560 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+14:44:05 [trace-commons_ba1b4916] job 570/600 ok=570 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+14:45:08 [trace-commons_ba1b4916] job 580/600 ok=580 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+14:46:07 [trace-commons_ba1b4916] job 590/600 ok=590 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+14:49:06 [trace-commons_ba1b4916] job 600/600 ok=600 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+14:49:06 [trace-commons_ba1b4916] done in 1906.1s, 600 records
+14:49:06 [trace-commons_479c5e9f] segments digest changed, discarding all prior records
+14:49:06 [trace-commons_479c5e9f] 0 records reused, 600 to run
+14:49:22 [trace-commons_479c5e9f] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+14:49:23 [trace-commons_479c5e9f] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+14:49:25 [trace-commons_479c5e9f] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+14:49:28 [trace-commons_479c5e9f] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+14:49:33 [trace-commons_479c5e9f] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+14:49:38 [trace-commons_479c5e9f] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+14:49:44 [trace-commons_479c5e9f] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+14:50:04 [trace-commons_479c5e9f] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+14:50:14 [trace-commons_479c5e9f] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+14:50:17 [trace-commons_479c5e9f] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+14:51:27 [trace-commons_479c5e9f] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+14:58:16 [trace-commons_479c5e9f] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+15:01:40 [trace-commons_479c5e9f] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+15:02:29 [trace-commons_479c5e9f] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+15:02:30 [trace-commons_479c5e9f] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+15:02:31 [trace-commons_479c5e9f] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+15:02:33 [trace-commons_479c5e9f] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+15:02:34 [trace-commons_479c5e9f] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+15:02:36 [trace-commons_479c5e9f] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+15:02:37 [trace-commons_479c5e9f] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+15:02:39 [trace-commons_479c5e9f] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+15:02:41 [trace-commons_479c5e9f] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+15:02:42 [trace-commons_479c5e9f] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+15:02:44 [trace-commons_479c5e9f] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+15:02:46 [trace-commons_479c5e9f] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+15:02:48 [trace-commons_479c5e9f] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+15:02:49 [trace-commons_479c5e9f] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+15:02:51 [trace-commons_479c5e9f] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+15:02:53 [trace-commons_479c5e9f] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+15:02:55 [trace-commons_479c5e9f] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+15:02:57 [trace-commons_479c5e9f] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+15:03:34 [trace-commons_479c5e9f] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+15:03:40 [trace-commons_479c5e9f] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+15:04:09 [trace-commons_479c5e9f] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+15:05:01 [trace-commons_479c5e9f] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+15:09:05 [trace-commons_479c5e9f] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+15:09:07 [trace-commons_479c5e9f] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+15:09:11 [trace-commons_479c5e9f] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+15:09:16 [trace-commons_479c5e9f] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+15:09:20 [trace-commons_479c5e9f] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+15:09:27 [trace-commons_479c5e9f] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+15:10:38 [trace-commons_479c5e9f] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+15:10:40 [trace-commons_479c5e9f] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+15:10:44 [trace-commons_479c5e9f] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+15:10:49 [trace-commons_479c5e9f] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+15:10:54 [trace-commons_479c5e9f] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+15:11:01 [trace-commons_479c5e9f] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+15:12:12 [trace-commons_479c5e9f] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+15:13:30 [trace-commons_479c5e9f] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+15:14:40 [trace-commons_479c5e9f] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+15:15:54 [trace-commons_479c5e9f] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+15:17:10 [trace-commons_479c5e9f] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+15:18:17 [trace-commons_479c5e9f] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+15:19:40 [trace-commons_479c5e9f] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+15:21:10 [trace-commons_479c5e9f] job 550/600 ok=550 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+15:23:15 [trace-commons_479c5e9f] job 560/600 ok=560 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+15:24:43 [trace-commons_479c5e9f] job 570/600 ok=570 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+15:26:33 [trace-commons_479c5e9f] job 580/600 ok=580 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+15:28:40 [trace-commons_479c5e9f] job 590/600 ok=590 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+15:32:37 [trace-commons_479c5e9f] job 600/600 ok=600 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+15:32:37 [trace-commons_479c5e9f] done in 2610.8s, 600 records
+15:32:38 [trace-commons_c84c0ad3] segments digest changed, discarding all prior records
+15:32:38 [trace-commons_c84c0ad3] 0 records reused, 600 to run
+15:32:49 [trace-commons_c84c0ad3] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+15:32:50 [trace-commons_c84c0ad3] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+15:32:51 [trace-commons_c84c0ad3] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+15:32:54 [trace-commons_c84c0ad3] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+15:32:58 [trace-commons_c84c0ad3] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+15:33:03 [trace-commons_c84c0ad3] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+15:33:07 [trace-commons_c84c0ad3] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+15:33:21 [trace-commons_c84c0ad3] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+15:33:29 [trace-commons_c84c0ad3] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+15:33:31 [trace-commons_c84c0ad3] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+15:34:24 [trace-commons_c84c0ad3] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+15:38:30 [trace-commons_c84c0ad3] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+15:41:29 [trace-commons_c84c0ad3] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+15:42:20 [trace-commons_c84c0ad3] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+15:42:24 [trace-commons_c84c0ad3] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+15:42:28 [trace-commons_c84c0ad3] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+15:42:33 [trace-commons_c84c0ad3] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+15:42:37 [trace-commons_c84c0ad3] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+15:42:42 [trace-commons_c84c0ad3] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+15:42:45 [trace-commons_c84c0ad3] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+15:42:49 [trace-commons_c84c0ad3] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+15:42:54 [trace-commons_c84c0ad3] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+15:42:59 [trace-commons_c84c0ad3] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+15:43:04 [trace-commons_c84c0ad3] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+15:43:08 [trace-commons_c84c0ad3] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+15:43:12 [trace-commons_c84c0ad3] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+15:43:16 [trace-commons_c84c0ad3] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+15:43:21 [trace-commons_c84c0ad3] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+15:43:25 [trace-commons_c84c0ad3] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+15:43:29 [trace-commons_c84c0ad3] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+15:43:31 [trace-commons_c84c0ad3] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+15:44:02 [trace-commons_c84c0ad3] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+15:44:07 [trace-commons_c84c0ad3] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+15:44:31 [trace-commons_c84c0ad3] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+10:21:31 [local_100k] 600 records reused, 0 to run
+10:21:31 [local_100k] done in 0.6s, 600 records
+10:21:32 [local_200k] 600 records reused, 0 to run
+10:21:32 [local_200k] done in 0.4s, 600 records
+10:21:32 [local_20k] 600 records reused, 0 to run
+10:21:32 [local_20k] done in 0.0s, 600 records
+10:21:32 [local_50k] 600 records reused, 0 to run
+10:21:33 [local_50k] done in 0.1s, 600 records
+10:21:33 [local_5k] 600 records reused, 0 to run
+10:21:33 [local_5k] done in 0.0s, 600 records
+10:21:33 [trace-commons_4c09dfa9] 600 records reused, 0 to run
+10:21:33 [trace-commons_4c09dfa9] done in 0.0s, 600 records
+10:21:33 [trace-commons_11ef2190] 600 records reused, 0 to run
+10:21:33 [trace-commons_11ef2190] done in 0.0s, 600 records
+10:21:34 [trace-commons_ba1b4916] 600 records reused, 0 to run
+10:21:34 [trace-commons_ba1b4916] done in 0.1s, 600 records
+10:21:34 [trace-commons_479c5e9f] 600 records reused, 0 to run
+10:21:34 [trace-commons_479c5e9f] done in 0.2s, 600 records
+10:21:35 [trace-commons_c84c0ad3] 340 records reused, 260 to run
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 11748.75it/s]
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|##########| 199/199 [00:00<00:00, 7132.19it/s]
+10:22:36 [trace-commons_c84c0ad3] job 10/260 ok=10 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+10:24:39 [trace-commons_c84c0ad3] job 20/260 ok=20 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+10:24:40 [trace-commons_c84c0ad3] job 30/260 ok=30 failed=0 tfidf [paths=table_only] protect=none r=0.7
+10:24:41 [trace-commons_c84c0ad3] job 40/260 ok=40 failed=0 leverage [paths=table_only] protect=none r=0.5
+10:24:42 [trace-commons_c84c0ad3] job 50/260 ok=50 failed=0 ridge [paths=table_only] protect=none r=0.3
+10:24:44 [trace-commons_c84c0ad3] job 60/260 ok=60 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+10:24:47 [trace-commons_c84c0ad3] job 70/260 ok=70 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+10:25:30 [trace-commons_c84c0ad3] job 80/260 ok=80 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+10:25:31 [trace-commons_c84c0ad3] job 90/260 ok=90 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+10:25:32 [trace-commons_c84c0ad3] job 100/260 ok=100 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+10:25:33 [trace-commons_c84c0ad3] job 110/260 ok=110 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+10:25:35 [trace-commons_c84c0ad3] job 120/260 ok=120 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+10:25:39 [trace-commons_c84c0ad3] job 130/260 ok=130 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+10:26:26 [trace-commons_c84c0ad3] job 140/260 ok=140 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+10:27:06 [trace-commons_c84c0ad3] job 150/260 ok=150 failed=0 tfidf [paths=full] protect=none r=0.7
+10:27:42 [trace-commons_c84c0ad3] job 160/260 ok=160 failed=0 leverage [paths=full] protect=none r=0.5
+10:28:21 [trace-commons_c84c0ad3] job 170/260 ok=170 failed=0 ridge [paths=full] protect=none r=0.3
+10:29:02 [trace-commons_c84c0ad3] job 180/260 ok=180 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+10:29:47 [trace-commons_c84c0ad3] job 190/260 ok=190 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+10:30:26 [trace-commons_c84c0ad3] job 200/260 ok=200 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+10:31:02 [trace-commons_c84c0ad3] job 210/260 ok=210 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+10:31:54 [trace-commons_c84c0ad3] job 220/260 ok=220 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+10:32:30 [trace-commons_c84c0ad3] job 230/260 ok=230 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+10:33:18 [trace-commons_c84c0ad3] job 240/260 ok=240 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+10:34:18 [trace-commons_c84c0ad3] job 250/260 ok=250 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+10:36:31 [trace-commons_c84c0ad3] job 260/260 ok=260 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+10:36:31 [trace-commons_c84c0ad3] done in 896.2s, 600 records
+10:36:31 [trace-commons_860618e1] segments digest changed, discarding all prior records
+10:36:31 [trace-commons_860618e1] 0 records reused, 600 to run
+10:36:48 [trace-commons_860618e1] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+10:36:49 [trace-commons_860618e1] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+10:36:51 [trace-commons_860618e1] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+10:36:53 [trace-commons_860618e1] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+10:36:55 [trace-commons_860618e1] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+10:36:58 [trace-commons_860618e1] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+10:37:03 [trace-commons_860618e1] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+10:37:12 [trace-commons_860618e1] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+10:37:17 [trace-commons_860618e1] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+10:37:18 [trace-commons_860618e1] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+10:38:29 [trace-commons_860618e1] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+10:45:54 [trace-commons_860618e1] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+10:51:40 [local_100k] 600 records reused, 0 to run
+10:51:41 [local_100k] done in 0.4s, 600 records
+10:51:41 [local_200k] 600 records reused, 0 to run
+10:51:41 [local_200k] done in 0.4s, 600 records
+10:51:41 [local_20k] 600 records reused, 0 to run
+10:51:42 [local_20k] done in 0.1s, 600 records
+10:51:42 [local_50k] 600 records reused, 0 to run
+10:51:42 [local_50k] done in 0.1s, 600 records
+10:51:42 [local_5k] 600 records reused, 0 to run
+10:51:43 [local_5k] done in 0.0s, 600 records
+10:51:43 [trace-commons_4c09dfa9] 600 records reused, 0 to run
+10:51:43 [trace-commons_4c09dfa9] done in 0.0s, 600 records
+10:51:43 [trace-commons_11ef2190] 600 records reused, 0 to run
+10:51:43 [trace-commons_11ef2190] done in 0.0s, 600 records
+10:51:43 [trace-commons_ba1b4916] 600 records reused, 0 to run
+10:51:44 [trace-commons_ba1b4916] done in 0.1s, 600 records
+10:51:44 [trace-commons_479c5e9f] 600 records reused, 0 to run
+10:51:44 [trace-commons_479c5e9f] done in 0.2s, 600 records
+10:51:44 [trace-commons_c84c0ad3] 600 records reused, 0 to run
+10:51:45 [trace-commons_c84c0ad3] done in 0.1s, 600 records
+10:51:45 [trace-commons_860618e1] 120 records reused, 480 to run
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 12048.23it/s]
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|##########| 199/199 [00:00<00:00, 7352.08it/s]
+10:54:38 [trace-commons_860618e1] job 10/480 ok=10 failed=0 supersede+band+leverage [base] protect=none r=0.7
+10:56:00 [trace-commons_860618e1] job 20/480 ok=20 failed=0 tfidf [base] protect=code_only r=0.5
+10:56:02 [trace-commons_860618e1] job 30/480 ok=30 failed=0 leverage [base] protect=code_only r=0.3
+10:56:05 [trace-commons_860618e1] job 40/480 ok=40 failed=0 leverage [drop_top=1] protect=none r=0.2
+10:56:08 [trace-commons_860618e1] job 50/480 ok=50 failed=0 ridge [drop_top=1] protect=none r=0.1
+10:56:12 [trace-commons_860618e1] job 60/480 ok=60 failed=0 ridge [drop_top=1] protect=none r=0.9
+10:56:26 [trace-commons_860618e1] job 70/480 ok=70 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+10:56:32 [trace-commons_860618e1] job 80/480 ok=80 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+10:56:38 [trace-commons_860618e1] job 90/480 ok=90 failed=0 leverage [drop_top=2] protect=none r=0.3
+10:56:46 [trace-commons_860618e1] job 100/480 ok=100 failed=0 ridge [drop_top=2] protect=none r=0.2
+10:56:54 [trace-commons_860618e1] job 110/480 ok=110 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+10:57:04 [trace-commons_860618e1] job 120/480 ok=120 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+10:57:09 [trace-commons_860618e1] job 130/480 ok=130 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+10:57:15 [trace-commons_860618e1] job 140/480 ok=140 failed=0 leverage [drop_top=4] protect=none r=0.5
+10:57:21 [trace-commons_860618e1] job 150/480 ok=150 failed=0 ridge [drop_top=4] protect=none r=0.3
+10:57:28 [trace-commons_860618e1] job 160/480 ok=160 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+10:57:37 [trace-commons_860618e1] job 170/480 ok=170 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+10:57:43 [trace-commons_860618e1] job 180/480 ok=180 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+10:57:47 [trace-commons_860618e1] job 190/480 ok=190 failed=0 tfidf [paths=score_only] protect=none r=0.7
+10:59:10 [trace-commons_860618e1] job 200/480 ok=200 failed=0 leverage [paths=score_only] protect=none r=0.5
+10:59:16 [trace-commons_860618e1] job 210/480 ok=210 failed=0 ridge [paths=score_only] protect=none r=0.3
+11:00:05 [trace-commons_860618e1] job 220/480 ok=220 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+11:01:23 [trace-commons_860618e1] job 230/480 ok=230 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+11:17:16 [trace-commons_860618e1] job 240/480 ok=240 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+11:17:21 [trace-commons_860618e1] job 250/480 ok=250 failed=0 tfidf [paths=table_only] protect=none r=0.7
+11:17:35 [trace-commons_860618e1] job 260/480 ok=260 failed=0 leverage [paths=table_only] protect=none r=0.5
+11:17:52 [trace-commons_860618e1] job 270/480 ok=270 failed=0 ridge [paths=table_only] protect=none r=0.3
+11:18:07 [trace-commons_860618e1] job 280/480 ok=280 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+11:18:28 [trace-commons_860618e1] job 290/480 ok=290 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+11:22:05 [trace-commons_860618e1] job 300/480 ok=300 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+11:22:10 [trace-commons_860618e1] job 310/480 ok=310 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+11:22:24 [trace-commons_860618e1] job 320/480 ok=320 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+11:22:42 [trace-commons_860618e1] job 330/480 ok=330 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+11:22:58 [trace-commons_860618e1] job 340/480 ok=340 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+11:23:22 [trace-commons_860618e1] job 350/480 ok=350 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+11:26:36 [trace-commons_860618e1] job 360/480 ok=360 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+11:29:30 [trace-commons_860618e1] job 370/480 ok=370 failed=0 tfidf [paths=full] protect=none r=0.7
+11:32:31 [trace-commons_860618e1] job 380/480 ok=380 failed=0 leverage [paths=full] protect=none r=0.5
+11:35:39 [trace-commons_860618e1] job 390/480 ok=390 failed=0 ridge [paths=full] protect=none r=0.3
+11:39:00 [trace-commons_860618e1] job 400/480 ok=400 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+11:41:48 [trace-commons_860618e1] job 410/480 ok=410 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+11:44:44 [trace-commons_860618e1] job 420/480 ok=420 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+11:47:46 [trace-commons_860618e1] job 430/480 ok=430 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+11:52:15 [trace-commons_860618e1] job 440/480 ok=440 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+11:55:26 [trace-commons_860618e1] job 450/480 ok=450 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+11:59:38 [trace-commons_860618e1] job 460/480 ok=460 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+12:03:58 [trace-commons_860618e1] job 470/480 ok=470 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+12:14:26 [trace-commons_860618e1] job 480/480 ok=480 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+12:14:27 [trace-commons_860618e1] done in 4961.6s, 600 records
+12:14:28 [trace-commons_47d9fc04] segments digest changed, discarding all prior records
+12:14:28 [trace-commons_47d9fc04] 0 records reused, 600 to run
+12:15:23 [trace-commons_47d9fc04] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+12:15:28 [trace-commons_47d9fc04] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+12:15:33 [trace-commons_47d9fc04] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+12:15:44 [trace-commons_47d9fc04] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+12:16:03 [trace-commons_47d9fc04] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+12:16:22 [trace-commons_47d9fc04] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+12:16:47 [trace-commons_47d9fc04] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+12:17:24 [trace-commons_47d9fc04] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+12:17:43 [trace-commons_47d9fc04] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+12:17:54 [trace-commons_47d9fc04] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+12:20:29 [trace-commons_47d9fc04] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+12:46:44 [trace-commons_47d9fc04] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+13:02:54 [trace-commons_47d9fc04] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+13:05:50 [local_100k] 600 records reused, 0 to run
+13:05:50 [local_100k] done in 0.5s, 600 records
+13:05:51 [local_200k] 600 records reused, 0 to run
+13:05:52 [local_200k] done in 1.0s, 600 records
+13:05:52 [local_20k] 600 records reused, 0 to run
+13:05:53 [local_20k] done in 0.1s, 600 records
+13:05:53 [local_50k] 600 records reused, 0 to run
+13:05:54 [local_50k] done in 0.2s, 600 records
+13:05:54 [local_5k] 600 records reused, 0 to run
+13:05:54 [local_5k] done in 0.0s, 600 records
+13:05:55 [trace-commons_4c09dfa9] 600 records reused, 0 to run
+13:05:55 [trace-commons_4c09dfa9] done in 0.0s, 600 records
+13:05:55 [trace-commons_11ef2190] 600 records reused, 0 to run
+13:05:56 [trace-commons_11ef2190] done in 0.0s, 600 records
+13:05:56 [trace-commons_ba1b4916] 600 records reused, 0 to run
+13:05:57 [trace-commons_ba1b4916] done in 0.2s, 600 records
+13:05:57 [trace-commons_479c5e9f] 600 records reused, 0 to run
+13:05:58 [trace-commons_479c5e9f] done in 0.3s, 600 records
+13:05:58 [trace-commons_c84c0ad3] 600 records reused, 0 to run
+13:05:59 [trace-commons_c84c0ad3] done in 0.2s, 600 records
+13:05:59 [trace-commons_860618e1] 600 records reused, 0 to run
+13:06:00 [trace-commons_860618e1] done in 0.5s, 600 records
+13:06:01 [trace-commons_47d9fc04] 130 records reused, 470 to run
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 5167.31it/s]
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|##########| 199/199 [00:00<00:00, 3129.61it/s]
+13:10:31 [trace-commons_47d9fc04] job 10/470 ok=10 failed=0 tfidf [base] protect=code_only r=0.5
+13:10:45 [trace-commons_47d9fc04] job 20/470 ok=20 failed=0 leverage [base] protect=code_only r=0.3
+13:11:04 [trace-commons_47d9fc04] job 30/470 ok=30 failed=0 leverage [drop_top=1] protect=none r=0.2
+13:11:23 [trace-commons_47d9fc04] job 40/470 ok=40 failed=0 ridge [drop_top=1] protect=none r=0.1
+13:11:42 [trace-commons_47d9fc04] job 50/470 ok=50 failed=0 ridge [drop_top=1] protect=none r=0.9
+13:12:09 [trace-commons_47d9fc04] job 60/470 ok=60 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+13:12:27 [trace-commons_47d9fc04] job 70/470 ok=70 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+13:12:45 [trace-commons_47d9fc04] job 80/470 ok=80 failed=0 leverage [drop_top=2] protect=none r=0.3
+13:13:04 [trace-commons_47d9fc04] job 90/470 ok=90 failed=0 ridge [drop_top=2] protect=none r=0.2
+13:13:23 [trace-commons_47d9fc04] job 100/470 ok=100 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+13:13:48 [trace-commons_47d9fc04] job 110/470 ok=110 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+13:14:04 [trace-commons_47d9fc04] job 120/470 ok=120 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+13:14:22 [trace-commons_47d9fc04] job 130/470 ok=130 failed=0 leverage [drop_top=4] protect=none r=0.5
+13:14:41 [trace-commons_47d9fc04] job 140/470 ok=140 failed=0 ridge [drop_top=4] protect=none r=0.3
+13:15:04 [trace-commons_47d9fc04] job 150/470 ok=150 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+13:15:30 [trace-commons_47d9fc04] job 160/470 ok=160 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+13:15:46 [trace-commons_47d9fc04] job 170/470 ok=170 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+13:15:55 [trace-commons_47d9fc04] job 180/470 ok=180 failed=0 tfidf [paths=score_only] protect=none r=0.7
+13:18:22 [trace-commons_47d9fc04] job 190/470 ok=190 failed=0 leverage [paths=score_only] protect=none r=0.5
+13:18:44 [trace-commons_47d9fc04] job 200/470 ok=200 failed=0 ridge [paths=score_only] protect=none r=0.3
+13:19:41 [trace-commons_47d9fc04] job 210/470 ok=210 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+13:21:25 [trace-commons_47d9fc04] job 220/470 ok=220 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+13:40:02 [trace-commons_47d9fc04] job 230/470 ok=230 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+13:40:08 [trace-commons_47d9fc04] job 240/470 ok=240 failed=0 tfidf [paths=table_only] protect=none r=0.7
+13:40:24 [trace-commons_47d9fc04] job 250/470 ok=250 failed=0 leverage [paths=table_only] protect=none r=0.5
+13:40:43 [trace-commons_47d9fc04] job 260/470 ok=260 failed=0 ridge [paths=table_only] protect=none r=0.3
+13:41:01 [trace-commons_47d9fc04] job 270/470 ok=270 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+13:41:28 [trace-commons_47d9fc04] job 280/470 ok=280 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+13:45:53 [trace-commons_47d9fc04] job 290/470 ok=290 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+13:45:59 [trace-commons_47d9fc04] job 300/470 ok=300 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+13:46:15 [trace-commons_47d9fc04] job 310/470 ok=310 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+13:46:34 [trace-commons_47d9fc04] job 320/470 ok=320 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+13:46:52 [trace-commons_47d9fc04] job 330/470 ok=330 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+13:47:19 [trace-commons_47d9fc04] job 340/470 ok=340 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+13:51:55 [trace-commons_47d9fc04] job 350/470 ok=350 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+13:56:26 [trace-commons_47d9fc04] job 360/470 ok=360 failed=0 tfidf [paths=full] protect=none r=0.7
+14:00:40 [trace-commons_47d9fc04] job 370/470 ok=370 failed=0 leverage [paths=full] protect=none r=0.5
+14:05:04 [trace-commons_47d9fc04] job 380/470 ok=380 failed=0 ridge [paths=full] protect=none r=0.3
+14:09:55 [local_100k] 600 records reused, 0 to run
+14:09:56 [local_100k] done in 1.2s, 600 records
+14:09:57 [local_200k] 600 records reused, 0 to run
+14:09:58 [local_200k] done in 1.1s, 600 records
+14:09:58 [local_20k] 600 records reused, 0 to run
+14:09:59 [local_20k] done in 0.1s, 600 records
+14:10:00 [local_50k] 600 records reused, 0 to run
+14:10:00 [local_50k] done in 0.3s, 600 records
+14:10:00 [local_5k] 600 records reused, 0 to run
+14:10:01 [local_5k] done in 0.0s, 600 records
+14:10:01 [trace-commons_4c09dfa9] 600 records reused, 0 to run
+14:10:02 [trace-commons_4c09dfa9] done in 0.0s, 600 records
+14:10:02 [trace-commons_11ef2190] 600 records reused, 0 to run
+14:10:03 [trace-commons_11ef2190] done in 0.0s, 600 records
+14:10:03 [trace-commons_ba1b4916] 600 records reused, 0 to run
+14:10:04 [trace-commons_ba1b4916] done in 0.2s, 600 records
+14:10:04 [trace-commons_479c5e9f] 600 records reused, 0 to run
+14:10:05 [trace-commons_479c5e9f] done in 0.4s, 600 records
+14:10:06 [trace-commons_c84c0ad3] 600 records reused, 0 to run
+14:10:06 [trace-commons_c84c0ad3] done in 0.3s, 600 records
+14:10:07 [trace-commons_860618e1] 600 records reused, 0 to run
+14:10:08 [trace-commons_860618e1] done in 0.8s, 600 records
+14:10:09 [trace-commons_47d9fc04] 510 records reused, 90 to run
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 3374.23it/s]
+14:16:22 [trace-commons_47d9fc04] job 10/90 ok=10 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+14:18:55 [trace-commons_47d9fc04] job 20/90 ok=20 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+14:22:10 [trace-commons_47d9fc04] job 30/90 ok=30 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+14:25:26 [trace-commons_47d9fc04] job 40/90 ok=40 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|##########| 199/199 [00:00<00:00, 3978.69it/s]
+14:30:00 [trace-commons_47d9fc04] job 50/90 ok=50 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+14:33:02 [trace-commons_47d9fc04] job 60/90 ok=60 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+14:36:51 [trace-commons_47d9fc04] job 70/90 ok=70 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+14:40:29 [trace-commons_47d9fc04] job 80/90 ok=80 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+09:45:35 [local_100k] 600 records reused, 0 to run
+09:45:35 [local_100k] done in 0.4s, 600 records
+09:45:36 [local_200k] 600 records reused, 0 to run
+09:45:36 [local_200k] done in 0.4s, 600 records
+09:45:36 [local_20k] 600 records reused, 0 to run
+09:45:36 [local_20k] done in 0.0s, 600 records
+09:45:36 [local_50k] 600 records reused, 0 to run
+09:45:37 [local_50k] done in 0.1s, 600 records
+09:45:37 [local_5k] 600 records reused, 0 to run
+09:45:37 [local_5k] done in 0.0s, 600 records
+09:45:37 [trace-commons_4c09dfa9] 600 records reused, 0 to run
+09:45:37 [trace-commons_4c09dfa9] done in 0.0s, 600 records
+09:45:37 [trace-commons_11ef2190] 600 records reused, 0 to run
+09:45:37 [trace-commons_11ef2190] done in 0.0s, 600 records
+09:45:37 [trace-commons_ba1b4916] 600 records reused, 0 to run
+09:45:38 [trace-commons_ba1b4916] done in 0.1s, 600 records
+09:45:38 [trace-commons_479c5e9f] 600 records reused, 0 to run
+09:45:38 [trace-commons_479c5e9f] done in 0.2s, 600 records
+09:45:38 [trace-commons_c84c0ad3] 600 records reused, 0 to run
+09:45:38 [trace-commons_c84c0ad3] done in 0.1s, 600 records
+09:45:39 [trace-commons_860618e1] 600 records reused, 0 to run
+09:45:39 [trace-commons_860618e1] done in 0.2s, 600 records
+09:45:39 [trace-commons_47d9fc04] 590 records reused, 10 to run
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 8775.76it/s]
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|##########| 199/199 [00:00<00:00, 9076.70it/s]
+09:55:07 [trace-commons_47d9fc04] job 10/10 ok=10 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+09:55:07 [trace-commons_47d9fc04] done in 567.8s, 600 records
+09:55:07 [trace-commons_da5d32d6] segments digest changed, discarding all prior records
+09:55:07 [trace-commons_da5d32d6] 0 records reused, 600 to run
+09:55:41 [trace-commons_da5d32d6] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+09:55:44 [trace-commons_da5d32d6] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+09:55:47 [trace-commons_da5d32d6] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+09:55:59 [trace-commons_da5d32d6] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+09:56:21 [trace-commons_da5d32d6] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+09:56:43 [trace-commons_da5d32d6] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+09:57:12 [trace-commons_da5d32d6] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+09:58:02 [trace-commons_da5d32d6] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+09:58:29 [trace-commons_da5d32d6] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+09:58:39 [trace-commons_da5d32d6] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+10:02:03 [trace-commons_da5d32d6] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+10:18:32 [trace-commons_da5d32d6] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+10:29:44 [trace-commons_da5d32d6] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+10:32:36 [trace-commons_da5d32d6] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+10:32:39 [trace-commons_da5d32d6] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+10:32:42 [trace-commons_da5d32d6] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+10:32:48 [trace-commons_da5d32d6] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+10:32:53 [trace-commons_da5d32d6] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+10:33:06 [trace-commons_da5d32d6] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+10:33:11 [trace-commons_da5d32d6] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+10:33:15 [trace-commons_da5d32d6] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+10:33:18 [trace-commons_da5d32d6] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+10:33:23 [trace-commons_da5d32d6] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+10:33:31 [trace-commons_da5d32d6] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+10:33:35 [trace-commons_da5d32d6] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+10:33:38 [trace-commons_da5d32d6] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+10:33:42 [trace-commons_da5d32d6] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+10:33:48 [trace-commons_da5d32d6] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+10:33:55 [trace-commons_da5d32d6] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+10:33:58 [trace-commons_da5d32d6] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+10:34:02 [trace-commons_da5d32d6] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+10:35:13 [trace-commons_da5d32d6] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+10:35:20 [trace-commons_da5d32d6] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+10:36:19 [trace-commons_da5d32d6] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+10:37:51 [trace-commons_da5d32d6] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+10:47:20 [trace-commons_da5d32d6] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+10:47:23 [trace-commons_da5d32d6] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+10:47:26 [trace-commons_da5d32d6] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+10:47:30 [trace-commons_da5d32d6] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+10:47:33 [trace-commons_da5d32d6] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+10:47:42 [trace-commons_da5d32d6] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+10:50:03 [trace-commons_da5d32d6] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+10:50:06 [trace-commons_da5d32d6] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+10:50:10 [trace-commons_da5d32d6] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+10:50:13 [trace-commons_da5d32d6] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+10:50:19 [trace-commons_da5d32d6] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+10:50:39 [trace-commons_da5d32d6] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+10:54:02 [trace-commons_da5d32d6] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+10:57:20 [trace-commons_da5d32d6] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+10:59:53 [trace-commons_da5d32d6] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+11:02:16 [trace-commons_da5d32d6] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+11:07:54 [trace-commons_da5d32d6] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+11:11:33 [trace-commons_da5d32d6] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+11:15:20 [trace-commons_da5d32d6] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+11:18:25 [trace-commons_da5d32d6] job 550/600 ok=550 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+11:24:14 [trace-commons_da5d32d6] job 560/600 ok=560 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+11:28:05 [trace-commons_da5d32d6] job 570/600 ok=570 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+11:35:00 [trace-commons_da5d32d6] job 580/600 ok=580 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+11:41:22 [trace-commons_da5d32d6] job 590/600 ok=590 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+11:57:58 [trace-commons_da5d32d6] job 600/600 ok=600 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+11:57:59 [trace-commons_da5d32d6] done in 7371.2s, 600 records
+11:58:01 [swe-gym_row309] segments digest changed, discarding all prior records
+11:58:01 [swe-gym_row309] 0 records reused, 600 to run
+11:58:02 [swe-gym_row309] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+11:58:02 [swe-gym_row309] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+11:58:02 [swe-gym_row309] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+11:58:02 [swe-gym_row309] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+11:58:02 [swe-gym_row309] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+11:58:02 [swe-gym_row309] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+11:58:02 [swe-gym_row309] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+11:58:03 [swe-gym_row309] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+11:58:03 [swe-gym_row309] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+11:58:03 [swe-gym_row309] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+11:58:03 [swe-gym_row309] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+11:58:08 [swe-gym_row309] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+11:58:10 [swe-gym_row309] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+11:58:12 [swe-gym_row309] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+11:58:12 [swe-gym_row309] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+11:58:12 [swe-gym_row309] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+11:58:12 [swe-gym_row309] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+11:58:12 [swe-gym_row309] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+11:58:12 [swe-gym_row309] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+11:58:12 [swe-gym_row309] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+11:58:13 [swe-gym_row309] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+11:58:13 [swe-gym_row309] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+11:58:13 [swe-gym_row309] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+11:58:13 [swe-gym_row309] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+11:58:13 [swe-gym_row309] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+11:58:13 [swe-gym_row309] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+11:58:13 [swe-gym_row309] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+11:58:13 [swe-gym_row309] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+11:58:13 [swe-gym_row309] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+11:58:13 [swe-gym_row309] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+11:58:13 [swe-gym_row309] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+11:58:16 [swe-gym_row309] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+11:58:16 [swe-gym_row309] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+11:58:18 [swe-gym_row309] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+11:58:20 [swe-gym_row309] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+11:58:25 [swe-gym_row309] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+11:58:25 [swe-gym_row309] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+11:58:25 [swe-gym_row309] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+11:58:26 [swe-gym_row309] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+11:58:26 [swe-gym_row309] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+11:58:26 [swe-gym_row309] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+11:58:29 [swe-gym_row309] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+11:58:30 [swe-gym_row309] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+11:58:30 [swe-gym_row309] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+11:58:30 [swe-gym_row309] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+11:58:30 [swe-gym_row309] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+11:58:30 [swe-gym_row309] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+11:58:33 [swe-gym_row309] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+11:58:38 [swe-gym_row309] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+11:58:42 [swe-gym_row309] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+11:58:46 [swe-gym_row309] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+11:58:51 [swe-gym_row309] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+11:58:55 [swe-gym_row309] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+11:59:00 [swe-gym_row309] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+11:59:04 [swe-gym_row309] job 550/600 ok=550 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+11:59:11 [swe-gym_row309] job 560/600 ok=560 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+11:59:15 [swe-gym_row309] job 570/600 ok=570 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+11:59:22 [swe-gym_row309] job 580/600 ok=580 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+11:59:28 [swe-gym_row309] job 590/600 ok=590 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+11:59:34 [swe-gym_row309] job 600/600 ok=600 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+11:59:35 [swe-gym_row309] done in 93.7s, 600 records
+11:59:35 [swe-gym_row419] segments digest changed, discarding all prior records
+11:59:35 [swe-gym_row419] 0 records reused, 600 to run
+11:59:38 [swe-gym_row419] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+11:59:38 [swe-gym_row419] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+11:59:38 [swe-gym_row419] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+11:59:38 [swe-gym_row419] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+11:59:39 [swe-gym_row419] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+11:59:39 [swe-gym_row419] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+11:59:40 [swe-gym_row419] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+11:59:41 [swe-gym_row419] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+11:59:42 [swe-gym_row419] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+11:59:42 [swe-gym_row419] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+11:59:42 [swe-gym_row419] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+11:59:57 [swe-gym_row419] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+12:00:08 [swe-gym_row419] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+12:00:13 [swe-gym_row419] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+12:00:14 [swe-gym_row419] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+12:00:14 [swe-gym_row419] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+12:00:14 [swe-gym_row419] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+12:00:15 [swe-gym_row419] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+12:00:15 [swe-gym_row419] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+12:00:15 [swe-gym_row419] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+12:00:16 [swe-gym_row419] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+12:00:16 [swe-gym_row419] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+12:00:16 [swe-gym_row419] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+12:00:17 [swe-gym_row419] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+12:00:17 [swe-gym_row419] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+12:00:17 [swe-gym_row419] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+12:00:18 [swe-gym_row419] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+12:00:18 [swe-gym_row419] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+12:00:18 [swe-gym_row419] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+12:00:19 [swe-gym_row419] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+12:00:19 [swe-gym_row419] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+12:00:23 [swe-gym_row419] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+12:00:24 [swe-gym_row419] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+12:00:28 [swe-gym_row419] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+12:00:32 [swe-gym_row419] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+12:00:49 [swe-gym_row419] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+12:00:49 [swe-gym_row419] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+12:00:49 [swe-gym_row419] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+12:00:50 [swe-gym_row419] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+12:00:50 [swe-gym_row419] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+12:00:50 [swe-gym_row419] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+12:01:01 [swe-gym_row419] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+12:01:01 [swe-gym_row419] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+12:01:01 [swe-gym_row419] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+12:01:02 [swe-gym_row419] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+12:01:02 [swe-gym_row419] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+12:01:02 [swe-gym_row419] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+12:01:12 [swe-gym_row419] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+12:01:22 [swe-gym_row419] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+12:01:32 [swe-gym_row419] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+12:01:43 [swe-gym_row419] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+12:01:55 [swe-gym_row419] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+12:02:07 [swe-gym_row419] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+12:02:20 [swe-gym_row419] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+12:02:29 [swe-gym_row419] job 550/600 ok=550 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+12:02:43 [swe-gym_row419] job 560/600 ok=560 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+12:02:54 [swe-gym_row419] job 570/600 ok=570 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+12:03:09 [swe-gym_row419] job 580/600 ok=580 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+12:03:26 [swe-gym_row419] job 590/600 ok=590 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+12:03:42 [swe-gym_row419] job 600/600 ok=600 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+12:03:43 [swe-gym_row419] done in 247.3s, 600 records
+12:03:43 [swe-gym_row358] segments digest changed, discarding all prior records
+12:03:43 [swe-gym_row358] 0 records reused, 600 to run
+12:03:46 [swe-gym_row358] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+12:03:46 [swe-gym_row358] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+12:03:46 [swe-gym_row358] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+12:03:47 [swe-gym_row358] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+12:03:47 [swe-gym_row358] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+12:03:48 [swe-gym_row358] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+12:03:48 [swe-gym_row358] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+12:03:49 [swe-gym_row358] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+12:03:50 [swe-gym_row358] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+12:03:50 [swe-gym_row358] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+12:03:51 [swe-gym_row358] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+12:04:09 [swe-gym_row358] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+12:04:24 [swe-gym_row358] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+12:04:30 [swe-gym_row358] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+12:04:30 [swe-gym_row358] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+12:04:31 [swe-gym_row358] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+12:04:31 [swe-gym_row358] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+12:04:32 [swe-gym_row358] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+12:04:32 [swe-gym_row358] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+12:04:33 [swe-gym_row358] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+12:04:33 [swe-gym_row358] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+12:04:34 [swe-gym_row358] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+12:04:34 [swe-gym_row358] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+12:04:35 [swe-gym_row358] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+12:04:35 [swe-gym_row358] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+12:04:36 [swe-gym_row358] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+12:04:36 [swe-gym_row358] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+12:04:37 [swe-gym_row358] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+12:04:37 [swe-gym_row358] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+12:04:37 [swe-gym_row358] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+12:04:38 [swe-gym_row358] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+12:04:47 [swe-gym_row358] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+12:04:47 [swe-gym_row358] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+12:04:58 [swe-gym_row358] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+12:05:06 [swe-gym_row358] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+12:06:04 [swe-gym_row358] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+12:06:04 [swe-gym_row358] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+12:06:04 [swe-gym_row358] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+12:06:05 [swe-gym_row358] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+12:06:05 [swe-gym_row358] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+12:06:05 [swe-gym_row358] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+12:06:23 [swe-gym_row358] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+12:06:23 [swe-gym_row358] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+12:06:24 [swe-gym_row358] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+12:06:24 [swe-gym_row358] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+12:06:25 [swe-gym_row358] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+12:06:26 [swe-gym_row358] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+12:06:45 [swe-gym_row358] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+12:07:02 [swe-gym_row358] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+12:07:24 [swe-gym_row358] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+12:07:43 [swe-gym_row358] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+12:08:03 [swe-gym_row358] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+12:08:22 [swe-gym_row358] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+12:08:39 [swe-gym_row358] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+12:08:52 [swe-gym_row358] job 550/600 ok=550 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+12:09:14 [swe-gym_row358] job 560/600 ok=560 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+12:09:28 [swe-gym_row358] job 570/600 ok=570 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+12:09:51 [swe-gym_row358] job 580/600 ok=580 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+12:10:17 [swe-gym_row358] job 590/600 ok=590 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+12:11:07 [swe-gym_row358] job 600/600 ok=600 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+12:11:08 [swe-gym_row358] done in 443.9s, 600 records
+12:11:08 [swe-gym_row282] segments digest changed, discarding all prior records
+12:11:08 [swe-gym_row282] 0 records reused, 600 to run
+12:11:15 [swe-gym_row282] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+12:11:15 [swe-gym_row282] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+12:11:16 [swe-gym_row282] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+12:11:16 [swe-gym_row282] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+12:11:17 [swe-gym_row282] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+12:11:18 [swe-gym_row282] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+12:11:19 [swe-gym_row282] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+12:11:22 [swe-gym_row282] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+12:11:25 [swe-gym_row282] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+12:11:25 [swe-gym_row282] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+12:11:26 [swe-gym_row282] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+12:11:45 [swe-gym_row282] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+12:12:01 [swe-gym_row282] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+12:12:06 [swe-gym_row282] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+12:12:07 [swe-gym_row282] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+12:12:08 [swe-gym_row282] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+12:12:09 [swe-gym_row282] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+12:12:10 [swe-gym_row282] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+12:12:10 [swe-gym_row282] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+12:12:11 [swe-gym_row282] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+12:12:11 [swe-gym_row282] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+12:12:12 [swe-gym_row282] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+12:12:12 [swe-gym_row282] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+12:12:13 [swe-gym_row282] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+12:12:14 [swe-gym_row282] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+12:12:14 [swe-gym_row282] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+12:12:15 [swe-gym_row282] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+12:12:16 [swe-gym_row282] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+12:12:17 [swe-gym_row282] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+12:12:17 [swe-gym_row282] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+12:12:18 [swe-gym_row282] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+12:12:30 [swe-gym_row282] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+12:12:31 [swe-gym_row282] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+12:12:39 [swe-gym_row282] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+12:12:47 [swe-gym_row282] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+12:13:15 [swe-gym_row282] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+12:13:15 [swe-gym_row282] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+12:13:16 [swe-gym_row282] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+12:13:17 [swe-gym_row282] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+12:13:17 [swe-gym_row282] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+12:13:18 [swe-gym_row282] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+12:13:39 [swe-gym_row282] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+12:13:40 [swe-gym_row282] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+12:13:41 [swe-gym_row282] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+12:13:42 [swe-gym_row282] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+12:13:43 [swe-gym_row282] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+12:13:44 [swe-gym_row282] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+12:14:03 [swe-gym_row282] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+12:14:21 [swe-gym_row282] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+12:14:39 [swe-gym_row282] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+12:15:04 [swe-gym_row282] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+12:15:29 [swe-gym_row282] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+12:15:49 [swe-gym_row282] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+12:16:12 [swe-gym_row282] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+12:16:28 [swe-gym_row282] job 550/600 ok=550 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+12:16:53 [swe-gym_row282] job 560/600 ok=560 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+12:17:10 [swe-gym_row282] job 570/600 ok=570 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+12:17:35 [swe-gym_row282] job 580/600 ok=580 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+12:17:58 [swe-gym_row282] job 590/600 ok=590 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+12:18:21 [swe-gym_row282] job 600/600 ok=600 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+12:18:22 [swe-gym_row282] done in 433.1s, 600 records
+12:18:22 [swe-gym_row214] segments digest changed, discarding all prior records
+12:18:22 [swe-gym_row214] 0 records reused, 600 to run
+12:18:38 [swe-gym_row214] job 10/600 ok=10 failed=0 random [base] protect=none r=0.7
+12:18:40 [swe-gym_row214] job 20/600 ok=20 failed=0 recency [base] protect=none r=0.5
+12:18:41 [swe-gym_row214] job 30/600 ok=30 failed=0 tfidf [base] protect=none r=0.3
+12:18:43 [swe-gym_row214] job 40/600 ok=40 failed=0 leverage [base] protect=none r=0.2
+12:18:46 [swe-gym_row214] job 50/600 ok=50 failed=0 ridge [base] protect=none r=0.1
+12:18:48 [swe-gym_row214] job 60/600 ok=60 failed=0 ridge [base] protect=none r=0.9
+12:18:51 [swe-gym_row214] job 70/600 ok=70 failed=0 cur_residual [base] protect=none r=0.7
+12:18:54 [swe-gym_row214] job 80/600 ok=80 failed=0 topics [base] protect=none r=0.5
+12:18:56 [swe-gym_row214] job 90/600 ok=90 failed=0 supersede+tfidf [base] protect=none r=0.3
+12:18:57 [swe-gym_row214] job 100/600 ok=100 failed=0 supersede+leverage [base] protect=none r=0.2
+12:19:02 [swe-gym_row214] job 110/600 ok=110 failed=0 band+leverage [base] protect=none r=0.1
+12:20:24 [swe-gym_row214] job 120/600 ok=120 failed=0 band+leverage [base] protect=none r=0.9
+12:20:56 [swe-gym_row214] job 130/600 ok=130 failed=0 supersede+band+leverage [base] protect=none r=0.7
+12:21:03 [swe-gym_row214] job 140/600 ok=140 failed=0 tfidf [base] protect=code_only r=0.5
+12:21:05 [swe-gym_row214] job 150/600 ok=150 failed=0 leverage [base] protect=code_only r=0.3
+12:21:06 [swe-gym_row214] job 160/600 ok=160 failed=0 leverage [drop_top=1] protect=none r=0.2
+12:21:08 [swe-gym_row214] job 170/600 ok=170 failed=0 ridge [drop_top=1] protect=none r=0.1
+12:21:09 [swe-gym_row214] job 180/600 ok=180 failed=0 ridge [drop_top=1] protect=none r=0.9
+12:21:11 [swe-gym_row214] job 190/600 ok=190 failed=0 cur_residual [drop_top=1] protect=none r=0.7
+12:21:12 [swe-gym_row214] job 200/600 ok=200 failed=0 supersede+leverage [drop_top=1] protect=none r=0.5
+12:21:14 [swe-gym_row214] job 210/600 ok=210 failed=0 leverage [drop_top=2] protect=none r=0.3
+12:21:15 [swe-gym_row214] job 220/600 ok=220 failed=0 ridge [drop_top=2] protect=none r=0.2
+12:21:17 [swe-gym_row214] job 230/600 ok=230 failed=0 cur_residual [drop_top=2] protect=none r=0.1
+12:21:20 [swe-gym_row214] job 240/600 ok=240 failed=0 cur_residual [drop_top=2] protect=none r=0.9
+12:21:20 [swe-gym_row214] job 250/600 ok=250 failed=0 supersede+leverage [drop_top=2] protect=none r=0.7
+12:21:22 [swe-gym_row214] job 260/600 ok=260 failed=0 leverage [drop_top=4] protect=none r=0.5
+12:21:24 [swe-gym_row214] job 270/600 ok=270 failed=0 ridge [drop_top=4] protect=none r=0.3
+12:21:25 [swe-gym_row214] job 280/600 ok=280 failed=0 cur_residual [drop_top=4] protect=none r=0.2
+12:21:27 [swe-gym_row214] job 290/600 ok=290 failed=0 supersede+leverage [drop_top=4] protect=none r=0.1
+12:21:28 [swe-gym_row214] job 300/600 ok=300 failed=0 supersede+leverage [drop_top=4] protect=none r=0.9
+12:21:30 [swe-gym_row214] job 310/600 ok=310 failed=0 tfidf [paths=score_only] protect=none r=0.7
+12:22:14 [swe-gym_row214] job 320/600 ok=320 failed=0 leverage [paths=score_only] protect=none r=0.5
+12:22:16 [swe-gym_row214] job 330/600 ok=330 failed=0 ridge [paths=score_only] protect=none r=0.3
+12:22:26 [swe-gym_row214] job 340/600 ok=340 failed=0 supersede+leverage [paths=score_only] protect=none r=0.2
+12:22:36 [swe-gym_row214] job 350/600 ok=350 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.1
+12:23:16 [swe-gym_row214] job 360/600 ok=360 failed=0 supersede+band+leverage [paths=score_only] protect=none r=0.9
+12:23:17 [swe-gym_row214] job 370/600 ok=370 failed=0 tfidf [paths=table_only] protect=none r=0.7
+12:23:19 [swe-gym_row214] job 380/600 ok=380 failed=0 leverage [paths=table_only] protect=none r=0.5
+12:23:21 [swe-gym_row214] job 390/600 ok=390 failed=0 ridge [paths=table_only] protect=none r=0.3
+12:23:23 [swe-gym_row214] job 400/600 ok=400 failed=0 supersede+leverage [paths=table_only] protect=none r=0.2
+12:23:25 [swe-gym_row214] job 410/600 ok=410 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.1
+12:23:57 [swe-gym_row214] job 420/600 ok=420 failed=0 supersede+band+leverage [paths=table_only] protect=none r=0.9
+12:23:59 [swe-gym_row214] job 430/600 ok=430 failed=0 tfidf [paths=table_only+mm=1] protect=none r=0.7
+12:24:00 [swe-gym_row214] job 440/600 ok=440 failed=0 leverage [paths=table_only+mm=1] protect=none r=0.5
+12:24:02 [swe-gym_row214] job 450/600 ok=450 failed=0 ridge [paths=table_only+mm=1] protect=none r=0.3
+12:24:03 [swe-gym_row214] job 460/600 ok=460 failed=0 supersede+leverage [paths=table_only+mm=1] protect=none r=0.2
+12:24:06 [swe-gym_row214] job 470/600 ok=470 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.1
+12:24:39 [swe-gym_row214] job 480/600 ok=480 failed=0 supersede+band+leverage [paths=table_only+mm=1] protect=none r=0.9
+12:25:37 [swe-gym_row214] job 490/600 ok=490 failed=0 tfidf [paths=full] protect=none r=0.7
+12:26:39 [swe-gym_row214] job 500/600 ok=500 failed=0 leverage [paths=full] protect=none r=0.5
+12:27:47 [swe-gym_row214] job 510/600 ok=510 failed=0 ridge [paths=full] protect=none r=0.3
+12:28:59 [swe-gym_row214] job 520/600 ok=520 failed=0 supersede+leverage [paths=full] protect=none r=0.2
+12:29:29 [swe-gym_row214] job 530/600 ok=530 failed=0 supersede+band+leverage [paths=full] protect=none r=0.1
+12:30:05 [swe-gym_row214] job 540/600 ok=540 failed=0 supersede+band+leverage [paths=full] protect=none r=0.9
+12:30:53 [swe-gym_row214] job 550/600 ok=550 failed=0 tfidf [paths=full+mm=1] protect=none r=0.7
+12:32:02 [swe-gym_row214] job 560/600 ok=560 failed=0 leverage [paths=full+mm=1] protect=none r=0.5
+12:32:59 [swe-gym_row214] job 570/600 ok=570 failed=0 ridge [paths=full+mm=1] protect=none r=0.3
+12:33:59 [swe-gym_row214] job 580/600 ok=580 failed=0 supersede+leverage [paths=full+mm=1] protect=none r=0.2
+12:34:24 [swe-gym_row214] job 590/600 ok=590 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.1
+12:34:49 [swe-gym_row214] job 600/600 ok=600 failed=0 supersede+band+leverage [paths=full+mm=1] protect=none r=0.9
+12:34:49 [swe-gym_row214] done in 986.8s, 600 records
+
+18 transcripts checkpointed.
+
+All planned jobs present in every checkpoint; no failures.
+
+
+== distortion at the aggressive rates this project is actually built for (achieved ~= 0.5, 0.33, 0.25, i.e. 2x/3x/4x) ==
+recall = atom_recall (all-history), recall_f = atom_recall_final, coverage = semantic
+coverage.
+method                          recall@0.5    recall_f@0.5    coverage@0.5     recall@0.33   recall_f@0.33   coverage@0.33     recall@0.25   recall_f@0.25   coverage@0.25
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+random                               0.689           0.697           0.876           0.543           0.552           0.813           0.463           0.474           0.779
+recency                              0.595           0.611           0.830           0.455           0.471           0.745           0.378           0.392           0.694
+tfidf                                0.711           0.737           0.941           0.526           0.559           0.881           0.425           0.457           0.845
+leverage                             0.774           0.783           0.883           0.602           0.615           0.809           0.509           0.526           0.769
+ridge                                0.793           0.802           0.886           0.630           0.646           0.816           0.539           0.558           0.773
+cur_residual                         0.779           0.787           0.901           0.619           0.635           0.842           0.529           0.547           0.807
+topics                               0.680           0.683           0.894           0.518           0.525           0.811           0.414           0.425           0.763
+supersede+tfidf                      0.728           0.812           0.940           0.549           0.610           0.891           0.449           0.498           0.855
+supersede+leverage                   0.765           0.851           0.894           0.598           0.667           0.818           0.501           0.560           0.778
+band+leverage                        0.778           0.782           0.883           0.615           0.626           0.816           0.514           0.532           0.774
+supersede+band+leverage              0.784           0.843           0.893           0.609           0.679           0.826           0.518           0.578           0.786
+
+== knee per method: lowest achieved rate (token-weighted mean) at which atom_recall_final >= 0.9 still holds ==
+Lower is better here: it means the method holds an acceptable final-state atom recall
+further down the compression axis before degrading. 'never' = failed the floor even at
+the least-aggressive rate tested; ranked ascending (best first).
+method                        knee    n
+---------------------------------------
+supersede+band+leverage      0.569   18
+supersede+leverage           0.588   18
+ridge                        0.638   18
+supersede+tfidf              0.661   18
+cur_residual                 0.696   18
+leverage                     0.697   18
+band+leverage                0.697   18
+tfidf                        0.786   18
+topics                       0.837   18
+random                       0.862   18
+recency                      0.898   18
+== token-weighted metrics across all transcripts, by REQUESTED keep_ratio (protect=none) ==
+columns are the shared token budget every method was handed, not what each method
+achieved; a supersede+/band+ row can fall short of its budget once its candidate pool
+is exhausted (see budget_binding per record, and the ceiling table below). r=0.7-0.9 are
+included for completeness, not because they are the target operating points — see the
+aggressive-rate table below for the rates this project actually cares about.
+
+-- atom recall (all-history) --
+method                       r=0.05    r=0.1   r=0.15    r=0.2   r=0.25    r=0.3    r=0.4    r=0.5    r=0.6    r=0.7    r=0.8    r=0.9
+--------------------------------------------------------------------------------------------------------------------------------------
+random                        0.142    0.256    0.336    0.406    0.463    0.515    0.609    0.689    0.767    0.833    0.884    0.939
+recency                       0.126    0.217    0.278    0.324    0.378    0.433    0.506    0.595    0.676    0.739    0.790    0.876
+tfidf                         0.124    0.209    0.277    0.350    0.425    0.490    0.607    0.710    0.792    0.853    0.899    0.942
+leverage                      0.139    0.257    0.348    0.433    0.509    0.568    0.680    0.774    0.838    0.895    0.937    0.975
+ridge                         0.135    0.264    0.365    0.461    0.538    0.597    0.708    0.793    0.855    0.906    0.948    0.978
+cur_residual                  0.159    0.281    0.381    0.460    0.529    0.588    0.693    0.779    0.838    0.897    0.938    0.975
+topics                        0.119    0.206    0.280    0.348    0.414    0.485    0.595    0.680    0.756    0.817    0.881    0.928
+supersede+tfidf               0.129    0.221    0.318    0.402    0.474    0.536    0.645    0.739    0.805    0.840    0.871    0.894
+supersede+leverage            0.144    0.264    0.370    0.458    0.524    0.584    0.692    0.775    0.830    0.866    0.890    0.903
+band+leverage                 0.140    0.263    0.362    0.441    0.514    0.582    0.691    0.778    0.849    0.901    0.940    0.973
+supersede+band+leverage       0.144    0.273    0.380    0.466    0.540    0.593    0.704    0.781    0.828    0.855    0.872    0.889
+
+-- atom recall (final-state) --
+method                       r=0.05    r=0.1   r=0.15    r=0.2   r=0.25    r=0.3    r=0.4    r=0.5    r=0.6    r=0.7    r=0.8    r=0.9
+--------------------------------------------------------------------------------------------------------------------------------------
+random                        0.148    0.264    0.344    0.418    0.474    0.524    0.619    0.697    0.773    0.839    0.888    0.943
+recency                       0.128    0.222    0.292    0.338    0.392    0.449    0.523    0.611    0.677    0.738    0.789    0.875
+tfidf                         0.134    0.225    0.300    0.379    0.457    0.524    0.641    0.736    0.809    0.869    0.912    0.945
+leverage                      0.148    0.272    0.369    0.455    0.526    0.581    0.693    0.783    0.844    0.898    0.936    0.974
+ridge                         0.146    0.283    0.386    0.486    0.558    0.614    0.720    0.802    0.861    0.910    0.947    0.977
+cur_residual                  0.169    0.294    0.399    0.480    0.547    0.605    0.706    0.787    0.846    0.901    0.937    0.974
+topics                        0.127    0.218    0.293    0.361    0.425    0.494    0.597    0.683    0.758    0.815    0.878    0.928
+supersede+tfidf               0.141    0.242    0.349    0.441    0.521    0.591    0.714    0.819    0.890    0.928    0.959    0.983
+supersede+leverage            0.159    0.291    0.408    0.506    0.581    0.647    0.766    0.858    0.916    0.954    0.978    0.992
+band+leverage                 0.149    0.281    0.382    0.461    0.532    0.594    0.698    0.782    0.852    0.904    0.941    0.974
+supersede+band+leverage       0.158    0.301    0.419    0.515    0.597    0.658    0.779    0.864    0.913    0.942    0.959    0.977
+
+-- semantic coverage --
+method                       r=0.05    r=0.1   r=0.15    r=0.2   r=0.25    r=0.3    r=0.4    r=0.5    r=0.6    r=0.7    r=0.8    r=0.9
+--------------------------------------------------------------------------------------------------------------------------------------
+random                        0.602    0.666    0.719    0.753    0.779    0.801    0.840    0.876    0.905    0.931    0.955    0.977
+recency                       0.532    0.587    0.631    0.665    0.694    0.729    0.782    0.830    0.867    0.901    0.931    0.968
+tfidf                         0.670    0.734    0.780    0.814    0.845    0.870    0.907    0.940    0.966    0.984    0.992    0.997
+leverage                      0.538    0.626    0.680    0.732    0.769    0.794    0.845    0.883    0.912    0.935    0.957    0.976
+ridge                         0.526    0.621    0.687    0.739    0.773    0.801    0.850    0.886    0.914    0.937    0.958    0.976
+cur_residual                  0.617    0.692    0.743    0.780    0.807    0.830    0.870    0.901    0.925    0.944    0.963    0.979
+topics                        0.536    0.599    0.670    0.722    0.763    0.795    0.850    0.894    0.929    0.955    0.977    0.992
+supersede+tfidf               0.671    0.743    0.801    0.838    0.861    0.885    0.920    0.942    0.956    0.965    0.969    0.970
+supersede+leverage            0.548    0.638    0.704    0.752    0.788    0.812    0.859    0.898    0.930    0.950    0.963    0.969
+band+leverage                 0.542    0.634    0.693    0.741    0.774    0.802    0.847    0.883    0.910    0.934    0.955    0.974
+supersede+band+leverage       0.554    0.651    0.716    0.764    0.795    0.819    0.866    0.898    0.925    0.940    0.947    0.952
+
+== spectral methods vs tfidf at matched ACHIEVED rate ==
+This is a rate-distortion comparison, not a scoreboard: losing some distortion is the
+point of lossy compaction, so a negative cell is not automatically a defect — read it
+together with the aggressive-rate and knee tables below, which are the operating points
+that matter for this project. Each cell interpolates both curves onto the same achieved
+compression_ratio and compares only transcripts where the method reached that rate;
+'n/a(ceilX)' means none did — X is the best ceiling reached.
+method vs tfidf                   r=0.05         r=0.1        r=0.15         r=0.2        r=0.25         r=0.3         r=0.4         r=0.5         r=0.6         r=0.7         r=0.8         r=0.9
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+-- atom recall (all-history) delta (spectral - tfidf) --
+method vs tfidf                   r=0.05         r=0.1        r=0.15         r=0.2        r=0.25         r=0.3         r=0.4         r=0.5         r=0.6         r=0.7         r=0.8         r=0.9
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+leverage                     +0.026*8/18        +0.048        +0.071        +0.083        +0.084        +0.077        +0.073        +0.063        +0.045        +0.041        +0.037 n/a(ceil0.90)
+ridge                        +0.053*8/18        +0.055        +0.087        +0.110        +0.113        +0.107        +0.100        +0.082        +0.062        +0.053        +0.048 n/a(ceil0.90)
+cur_residual                 +0.063*8/18        +0.072        +0.103        +0.109        +0.104        +0.097        +0.086        +0.068        +0.046        +0.044        +0.038 n/a(ceil0.90)
+topics                       +0.013*8/18        -0.003        +0.003        -0.002        -0.011        -0.006        -0.013        -0.031        -0.036        -0.036        -0.019 n/a(ceil0.90)
+supersede+leverage          +0.011*13/18        +0.056        +0.093  +0.083*17/18  +0.077*17/18  +0.074*17/18  +0.068*17/18  +0.053*17/18  +0.068*14/18  +0.059*10/18   +0.069*8/18 n/a(ceil0.90)
+band+leverage               +0.028*11/18        +0.055        +0.085        +0.090        +0.088        +0.092        +0.083        +0.067        +0.057        +0.048        +0.041 n/a(ceil0.90)
+supersede+band+leverage      +0.018*9/18        +0.065        +0.103  +0.091*17/18  +0.093*17/18  +0.084*17/18  +0.080*17/18  +0.080*16/18  +0.088*11/18   +0.069*9/18   +0.069*6/18 n/a(ceil0.90)
+
+-- atom recall (final-state) delta (spectral - tfidf) --
+method vs tfidf                   r=0.05         r=0.1        r=0.15         r=0.2        r=0.25         r=0.3         r=0.4         r=0.5         r=0.6         r=0.7         r=0.8         r=0.9
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+leverage                     +0.023*8/18        +0.047        +0.069        +0.076        +0.069        +0.057        +0.052        +0.046        +0.034        +0.029        +0.024 n/a(ceil0.90)
+ridge                        +0.065*8/18        +0.058        +0.086        +0.108        +0.101        +0.090        +0.079        +0.065        +0.052        +0.040        +0.035 n/a(ceil0.90)
+cur_residual                 +0.059*8/18        +0.069        +0.100        +0.101        +0.090        +0.081        +0.064        +0.050        +0.036        +0.032        +0.025 n/a(ceil0.90)
+topics                       +0.007*8/18        -0.007        -0.007        -0.018        -0.032        -0.030        -0.044        -0.054        -0.051        -0.054        -0.034 n/a(ceil0.90)
+supersede+leverage          +0.019*13/18        +0.066        +0.108  +0.103*17/18  +0.102*17/18  +0.104*17/18  +0.110*17/18  +0.113*17/18  +0.097*14/18  +0.076*10/18   +0.083*8/18 n/a(ceil0.90)
+band+leverage               +0.027*11/18        +0.056        +0.083        +0.082        +0.074        +0.071        +0.057        +0.046        +0.043        +0.035        +0.029 n/a(ceil0.90)
+supersede+band+leverage      +0.033*9/18        +0.076        +0.119  +0.112*17/18  +0.119*17/18  +0.115*17/18  +0.123*17/18  +0.110*16/18  +0.102*11/18   +0.082*9/18   +0.079*6/18 n/a(ceil0.90)
+
+-- semantic coverage delta (spectral - tfidf) --
+method vs tfidf                   r=0.05         r=0.1        r=0.15         r=0.2        r=0.25         r=0.3         r=0.4         r=0.5         r=0.6         r=0.7         r=0.8         r=0.9
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+leverage                     -0.145*8/18        -0.108        -0.101        -0.081        -0.076        -0.076        -0.062        -0.057        -0.054        -0.049        -0.035 n/a(ceil0.90)
+ridge                        -0.148*8/18        -0.113        -0.093        -0.075        -0.071        -0.069        -0.057        -0.054        -0.052        -0.047        -0.034 n/a(ceil0.90)
+cur_residual                 -0.072*8/18        -0.042        -0.037        -0.034        -0.038        -0.040        -0.037        -0.039        -0.041        -0.039        -0.028 n/a(ceil0.90)
+topics                       -0.087*8/18        -0.136        -0.111        -0.092        -0.082        -0.075        -0.057        -0.047        -0.037        -0.028        -0.015 n/a(ceil0.90)
+supersede+leverage          -0.142*13/18        -0.096        -0.077  -0.080*17/18  -0.070*17/18  -0.070*17/18  -0.057*17/18  -0.049*17/18  -0.041*14/18  -0.034*10/18   -0.019*8/18 n/a(ceil0.90)
+band+leverage               -0.150*11/18        -0.100        -0.088        -0.072        -0.071        -0.067        -0.060        -0.057        -0.056        -0.049        -0.037 n/a(ceil0.90)
+supersede+band+leverage      -0.141*9/18        -0.083        -0.064  -0.067*17/18  -0.062*17/18  -0.062*17/18  -0.050*17/18  -0.050*16/18  -0.039*11/18   -0.036*9/18   -0.029*6/18 n/a(ceil0.90)
+
+* = fraction of transcripts contributing to that cell, when fewer than all of them
+reached the target rate (spectral side); n/a(ceilX) = none did, X is the best ceiling.
+
+== cost of protect=code_only vs protect=none ==
+
+-- atom recall (all-history) delta --
+method (code_only - none)    r=0.05    r=0.1   r=0.15    r=0.2   r=0.25    r=0.3    r=0.4    r=0.5    r=0.6    r=0.7    r=0.8    r=0.9
+--------------------------------------------------------------------------------------------------------------------------------------
+tfidf                        +0.115   +0.072   +0.048   +0.015   +0.011   +0.015   +0.011   +0.023   +0.027   +0.038   +0.037   +0.026
+leverage                     +0.106   +0.048   +0.018   -0.010   -0.013   -0.001   -0.001   -0.005   -0.000   -0.000   +0.000   -0.001
+
+-- atom recall (final-state) delta --
+method (code_only - none)    r=0.05    r=0.1   r=0.15    r=0.2   r=0.25    r=0.3    r=0.4    r=0.5    r=0.6    r=0.7    r=0.8    r=0.9
+--------------------------------------------------------------------------------------------------------------------------------------
+tfidf                        +0.126   +0.080   +0.054   +0.019   +0.014   +0.020   +0.018   +0.033   +0.037   +0.046   +0.041   +0.034
+leverage                     +0.117   +0.058   +0.026   -0.004   -0.004   +0.006   +0.003   -0.002   +0.003   +0.000   +0.001   -0.001
+
+-- semantic coverage delta --
+method (code_only - none)    r=0.05    r=0.1   r=0.15    r=0.2   r=0.25    r=0.3    r=0.4    r=0.5    r=0.6    r=0.7    r=0.8    r=0.9
+--------------------------------------------------------------------------------------------------------------------------------------
+tfidf                        -0.126   -0.132   -0.118   -0.106   -0.063   -0.047   -0.030   -0.023   -0.019   -0.012   -0.005   -0.002
+leverage                     -0.012   -0.052   -0.060   -0.071   -0.045   -0.026   -0.017   -0.006   -0.001   -0.001   -0.001   +0.000
+
+== per-transcript supersede ceiling (post-dedupe pool / original tokens) ==
+transcript                    tokens   ceiling
+----------------------------------------------
+local_100k                    185129     0.722
+local_200k                    298205     0.950
+local_20k                      37079     0.791
+local_50k                      65416     0.984
+local_5k                        9100     0.641
+trace-commons_4c09dfa9          8855     1.000
+trace-commons_11ef2190          8420     0.998
+trace-commons_ba1b4916         52848     0.584
+trace-commons_479c5e9f         98909     0.622
+trace-commons_c84c0ad3         69739     0.630
+trace-commons_860618e1        151620     0.505
+trace-commons_47d9fc04        195597     0.651
+trace-commons_da5d32d6        205759     0.840
+swe-gym_row309                  2353     0.877
+swe-gym_row419                  9535     0.805
+swe-gym_row358                 14932     0.813
+swe-gym_row282                 19768     0.513
+swe-gym_row214                 70133     0.195
+
+== atom-recall cost of supersession: supersede+leverage at its own ceiling vs leverage/tfidf constrained to that same rate ==
+transcript             ceiling  sup+lev sup+lev_f leverage  lev_f  tfidf tfidf_f
+--------------------------------------------------------------------------------
+local_100k               0.722    0.923     1.000    0.935  0.965  0.870   0.911
+local_200k               0.900    0.954     0.964    0.944  0.944      -       -
+local_20k                0.791    0.936     1.000    0.902  0.897  0.874   0.920
+local_50k                0.900    0.993     0.993        -      -      -       -
+local_5k                 0.641    0.664     1.000    0.929  0.938  0.626   0.664
+trace-commons_4c09dfa9   0.894    0.884     0.884    0.884  0.884      -       -
+trace-commons_11ef2190   0.899    0.926     0.926    0.924  0.924      -       -
+trace-commons_ba1b4916   0.584    0.917     1.000    0.920  0.939  0.953   0.974
+trace-commons_479c5e9f   0.622    0.915     1.000    0.915  0.934  0.886   0.912
+trace-commons_c84c0ad3   0.630    0.751     1.000    0.861  0.836  0.843   0.921
+trace-commons_860618e1   0.505    0.668     1.000    0.889  0.854  0.778   0.795
+trace-commons_47d9fc04   0.651    0.948     1.000    0.909  0.934  0.801   0.829
+trace-commons_da5d32d6   0.840    0.979     1.000    0.960  0.961  0.905   0.904
+swe-gym_row309           0.877    1.000     1.000    0.997  0.997  0.817   0.817
+swe-gym_row419           0.805    0.908     1.000    0.989  0.992  0.846   0.890
+swe-gym_row358           0.813    0.813     1.000    0.785  0.736  0.885   0.874
+swe-gym_row282           0.513    0.413     1.000    0.633  0.343  0.544   0.673
+swe-gym_row214           0.195    0.992     1.000    0.326  0.320  0.374   0.369
+(_f columns are atom_recall_final; sup+lev's own value is by construction its ceiling
+point, leverage/tfidf are interpolated to the same achieved rate for comparison.)
+
+== variants vs the base configuration ==
+Difference in final-state atom recall against the same method's baseline curve, at
+matched achieved compression. Positive means the variant is better. 'n/a' means one of
+the two curves never reached that rate on any transcript.
+method / variant                     d recall_f@2x   d recall_f@3x   d recall_f@4x
+----------------------------------------------------------------------------------
+leverage  drop_top=1                        -0.000          -0.000          +0.001
+leverage  drop_top=2                        -0.002          +0.001          +0.002
+leverage  drop_top=4                        -0.001          +0.002          +0.003
+ridge  drop_top=1                           +0.003          +0.002          +0.000
+ridge  drop_top=2                           +0.004          +0.000          +0.001
+ridge  drop_top=4                           -0.000          -0.002          +0.002
+cur_residual  drop_top=1                    -0.003          -0.004          -0.006
+cur_residual  drop_top=2                    -0.001          -0.005          -0.004
+cur_residual  drop_top=4                    -0.001          -0.006          -0.004
+supersede+leverage  drop_top=1              -0.000          -0.000          +0.002
+supersede+leverage  drop_top=2              +0.001          +0.000          +0.000
+supersede+leverage  drop_top=4              +0.001          +0.001          +0.003
+
+== path substitution arms vs the base configuration ==
+Deltas against the same method's base curve at matched achieved compression. The table
+is charged into the reported compression ratio ONLY; it is deliberately NOT deducted
+from the selection budget, so a table arm selects from the same token budget as every
+other method and then pays for the table by landing further right on the rate axis.
+These arm results are therefore NOT budget-neutral: the matched-rate comparison below is
+where the table's cost is charged back, so read every cell as 'at the same achieved
+compression' and never as 'at the same budget'. recall_f_earn = final-state atom recall
+over only the atoms
+the table does not guarantee; recall_f = the same including them; coverage = semantic
+coverage. Positive is better. 'n/a' = one of the two curves never reached that rate.
+Arms: score_only = B (substitute for scoring, emit the original, no table),
+table_only = C (emit the table, substitute nothing — pure overhead, not shippable),
+full = D (table plus markers). '+mm=1' is the same arm with the table built from every
+path rather than only the repeated ones; C and D are each swept at both settings.
+method / arm                                    recall_f_earn@2x       recall_f@2x       coverage@2x  recall_f_earn@3x       recall_f@3x       coverage@3x  recall_f_earn@4x       recall_f@4x       coverage@4x
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+tfidf  paths=score_only                                   -0.000            -0.000            -0.000            -0.005            -0.005            -0.001            -0.007            -0.007            -0.001
+tfidf  paths=table_only                                   -0.046            -0.002            -0.009            -0.068            +0.004            -0.010            -0.086            +0.005            -0.015
+tfidf  paths=table_only+mm=1                              -0.121            +0.012            -0.023            -0.172            +0.039            -0.032            -0.190            +0.060            -0.040
+tfidf  paths=full                                         -0.028            +0.014            -0.069            -0.039            +0.029            -0.066            -0.050            +0.035            -0.066
+tfidf  paths=full+mm=1                                    -0.088            +0.033            -0.100            -0.120            +0.072            -0.102            -0.140            +0.091            -0.104
+leverage  paths=score_only                                -0.005            -0.005            +0.005            +0.009            +0.009            +0.009            +0.010            +0.010            +0.009
+leverage  paths=table_only                                -0.024            +0.008            -0.010            -0.027            +0.030            -0.014            -0.033            +0.038            -0.019
+leverage  paths=table_only+mm=1                           -0.028            +0.057            -0.029            -0.048            +0.100            -0.040            -0.068            +0.116            -0.055
+leverage  paths=full                                      -0.019            +0.012            -0.041            -0.006            +0.048            -0.037            -0.025            +0.045            -0.040
+leverage  paths=full+mm=1                                 -0.027            +0.057            -0.074            -0.021            +0.118            -0.075            -0.062            +0.120            -0.084
+ridge  paths=score_only                                   +0.005            +0.005            +0.008            +0.010            +0.010            +0.008            +0.011            +0.011            +0.011
+ridge  paths=table_only                                   -0.022            +0.009            -0.010            -0.025            +0.031            -0.014            -0.034            +0.037            -0.018
+ridge  paths=table_only+mm=1                              -0.027            +0.051            -0.028            -0.045            +0.093            -0.040            -0.083            +0.096            -0.052
+ridge  paths=full                                         -0.015            +0.015            -0.040            -0.015            +0.040            -0.038            -0.024            +0.045            -0.035
+ridge  paths=full+mm=1                                    -0.030            +0.049            -0.074            -0.033            +0.101            -0.074            -0.057            +0.113            -0.077
+supersede+leverage  paths=score_only                      -0.005            -0.005            -0.000            +0.005            +0.005            +0.008            +0.008            +0.008            +0.009
+supersede+leverage  paths=table_only                      -0.029            -0.002            -0.011            -0.034            +0.022            -0.014            -0.042            +0.031            -0.020
+supersede+leverage  paths=table_only+mm=1                 -0.045            +0.022            -0.028            -0.060            +0.075            -0.041            -0.060            +0.111            -0.043
+supersede+leverage  paths=full                            -0.023            +0.002            -0.050            -0.022            +0.031            -0.040            -0.031            +0.040            -0.043
+supersede+leverage  paths=full+mm=1                       -0.042            +0.023            -0.082            -0.039            +0.089            -0.076            -0.070            +0.104            -0.087
+supersede+band+leverage  paths=score_only                 -0.000            -0.000            +0.003            +0.002            +0.002            +0.008            +0.002            +0.002            +0.007
+supersede+band+leverage  paths=table_only                 -0.034            -0.006            -0.011            -0.039            +0.016            -0.014            -0.049            +0.022            -0.017
+supersede+band+leverage  paths=table_only+mm=1            -0.057            +0.017            -0.029            -0.060            +0.072            -0.039            -0.075            +0.095            -0.040
+supersede+band+leverage  paths=full                       -0.028            +0.000            -0.051            -0.028            +0.024            -0.043            -0.043            +0.028            -0.046
+supersede+band+leverage  paths=full+mm=1                  -0.054            +0.019            -0.084            -0.056            +0.074            -0.081            -0.079            +0.093            -0.089
+
+== path table cost and guarantee, per min_mentions setting ==
+This is the tradeoff min_mentions is a knob for, priced directly: 1 tabulates every
+path (recall-optimal, a path mentioned once is the one selection is likeliest to drop),
+2 tabulates only repeated ones (token-optimal, a row for a single mention costs more
+than the mention it replaces). share = fraction of the FINAL-STATE atom set the table
+spells out so selection never has to; cost = table tokens over transcript tokens. Path
+strings are never printed: local sessions are in this corpus.
+transcript                  mm   paths   tokens    cost   share
+---------------------------------------------------------------
+local_100k                   1    1044    15331   0.083   0.357
+local_100k                   2     371     5418   0.029   0.131
+local_200k                   1     964    15081   0.051   0.281
+local_200k                   2     499     7360   0.025   0.142
+local_20k                    1     345     5411   0.146   0.483
+local_20k                    2     115     1369   0.037   0.162
+local_50k                    1     420     5870   0.090   0.304
+local_50k                    2     153     2436   0.037   0.112
+local_5k                     1      44      565   0.062   0.182
+local_5k                     2      10      148   0.016   0.052
+trace-commons_4c09dfa9       1     199     3011   0.340   0.482
+trace-commons_4c09dfa9       2       2       21   0.002   0.005
+trace-commons_11ef2190       1      60      727   0.086   0.125
+trace-commons_11ef2190       2      17      158   0.019   0.037
+trace-commons_ba1b4916       1     278     5120   0.097   0.371
+trace-commons_ba1b4916       2     150     2541   0.048   0.206
+trace-commons_479c5e9f       1     328     3345   0.034   0.291
+trace-commons_479c5e9f       2     191     1845   0.019   0.180
+trace-commons_c84c0ad3       1     241     3315   0.048   0.297
+trace-commons_c84c0ad3       2     116     1520   0.022   0.147
+trace-commons_860618e1       1     327     3809   0.025   0.161
+trace-commons_860618e1       2     153     1671   0.011   0.071
+trace-commons_47d9fc04       1    1064    15226   0.078   0.393
+trace-commons_47d9fc04       2     462     6211   0.032   0.172
+trace-commons_da5d32d6       1    1430    18285   0.089   0.424
+trace-commons_da5d32d6       2     665     7593   0.037   0.204
+swe-gym_row309               1       6       69   0.029   0.098
+swe-gym_row309               2       2       38   0.016   0.033
+swe-gym_row419               1      30      529   0.055   0.135
+swe-gym_row419               2      17      333   0.035   0.077
+swe-gym_row358               1     314     7276   0.487   0.541
+swe-gym_row358               2      13      342   0.023   0.025
+swe-gym_row282               1     212     4088   0.207   0.210
+swe-gym_row282               2      12      174   0.009   0.012
+swe-gym_row214               1     263     5847   0.083   0.306
+swe-gym_row214               2      10      179   0.003   0.011
