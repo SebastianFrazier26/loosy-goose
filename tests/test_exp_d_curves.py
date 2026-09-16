@@ -41,7 +41,6 @@ from experiments.exp_d_curves import (  # noqa: E402
     _path_table_cost_table,
     _pool,
     _record_identity,
-    _select_with_budget,
     _tfidf_scores,
     _weighted_at_rate,
     analyse,
@@ -53,7 +52,12 @@ from experiments.exp_d_curves import (  # noqa: E402
     segments_digest,
     transforms_stamp,
 )
-from loosy_goose.budget import ProtectPolicy, select_by_score, token_budget  # noqa: E402
+from loosy_goose.budget import (  # noqa: E402
+    ProtectPolicy,
+    select_by_score,
+    select_with_budget,
+    token_budget,
+)
 from loosy_goose.code import TRANSFORMS_VERSION  # noqa: E402
 from loosy_goose.paths import PATHS_VERSION, PathTable, build_table, expand  # noqa: E402
 from loosy_goose.segment import (  # noqa: E402
@@ -87,7 +91,7 @@ def test_select_with_budget_never_exceeds_explicit_budget() -> None:
     rng = np.random.default_rng(0)
     scores = rng.uniform(size=len(segs))
     budget = 20
-    kept = _select_with_budget(segs, scores, budget, protect="none")
+    kept = select_with_budget(segs, scores, budget, protect="none")
     assert sum(count_tokens(s.text) for s in kept) <= budget
     assert [s.id for s in kept] == sorted(s.id for s in kept)
 
@@ -95,7 +99,7 @@ def test_select_with_budget_never_exceeds_explicit_budget() -> None:
 def test_select_with_budget_forces_protected_kinds() -> None:
     segs = _corpus()
     scores = np.zeros(len(segs))
-    kept = _select_with_budget(segs, scores, budget=1_000_000, protect="code_only")
+    kept = select_with_budget(segs, scores, budget=1_000_000, protect="code_only")
     assert {8} <= {s.id for s in kept}
 
 
@@ -108,7 +112,7 @@ def test_select_with_budget_uses_the_budget_passed_in_not_the_list() -> None:
     shared_budget = token_budget(full, 0.5)
     shrunk = full[:4]  # far fewer tokens than the full corpus
     scores = np.arange(len(shrunk), dtype=np.float64)
-    kept = _select_with_budget(shrunk, scores, shared_budget, protect="none")
+    kept = select_with_budget(shrunk, scores, shared_budget, protect="none")
     assert kept == shrunk  # small enough that the shared budget covers all of it
     assert sum(count_tokens(s.text) for s in kept) < shared_budget
 
@@ -394,12 +398,12 @@ def test_plain_baselines_respect_protect_policy(
 
 @pytest.mark.parametrize("ratio", [0.1, 0.3, 0.5, 0.9])
 def test_select_with_budget_agrees_with_the_shared_selector(ratio: float) -> None:
-    # Every method now routes through _select_with_budget so the path arms can score one list and
+    # Every method now routes through select_with_budget so the path arms can score one list and
     # emit another. That is only safe if it picks exactly what budget.select_by_score picks —
     # otherwise the base records already on disk would no longer describe what the code does.
     segs = _corpus()
     scores = np.random.default_rng(7).uniform(size=len(segs))
-    assert _select_with_budget(segs, scores, token_budget(segs, ratio), "none") == select_by_score(
+    assert select_with_budget(segs, scores, token_budget(segs, ratio), "none") == select_by_score(
         segs, scores, ratio, "none"
     )
 

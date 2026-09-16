@@ -6,10 +6,13 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import IO, Any, Literal, get_args
 
 Role = Literal["user", "assistant", "system", "tool"]
 BlockKind = Literal["text", "code", "tool_use", "tool_result", "thinking"]
+_ROLES: frozenset[str] = frozenset(get_args(Role))
+_BLOCK_KINDS: frozenset[str] = frozenset(get_args(BlockKind))
+HEADER_KEY = "loosy_goose"
 
 _FENCE = re.compile(r"```([\w+#.-]*)[ \t]*\n(.*?)```", re.DOTALL)
 # OpenHands SFT trajectories (SWE-Gym) carry tool calls inline as text rather than as
@@ -210,3 +213,65 @@ def load_messages_json(
         if blocks:
             turns.append(Turn(len(turns), role, blocks))
     return Transcript(label, turns, dict(skipped))
+
+
+def write_blocks_jsonl(turns: list[Turn], header: dict[str, Any], out: IO[str]) -> None:
+    out.write(json.dumps({HEADER_KEY: header}, ensure_ascii=False) + "\n")
+    for t in turns:
+        rec = {
+            "index": t.index,
+            "role": t.role,
+            "blocks": [{"kind": b.kind, "text": b.text, "meta": b.meta} for b in t.blocks],
+        }
+        out.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def load_blocks_jsonl(path: str | Path) -> Transcript:
+    path = Path(path)
+    skipped: Counter[str] = Counter()
+    turns: list[Turn] = []
+    with path.open(encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                skipped["line:malformed"] += 1
+                continue
+            if not isinstance(rec, dict):
+                skipped["line:non-object"] += 1
+                continue
+            if HEADER_KEY in rec:
+                skipped["record:header"] += 1
+                continue
+            role = rec.get("role")
+            if role not in _ROLES:
+                skipped[f"role:{role}"] += 1
+                continue
+            raw_blocks = rec.get("blocks")
+            if not isinstance(raw_blocks, list):
+                skipped["record:no-blocks"] += 1
+                continue
+            blocks: list[Block] = []
+            for item in raw_blocks:
+                if not isinstance(item, dict):
+                    skipped["block:non-dict"] += 1
+                    continue
+                kind = item.get("kind")
+                if kind not in _BLOCK_KINDS:
+                    skipped[f"block:{kind}"] += 1
+                    continue
+                meta = item.get("meta")
+                blocks.append(
+                    Block(
+                        kind,
+                        str(item.get("text", "")),
+                        {str(k): str(v) for k, v in meta.items()} if isinstance(meta, dict) else {},
+                    )
+                )
+            if blocks:
+                index = rec.get("index")
+                turns.append(Turn(index if isinstance(index, int) else len(turns), role, blocks))
+    return Transcript(str(path), turns, dict(skipped))

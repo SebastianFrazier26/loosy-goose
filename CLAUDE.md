@@ -12,7 +12,7 @@ Read [docs/DESIGN.md](docs/DESIGN.md) before changing the algorithm and
 - `uv run pytest` — tests
 - `uv run ruff check . && uv run ruff format --check .` — lint + format check
 - `uv run mypy src` — type check (strict)
-- `uv run loosy-goose compress <transcript> --quality 0.6` — CLI (stub until core lands)
+- `uv run loosy-goose compress <transcript> --keep 0.5 [--band] [--paths --min-mentions 2] [--output out.jsonl]` — CLI: supersede → leverage → budget selection; `--quality` accepted but not yet wired
 
 The `embed` extra pulls torch CPU + sentence-transformers for the embedding-SVD work; CI skips
 it. Everything is CPU-only. Do not unpin Python 3.12 — 3.13+ lacks torch wheels.
@@ -28,6 +28,7 @@ Core:
 - `embed.py` — pinned select/score model pair
 - `budget.py` — token budget, protect policy, greedy score-based selection. **The shared contract**: every method competes at an identical token budget, or results are not comparable
 - `metrics.py` — compression ratio, atom recall, semantic coverage, `evaluate`
+- `pipeline.py` — `compress_transcript`: the shipped supersede → band → paths → leverage → budget stack, mirroring the Experiment D runner's measured configuration; `to_turns` regroups kept segments into turns
 - `cli.py` — argparse entry point
 
 Experiment A (topic basis):

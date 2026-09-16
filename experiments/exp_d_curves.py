@@ -33,7 +33,7 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from loosy_goose import embed, metrics
-from loosy_goose.budget import ProtectPolicy, forced_mask, token_budget
+from loosy_goose.budget import ProtectPolicy, select_with_budget, token_budget
 from loosy_goose.code import TRANSFORMS_VERSION, quantize_segment
 from loosy_goose.paths import PATHS_VERSION, PathTable, build_table, substitute
 from loosy_goose.segment import ATOMS_VERSION, Segment, segment
@@ -262,48 +262,10 @@ def _iter_sources(
     yield from iter_swe_gym(swe_gym_sample)
 
 
-def _select_with_budget(
-    segments: list[Segment],
-    scores: np.ndarray,
-    budget: int,
-    protect: ProtectPolicy = "none",
-    emit: list[Segment] | None = None,
-) -> list[Segment]:
-    """`budget.select_by_score`'s greedy rule, but against an explicit token budget rather than
-    one re-derived from `segments`. The stacked methods hand this a segment list that has already
-    shrunk (supersession) or changed token cost (banding); re-deriving the budget from that
-    smaller/cheaper list would give each stage of a stack a smaller budget than the single-stage
-    methods get on the full transcript, which breaks the one contract this experiment depends on.
-
-    `emit` is the parallel list actually written out, when it differs from the one scored: arm B
-    scores substituted text but emits the original, so its token costs must be the original's
-    too, or the arm would be handed free budget it never earned.
-    """
-    n = len(segments)
-    if n == 0:
-        return []
-    raw = np.asarray(scores, dtype=np.float64).reshape(-1)
-    if raw.shape[0] != n:
-        raise ValueError("scores must have one entry per segment")
-    out = emit if emit is not None else segments
-    if len(out) != n:
-        raise ValueError("emit must have one entry per scored segment")
-    costs = [count_tokens(s.text) for s in out]
-    keep = forced_mask(out, protect)
-    used = sum(c for c, k in zip(costs, keep, strict=True) if k)
-    if used < budget:
-        order = sorted((i for i in range(n) if not keep[i]), key=lambda i: (-raw[i], i))
-        for i in order:
-            if used + costs[i] <= budget:
-                keep[i] = True
-                used += costs[i]
-    return [s for s, k in zip(out, keep, strict=True) if k]
-
-
 def _tfidf_scores(segments: list[Segment]) -> np.ndarray:
     # Duplicates experiments/baselines.py's tfidf vectorizer config rather than importing it,
     # because that function returns selected Segments (via select_by_score's own budget), and the
-    # stacked supersede+tfidf method needs bare scores to feed _select_with_budget instead.
+    # stacked supersede+tfidf method needs bare scores to feed select_with_budget instead.
     if not segments:
         return np.zeros(0)
     vec = TfidfVectorizer(token_pattern=r"[A-Za-z_][\w./-]+|\d+", sublinear_tf=True)
@@ -360,7 +322,7 @@ def _run_tfidf(
     # path arms need the scored list and the emitted list to be separable, which the shared
     # `compress` contract does not expose.
     scoring, emit = _pool(segs, ctx)
-    return _select_with_budget(
+    return select_with_budget(
         scoring, _tfidf_scores(scoring), token_budget(segs, ratio), protect, emit
     )
 
@@ -372,7 +334,7 @@ def _run_spectral(strategy: Strategy) -> MethodFn:
         scoring, emit = _pool(segs, ctx)
         x = embed_segments(scoring, embed.SELECT_MODEL, cache_dir=ctx.cache_dir)
         scores = score_segments(x, ctx.variant.compress_config(strategy))
-        return _select_with_budget(scoring, scores, token_budget(segs, ratio), protect, emit)
+        return select_with_budget(scoring, scores, token_budget(segs, ratio), protect, emit)
 
     return run
 
@@ -389,7 +351,7 @@ def _run_supersede_tfidf(
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
     scoring, emit = _pool(apply_supersession(segs), ctx)
-    return _select_with_budget(scoring, _tfidf_scores(scoring), budget, protect, emit)
+    return select_with_budget(scoring, _tfidf_scores(scoring), budget, protect, emit)
 
 
 def _run_supersede_leverage(
@@ -397,7 +359,7 @@ def _run_supersede_leverage(
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
     scoring, emit = _pool(apply_supersession(segs), ctx)
-    return _select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
+    return select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
 
 
 def _run_band_leverage(
@@ -405,7 +367,7 @@ def _run_band_leverage(
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
     scoring, emit = _pool(_band(segs, ratio), ctx)
-    return _select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
+    return select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
 
 
 def _run_supersede_band_leverage(
@@ -413,7 +375,7 @@ def _run_supersede_band_leverage(
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
     scoring, emit = _pool(_band(apply_supersession(segs), ratio), ctx)
-    return _select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
+    return select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
 
 
 METHODS: dict[str, MethodFn] = {
