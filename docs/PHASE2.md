@@ -117,7 +117,8 @@ below.
   At 2 the table holds only paths that repeat, which is token-optimal — a row for a
   single-mention path costs more than the mention it replaces. At 1 it holds everything, which
   is recall-optimal for exactly the opposite reason: a path mentioned once is the one selection
-  is most likely to drop. Default 2; which one wins is for the arms to say.
+  is most likely to drop. Default 2, confirmed by the arms on 2026-09-16 — see
+  [What the arms said](#what-the-arms-said).
 - **The table is charged into the reported compression ratio, not deducted from the selection
   budget.** Every arm hands selection the identical shared budget, and an arm that emits a table
   simply lands further right on the achieved-rate axis, where every cross-method table in the
@@ -204,6 +205,39 @@ differences and would have carried both arms' noise into the answer for 60 fewer
 **The whole grid is 600 jobs across 9 variants**: 156 on the base variant (11 methods × 12 rates,
 plus 2 methods × 12 at `protect=code_only`), 144 across the three `drop_top` variants, and 300
 across the five path arms.
+
+### What the arms said
+
+Measured 2026-09-15 under `ATOMS_VERSION` 4 (`rebaseline_v4.log`, blocks "path substitution arms
+vs the base configuration" and "path table cost and guarantee, per min_mentions setting"); read
+into this document 2026-09-16. Every cell is the arm minus the same method's base curve at
+matched achieved compression, so the table's own tokens are already charged. Rows below are
+`supersede+leverage`, the shipping default; the other four methods swept have the same shape.
+
+| Arm | final-state recall, 2x / 3x / 4x | earned only (atoms the table does not guarantee) | semantic coverage |
+| --- | --- | --- | --- |
+| B `score_only` | −0.005 / +0.005 / +0.008 | same | −0.000 / +0.008 / +0.009 |
+| C `table_only` | −0.002 / +0.022 / +0.031 | −0.029 / −0.034 / −0.042 | −0.011 / −0.014 / −0.020 |
+| D `full` | +0.002 / +0.031 / +0.040 | −0.023 / −0.022 / −0.031 | −0.050 / −0.040 / −0.043 |
+| D `full+mm=1` | +0.023 / +0.089 / +0.104 | −0.042 / −0.039 / −0.070 | −0.082 / −0.076 / −0.087 |
+
+Three findings.
+
+- **Effect 3 is null.** Arm B moves nothing past ±0.011 on any method at any rate. Hiding paths
+  from the embedding does not rank segments better.
+- **Every recall gain is guarantee, not selection.** Earned recall is negative in every table
+  arm, every method, every rate. This is the question arm C exists to answer: the table lifts
+  what the reader sees by guaranteeing facts, while its tokens push selection to a tighter budget
+  at the same achieved rate. Markers claw back about a point of that (D's earned column beats
+  C's) and no more.
+- **Coverage pays, and the markers pay more of it than the table.** D costs 4–5 coverage points
+  at every rate, including 2x where it gains no recall; C alone costs 1–2. Text full of `[P<n>]`
+  embeds worse than text with paths in it.
+
+The `min_mentions` table prices the knob directly. At 2 the table is 0.2–4.8% of the input
+(median 2.3%); at 1 it is 2.5–48.7% (median 8.3%), and on `swe-gym_row358` the table alone is
+half the transcript. That cost is a share of the *input*, so its share of the *output* grows with
+the rate: a 2.3% table is about 9% of a 4x output and about 23% of a 10x one.
 
 ## Compression outside code
 
@@ -363,6 +397,43 @@ runs. Recorded here so they are not rediscovered as surprises.
   under the positional rule, and changing the rule moves which calls are found superseded. Revisit
   immediately after the grid, when a change to that number can be attributed instead of guessed
   at.
+
+## Decided 2026-09-16
+
+- **The shipped `compress` command runs `supersede+leverage`; banding is opt-in.** On final-state
+  atom recall (`exp_e_v4.out`, E1a) the band stack is 1.8 points ahead at 4x (0.578 against
+  0.560), 1.3 ahead at 3x (0.684 against 0.671) and 0.8 *behind* at 2x (0.843 against 0.851),
+  and it costs 15.40 s per 100k tokens against 0.20 s (E4, warm embedding cache) — 149x
+  budget-shaped TF-IDF and 77x `supersede+leverage`. Cheap enough to run on every compaction is
+  the property that matters for a tool that sits inside a context window; the extra recall at
+  the aggressive end stays reachable through a flag or the aggressive preset (queue item 14), on
+  the reasoning that whoever asks for the hardest compression will take the wait. Rejected:
+  shipping the band stack as the default, which makes every run pay for a gain that is marginal
+  at 4x and negative at 2x. Also rejected: leaving banding out of the product, which discards
+  the best-measured selector at 3x and beyond for no saving once it is opt-in. No product
+  pipeline exists yet — `cli.py` is a stub — so this fixes what lands, not what runs today.
+- **What the compression knob means is deferred until the core lands.** `--quality` is currently
+  a 0–1 "retained-meaning target" (`cli.py`), while the only knob the code has is `keep_ratio`
+  (`budget.token_budget`), and how one drives the other is the open question under
+  [Still open](#still-open--do-not-treat-as-settled). Two options were on the table — make the
+  flag the keep ratio outright, bounded to the measured span 0.1–0.8, or keep it abstract and
+  write the mapping now — and neither was chosen: the mapping would be invented rather than
+  measured, and renaming the flag before there is a pipeline behind it decides a user-facing
+  surface for a stub. Revisit when `compress` runs something. Item 14 carries the presets.
+- **`min_mentions` defaults to 2 and stays a flag.** At 1 the table's cost is unbounded — median
+  8.3% of the input, 48.7% on one public transcript — and the coverage cost of arm D doubles. At
+  2 it is capped under 5%. Rejected: 1 as the default. Also rejected: 1 as the aggressive preset
+  (queue item 14), since the table's share of the output is worst at exactly the rates that
+  preset targets. 1 stays reachable for recall at any price.
+- **Path substitution is off by default and opt-in.** For the default selector, arm D at
+  `min_mentions` 2 is +0.040 final-state recall at 4x, +0.031 at 3x and +0.002 at 2x, against
+  −0.040 to −0.050 coverage at every rate. That is a recall-versus-coverage split of the kind
+  this document refuses to collapse into a winner, and with no downstream task evaluation to
+  price both in one currency, the default is the configuration that does not spend coverage for
+  nothing at 2x. Rejected: on by default, on the argument that recall is the metric the project
+  exists for and the table is the only mechanism that guarantees anything — a values argument,
+  kept on record for when task evaluation exists. Also rejected: on at 3x and harder only, a
+  rate-dependent switch of the kind queue item 7 is trying to remove.
 
 ## Spectral versus TF-IDF: two statistics, not one verdict
 
@@ -757,8 +828,8 @@ restored such text; what was wrong was the scored text and its re-extracted atom
 1. ~~Checkpointing so variants accumulate instead of invalidating the whole grid.~~ Done.
 2. ~~`drop_top` swept alone.~~ Done; null, see above.
 3. ~~Path substitution arms B/C/D wired into `experiments/exp_d_curves.py`.~~ Done, and swept at
-   both `min_mentions` settings for C and D — five path arms in all. Results pending the grid,
-   which now has to run against `ATOMS_VERSION` 4 rather than 3.
+   both `min_mentions` settings for C and D — five path arms in all. Measured 2026-09-15 under
+   `ATOMS_VERSION` 4 and read in 2026-09-16 — see [What the arms said](#what-the-arms-said).
 4. ~~A dedicated `tool_use` shrinker.~~ Built — see [The tool_use channel](#the-tool_use-channel).
    **Still to do: sweep the depth knob as its own variant**, so it is measured on the curve rather
    than asserted from channel-level token counts. That sweep is also where the argument for
@@ -806,8 +877,10 @@ restored such text; what was wrong was the scored text and its re-extracted atom
     slider bounded to the span the grid actually measured (keep 80% down to keep 10%; the 5% rate
     is reached by fewer than half the transcripts, so it is refused rather than offered), with
     tick marks at the operating points (2x/3x/4x) and named presets — low, medium, high, extreme —
-    mapped to fixed ratios. Open, to settle together with the default-selector question: what
-    each preset maps to, and whether the selector changes with the level. Raised 2026-09-16.
+    mapped to fixed ratios. Blocked on the knob decision under
+    [Decided 2026-09-16](#decided-2026-09-16), which waits for the core to land. Still open
+    inside it: what each preset maps to, and whether the aggressive preset is what turns banding
+    on. Raised 2026-09-16.
 
 Resumption and downstream task evaluation are deferred by decision, not forgotten.
 
