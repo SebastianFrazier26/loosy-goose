@@ -2,7 +2,7 @@
 
 Verbatim summary tables as emitted by the experiment scripts, kept here so the findings survive
 independently of any one machine. The first four are Phase 1, run 2026-09-08; `exp_d_summary.txt`
-is Phase 2, run 2026-09-09. Interpretation lives in [../PHASE1.md](../PHASE1.md) and
+is Phase 2, re-baselined 2026-09-15. Interpretation lives in [../PHASE1.md](../PHASE1.md) and
 [../PHASE2.md](../PHASE2.md).
 
 | File | Produced by |
@@ -11,7 +11,7 @@ is Phase 2, run 2026-09-09. Interpretation lives in [../PHASE1.md](../PHASE1.md)
 | `exp_a_summary.txt` | `experiments/exp_a_ppmi.py` — PPMI-SVD eigen-topic stability and labels |
 | `exp_b_summary.txt` | `experiments/exp_b_embed.py` — embedding-SVD spectrum and leverage selection |
 | `exp_c_summary.txt` | `experiments/exp_c_code.py` — C1 banding, C2 supersession, C3 embedder comparison |
-| `exp_d_summary.txt` | `experiments/exp_d_curves.py` — Phase 2 rate-distortion grid at matched budgets, re-run 2026-09-09 after the first atom-extractor fix |
+| `exp_d_summary.txt` | `experiments/exp_d_curves.py` — Phase 2 rate-distortion grid at matched budgets, re-baselined 2026-09-15 under `ATOMS_VERSION` 4 (600-job grid) |
 
 Full per-transcript JSON and plots are **not** committed; they land in the gitignored
 `experiments/output/` when the scripts run.
@@ -19,7 +19,7 @@ Full per-transcript JSON and plots are **not** committed; they land in the gitig
 ## What is stale, and how stale
 
 These files are kept verbatim, as the record of what a given run said. They are **not** kept
-current, and two of them are now well behind the code. Nothing here is edited to match; the
+current, and one of them is now well behind the code. Nothing here is edited to match; the
 banners below are the correction.
 
 **`corpus_stats.txt` — three versions behind, and its `atoms` column is a third convention.**
@@ -34,16 +34,12 @@ distinct union either. Three conventions are in use across this project; see the
 Regenerate with `uv run python experiments/corpus_stats.py`, which reads `data/local/` as well as
 the public corpora.
 
-**`exp_d_summary.txt` — two extractor versions behind, and a different grid shape.** Its own
-header says "re-run 2026-09-09 after the atom-extractor fix",
-which means `ATOMS_VERSION` 2; version 3 and version 4 have both landed since, and version 3 in
-particular moved the atom set unevenly by kind, which is the one kind of extractor change that can
-move a *comparison* rather than just a level. The grid it reports is 336 records per transcript;
-the current `plan_jobs()` grid is 600 jobs across 9 variants, including five path-substitution
-arms that did not exist when this ran. It also predates the `exp_e_analysis` fix that was folding
-variant records into the baseline curve, so any Experiment E figure derived from checkpoints of
-this vintage is contaminated. Read it as the record of what the 2026-09-09 grid said. Regenerate
-with `uv run python experiments/exp_d_curves.py --force`, which takes 6–12 hours.
+**`exp_d_summary.txt` — current as of `ATOMS_VERSION` 4 and `TRANSFORMS_VERSION` 2.** Replaced
+2026-09-16 with the summary block from the 2026-09-15 re-baseline (the tail of the committed
+`experiments/output/rebaseline_v4.log`); the version-2 summary it replaced is in git history at
+929997c. The Experiment E analysis over the same checkpoints is
+`experiments/output/exp_e_v4.out`. Regenerate with `uv run python experiments/exp_d_curves.py
+--force`, which takes 6–12 hours.
 
 `exp_a_summary.txt`, `exp_b_summary.txt` and `exp_c_summary.txt` report Phase 1 results whose
 conclusions are relative — stability against a pre-registered threshold, methods against each

@@ -1,9 +1,10 @@
-Experiment D — unified rate-distortion grid, re-run 2026-09-09 after the atom-extractor fix.
+Experiment D — unified rate-distortion grid, re-baselined 2026-09-15 under ATOMS_VERSION 4.
 Produced by: uv run python experiments/exp_d_curves.py
-18 transcripts, 336 records each. Local sessions appear as labels only, content withheld.
-
+18 transcripts, 600 jobs each. Local sessions appear as labels only, content withheld.
 
 18 transcripts checkpointed.
+
+All planned jobs present in every checkpoint; no failures.
 
 
 == distortion at the aggressive rates this project is actually built for (achieved ~= 0.5, 0.33, 0.25, i.e. 2x/3x/4x) ==
@@ -11,17 +12,17 @@ recall = atom_recall (all-history), recall_f = atom_recall_final, coverage = sem
 coverage.
 method                          recall@0.5    recall_f@0.5    coverage@0.5     recall@0.33   recall_f@0.33   coverage@0.33     recall@0.25   recall_f@0.25   coverage@0.25
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-random                               0.684           0.692           0.876           0.537           0.546           0.813           0.457           0.467           0.779
-recency                              0.592           0.606           0.830           0.452           0.468           0.745           0.377           0.390           0.694
-tfidf                                0.710           0.736           0.941           0.526           0.560           0.881           0.427           0.459           0.845
-leverage                             0.771           0.780           0.883           0.598           0.611           0.809           0.504           0.521           0.769
-ridge                                0.791           0.800           0.886           0.628           0.644           0.816           0.535           0.555           0.773
-cur_residual                         0.776           0.784           0.901           0.615           0.631           0.842           0.523           0.541           0.807
-topics                               0.666           0.669           0.894           0.503           0.509           0.811           0.399           0.410           0.763
-supersede+tfidf                      0.729           0.814           0.940           0.550           0.612           0.891           0.452           0.502           0.855
-supersede+leverage                   0.764           0.851           0.894           0.595           0.664           0.818           0.497           0.556           0.778
-band+leverage                        0.770           0.778           0.885           0.606           0.620           0.814           0.506           0.524           0.772
-supersede+band+leverage              0.778           0.836           0.895           0.601           0.671           0.825           0.507           0.566           0.784
+random                               0.689           0.697           0.876           0.543           0.552           0.813           0.463           0.474           0.779
+recency                              0.595           0.611           0.830           0.455           0.471           0.745           0.378           0.392           0.694
+tfidf                                0.711           0.737           0.941           0.526           0.559           0.881           0.425           0.457           0.845
+leverage                             0.774           0.783           0.883           0.602           0.615           0.809           0.509           0.526           0.769
+ridge                                0.793           0.802           0.886           0.630           0.646           0.816           0.539           0.558           0.773
+cur_residual                         0.779           0.787           0.901           0.619           0.635           0.842           0.529           0.547           0.807
+topics                               0.680           0.683           0.894           0.518           0.525           0.811           0.414           0.425           0.763
+supersede+tfidf                      0.728           0.812           0.940           0.549           0.610           0.891           0.449           0.498           0.855
+supersede+leverage                   0.765           0.851           0.894           0.598           0.667           0.818           0.501           0.560           0.778
+band+leverage                        0.778           0.782           0.883           0.615           0.626           0.816           0.514           0.532           0.774
+supersede+band+leverage              0.784           0.843           0.893           0.609           0.679           0.826           0.518           0.578           0.786
 
 == knee per method: lowest achieved rate (token-weighted mean) at which atom_recall_final >= 0.9 still holds ==
 Lower is better here: it means the method holds an acceptable final-state atom recall
@@ -29,14 +30,14 @@ further down the compression axis before degrading. 'never' = failed the floor e
 the least-aggressive rate tested; ranked ascending (best first).
 method                        knee    n
 ---------------------------------------
-supersede+band+leverage      0.587   18
+supersede+band+leverage      0.569   18
 supersede+leverage           0.588   18
 ridge                        0.638   18
-supersede+tfidf              0.657   18
-band+leverage                0.700   18
-leverage                     0.708   18
-cur_residual                 0.710   18
-tfidf                        0.780   18
+supersede+tfidf              0.661   18
+cur_residual                 0.696   18
+leverage                     0.697   18
+band+leverage                0.697   18
+tfidf                        0.786   18
 topics                       0.837   18
 random                       0.862   18
 recency                      0.898   18
@@ -50,32 +51,32 @@ aggressive-rate table below for the rates this project actually cares about.
 -- atom recall (all-history) --
 method                       r=0.05    r=0.1   r=0.15    r=0.2   r=0.25    r=0.3    r=0.4    r=0.5    r=0.6    r=0.7    r=0.8    r=0.9
 --------------------------------------------------------------------------------------------------------------------------------------
-random                        0.138    0.251    0.330    0.399    0.457    0.509    0.603    0.684    0.763    0.830    0.881    0.938
-recency                       0.128    0.215    0.276    0.322    0.377    0.429    0.507    0.592    0.673    0.737    0.787    0.874
-tfidf                         0.125    0.209    0.278    0.351    0.426    0.491    0.608    0.710    0.792    0.854    0.900    0.942
-leverage                      0.137    0.255    0.344    0.428    0.504    0.563    0.678    0.771    0.836    0.893    0.937    0.975
-ridge                         0.134    0.262    0.360    0.456    0.535    0.594    0.708    0.791    0.854    0.905    0.948    0.979
-cur_residual                  0.154    0.273    0.373    0.452    0.522    0.582    0.691    0.776    0.836    0.896    0.937    0.975
-topics                        0.114    0.197    0.270    0.334    0.399    0.470    0.579    0.666    0.746    0.810    0.875    0.924
-supersede+tfidf               0.130    0.221    0.319    0.403    0.477    0.538    0.646    0.740    0.806    0.840    0.870    0.893
-supersede+leverage            0.141    0.258    0.365    0.454    0.520    0.581    0.689    0.774    0.829    0.865    0.889    0.902
-band+leverage                 0.140    0.262    0.351    0.433    0.506    0.574    0.683    0.770    0.837    0.894    0.939    0.977
-supersede+band+leverage       0.145    0.266    0.371    0.457    0.529    0.587    0.694    0.776    0.827    0.864    0.888    0.902
+random                        0.142    0.256    0.336    0.406    0.463    0.515    0.609    0.689    0.767    0.833    0.884    0.939
+recency                       0.126    0.217    0.278    0.324    0.378    0.433    0.506    0.595    0.676    0.739    0.790    0.876
+tfidf                         0.124    0.209    0.277    0.350    0.425    0.490    0.607    0.710    0.792    0.853    0.899    0.942
+leverage                      0.139    0.257    0.348    0.433    0.509    0.568    0.680    0.774    0.838    0.895    0.937    0.975
+ridge                         0.135    0.264    0.365    0.461    0.538    0.597    0.708    0.793    0.855    0.906    0.948    0.978
+cur_residual                  0.159    0.281    0.381    0.460    0.529    0.588    0.693    0.779    0.838    0.897    0.938    0.975
+topics                        0.119    0.206    0.280    0.348    0.414    0.485    0.595    0.680    0.756    0.817    0.881    0.928
+supersede+tfidf               0.129    0.221    0.318    0.402    0.474    0.536    0.645    0.739    0.805    0.840    0.871    0.894
+supersede+leverage            0.144    0.264    0.370    0.458    0.524    0.584    0.692    0.775    0.830    0.866    0.890    0.903
+band+leverage                 0.140    0.263    0.362    0.441    0.514    0.582    0.691    0.778    0.849    0.901    0.940    0.973
+supersede+band+leverage       0.144    0.273    0.380    0.466    0.540    0.593    0.704    0.781    0.828    0.855    0.872    0.889
 
 -- atom recall (final-state) --
 method                       r=0.05    r=0.1   r=0.15    r=0.2   r=0.25    r=0.3    r=0.4    r=0.5    r=0.6    r=0.7    r=0.8    r=0.9
 --------------------------------------------------------------------------------------------------------------------------------------
-random                        0.144    0.258    0.338    0.411    0.467    0.517    0.612    0.692    0.768    0.835    0.885    0.941
-recency                       0.130    0.220    0.289    0.335    0.390    0.445    0.523    0.606    0.673    0.735    0.786    0.872
-tfidf                         0.135    0.225    0.301    0.379    0.459    0.524    0.642    0.736    0.809    0.870    0.912    0.945
-leverage                      0.146    0.271    0.365    0.450    0.521    0.577    0.691    0.780    0.842    0.897    0.936    0.974
-ridge                         0.145    0.282    0.382    0.482    0.555    0.611    0.720    0.799    0.861    0.909    0.947    0.978
-cur_residual                  0.163    0.286    0.392    0.472    0.541    0.600    0.703    0.784    0.844    0.900    0.936    0.974
-topics                        0.122    0.209    0.282    0.347    0.410    0.479    0.581    0.669    0.748    0.807    0.872    0.924
-supersede+tfidf               0.142    0.242    0.350    0.443    0.525    0.593    0.715    0.821    0.892    0.928    0.958    0.982
-supersede+leverage            0.156    0.285    0.403    0.502    0.577    0.644    0.764    0.858    0.916    0.953    0.978    0.992
-band+leverage                 0.149    0.279    0.371    0.455    0.524    0.588    0.694    0.778    0.843    0.898    0.938    0.976
-supersede+band+leverage       0.160    0.294    0.410    0.505    0.586    0.651    0.768    0.859    0.913    0.952    0.977    0.991
+random                        0.148    0.264    0.344    0.418    0.474    0.524    0.619    0.697    0.773    0.839    0.888    0.943
+recency                       0.128    0.222    0.292    0.338    0.392    0.449    0.523    0.611    0.677    0.738    0.789    0.875
+tfidf                         0.134    0.225    0.300    0.379    0.457    0.524    0.641    0.736    0.809    0.869    0.912    0.945
+leverage                      0.148    0.272    0.369    0.455    0.526    0.581    0.693    0.783    0.844    0.898    0.936    0.974
+ridge                         0.146    0.283    0.386    0.486    0.558    0.614    0.720    0.802    0.861    0.910    0.947    0.977
+cur_residual                  0.169    0.294    0.399    0.480    0.547    0.605    0.706    0.787    0.846    0.901    0.937    0.974
+topics                        0.127    0.218    0.293    0.361    0.425    0.494    0.597    0.683    0.758    0.815    0.878    0.928
+supersede+tfidf               0.141    0.242    0.349    0.441    0.521    0.591    0.714    0.819    0.890    0.928    0.959    0.983
+supersede+leverage            0.159    0.291    0.408    0.506    0.581    0.647    0.766    0.858    0.916    0.954    0.978    0.992
+band+leverage                 0.149    0.281    0.382    0.461    0.532    0.594    0.698    0.782    0.852    0.904    0.941    0.974
+supersede+band+leverage       0.158    0.301    0.419    0.515    0.597    0.658    0.779    0.864    0.913    0.942    0.959    0.977
 
 -- semantic coverage --
 method                       r=0.05    r=0.1   r=0.15    r=0.2   r=0.25    r=0.3    r=0.4    r=0.5    r=0.6    r=0.7    r=0.8    r=0.9
@@ -89,8 +90,8 @@ cur_residual                  0.617    0.692    0.743    0.780    0.807    0.830
 topics                        0.536    0.599    0.670    0.722    0.763    0.795    0.850    0.894    0.929    0.955    0.977    0.992
 supersede+tfidf               0.671    0.743    0.801    0.838    0.861    0.885    0.920    0.942    0.956    0.965    0.969    0.970
 supersede+leverage            0.548    0.638    0.704    0.752    0.788    0.812    0.859    0.898    0.930    0.950    0.963    0.969
-band+leverage                 0.541    0.638    0.692    0.738    0.772    0.800    0.848    0.885    0.913    0.938    0.958    0.978
-supersede+band+leverage       0.553    0.652    0.708    0.758    0.793    0.818    0.866    0.901    0.930    0.950    0.963    0.968
+band+leverage                 0.542    0.634    0.693    0.741    0.774    0.802    0.847    0.883    0.910    0.934    0.955    0.974
+supersede+band+leverage       0.554    0.651    0.716    0.764    0.795    0.819    0.866    0.898    0.925    0.940    0.947    0.952
 
 == spectral methods vs tfidf at matched ACHIEVED rate ==
 This is a rate-distortion comparison, not a scoreboard: losing some distortion is the
@@ -105,24 +106,24 @@ method vs tfidf                   r=0.05         r=0.1        r=0.15         r=0
 -- atom recall (all-history) delta (spectral - tfidf) --
 method vs tfidf                   r=0.05         r=0.1        r=0.15         r=0.2        r=0.25         r=0.3         r=0.4         r=0.5         r=0.6         r=0.7         r=0.8         r=0.9
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-leverage                     +0.024*8/18        +0.046        +0.066        +0.077        +0.077        +0.073        +0.070        +0.061        +0.043        +0.039        +0.036 n/a(ceil0.90)
-ridge                        +0.046*8/18        +0.054        +0.082        +0.106        +0.109        +0.103        +0.100        +0.081        +0.061        +0.051        +0.047 n/a(ceil0.90)
-cur_residual                 +0.048*8/18        +0.064        +0.095        +0.101        +0.096        +0.092        +0.083        +0.065        +0.043        +0.041        +0.037 n/a(ceil0.90)
-topics                       +0.012*8/18        -0.012        -0.008        -0.017        -0.027        -0.021        -0.029        -0.044        -0.046        -0.044        -0.026 n/a(ceil0.90)
-supersede+leverage          +0.010*13/18        +0.049        +0.087  +0.078*17/18  +0.071*17/18  +0.070*17/18  +0.064*17/18  +0.053*17/18  +0.066*14/18  +0.057*10/18   +0.070*8/18 n/a(ceil0.90)
-band+leverage                +0.046*7/18        +0.053        +0.073        +0.082        +0.080        +0.083        +0.075        +0.060        +0.044        +0.040        +0.038 n/a(ceil0.90)
-supersede+band+leverage     +0.034*13/18        +0.058        +0.093  +0.081*17/18  +0.081*17/18  +0.076*17/18  +0.069*17/18  +0.073*16/18  +0.066*14/18  +0.056*10/18   +0.070*7/18 n/a(ceil0.90)
+leverage                     +0.026*8/18        +0.048        +0.071        +0.083        +0.084        +0.077        +0.073        +0.063        +0.045        +0.041        +0.037 n/a(ceil0.90)
+ridge                        +0.053*8/18        +0.055        +0.087        +0.110        +0.113        +0.107        +0.100        +0.082        +0.062        +0.053        +0.048 n/a(ceil0.90)
+cur_residual                 +0.063*8/18        +0.072        +0.103        +0.109        +0.104        +0.097        +0.086        +0.068        +0.046        +0.044        +0.038 n/a(ceil0.90)
+topics                       +0.013*8/18        -0.003        +0.003        -0.002        -0.011        -0.006        -0.013        -0.031        -0.036        -0.036        -0.019 n/a(ceil0.90)
+supersede+leverage          +0.011*13/18        +0.056        +0.093  +0.083*17/18  +0.077*17/18  +0.074*17/18  +0.068*17/18  +0.053*17/18  +0.068*14/18  +0.059*10/18   +0.069*8/18 n/a(ceil0.90)
+band+leverage               +0.028*11/18        +0.055        +0.085        +0.090        +0.088        +0.092        +0.083        +0.067        +0.057        +0.048        +0.041 n/a(ceil0.90)
+supersede+band+leverage      +0.018*9/18        +0.065        +0.103  +0.091*17/18  +0.093*17/18  +0.084*17/18  +0.080*17/18  +0.080*16/18  +0.088*11/18   +0.069*9/18   +0.069*6/18 n/a(ceil0.90)
 
 -- atom recall (final-state) delta (spectral - tfidf) --
 method vs tfidf                   r=0.05         r=0.1        r=0.15         r=0.2        r=0.25         r=0.3         r=0.4         r=0.5         r=0.6         r=0.7         r=0.8         r=0.9
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-leverage                     +0.021*8/18        +0.045        +0.064        +0.071        +0.062        +0.052        +0.049        +0.044        +0.033        +0.026        +0.023 n/a(ceil0.90)
-ridge                        +0.057*8/18        +0.056        +0.082        +0.103        +0.096        +0.086        +0.078        +0.064        +0.051        +0.039        +0.035 n/a(ceil0.90)
-cur_residual                 +0.043*8/18        +0.061        +0.091        +0.093        +0.082        +0.075        +0.061        +0.048        +0.035        +0.029        +0.024 n/a(ceil0.90)
-topics                       +0.005*8/18        -0.017        -0.019        -0.032        -0.049        -0.046        -0.061        -0.067        -0.061        -0.063        -0.040 n/a(ceil0.90)
-supersede+leverage          +0.019*13/18        +0.059        +0.102  +0.098*17/18  +0.096*17/18  +0.100*17/18  +0.106*17/18  +0.113*17/18  +0.096*14/18  +0.075*10/18   +0.084*8/18 n/a(ceil0.90)
-band+leverage                +0.043*7/18        +0.054        +0.071        +0.075        +0.065        +0.063        +0.052        +0.042        +0.033        +0.028        +0.025 n/a(ceil0.90)
-supersede+band+leverage     +0.043*13/18        +0.069        +0.110  +0.102*17/18  +0.106*17/18  +0.108*17/18  +0.111*17/18  +0.103*16/18  +0.094*14/18  +0.074*10/18   +0.084*7/18 n/a(ceil0.90)
+leverage                     +0.023*8/18        +0.047        +0.069        +0.076        +0.069        +0.057        +0.052        +0.046        +0.034        +0.029        +0.024 n/a(ceil0.90)
+ridge                        +0.065*8/18        +0.058        +0.086        +0.108        +0.101        +0.090        +0.079        +0.065        +0.052        +0.040        +0.035 n/a(ceil0.90)
+cur_residual                 +0.059*8/18        +0.069        +0.100        +0.101        +0.090        +0.081        +0.064        +0.050        +0.036        +0.032        +0.025 n/a(ceil0.90)
+topics                       +0.007*8/18        -0.007        -0.007        -0.018        -0.032        -0.030        -0.044        -0.054        -0.051        -0.054        -0.034 n/a(ceil0.90)
+supersede+leverage          +0.019*13/18        +0.066        +0.108  +0.103*17/18  +0.102*17/18  +0.104*17/18  +0.110*17/18  +0.113*17/18  +0.097*14/18  +0.076*10/18   +0.083*8/18 n/a(ceil0.90)
+band+leverage               +0.027*11/18        +0.056        +0.083        +0.082        +0.074        +0.071        +0.057        +0.046        +0.043        +0.035        +0.029 n/a(ceil0.90)
+supersede+band+leverage      +0.033*9/18        +0.076        +0.119  +0.112*17/18  +0.119*17/18  +0.115*17/18  +0.123*17/18  +0.110*16/18  +0.102*11/18   +0.082*9/18   +0.079*6/18 n/a(ceil0.90)
 
 -- semantic coverage delta (spectral - tfidf) --
 method vs tfidf                   r=0.05         r=0.1        r=0.15         r=0.2        r=0.25         r=0.3         r=0.4         r=0.5         r=0.6         r=0.7         r=0.8         r=0.9
@@ -132,8 +133,8 @@ ridge                        -0.148*8/18        -0.113        -0.093        -0.0
 cur_residual                 -0.072*8/18        -0.042        -0.037        -0.034        -0.038        -0.040        -0.037        -0.039        -0.041        -0.039        -0.028 n/a(ceil0.90)
 topics                       -0.087*8/18        -0.136        -0.111        -0.092        -0.082        -0.075        -0.057        -0.047        -0.037        -0.028        -0.015 n/a(ceil0.90)
 supersede+leverage          -0.142*13/18        -0.096        -0.077  -0.080*17/18  -0.070*17/18  -0.070*17/18  -0.057*17/18  -0.049*17/18  -0.041*14/18  -0.034*10/18   -0.019*8/18 n/a(ceil0.90)
-band+leverage                -0.149*7/18        -0.097        -0.088        -0.076        -0.072        -0.070        -0.059        -0.056        -0.053        -0.046        -0.033 n/a(ceil0.90)
-supersede+band+leverage     -0.127*13/18        -0.082        -0.072  -0.073*17/18  -0.065*17/18  -0.064*17/18  -0.050*17/18  -0.048*16/18  -0.039*14/18  -0.032*10/18   -0.018*7/18 n/a(ceil0.90)
+band+leverage               -0.150*11/18        -0.100        -0.088        -0.072        -0.071        -0.067        -0.060        -0.057        -0.056        -0.049        -0.037 n/a(ceil0.90)
+supersede+band+leverage      -0.141*9/18        -0.083        -0.064  -0.067*17/18  -0.062*17/18  -0.062*17/18  -0.050*17/18  -0.050*16/18  -0.039*11/18   -0.036*9/18   -0.029*6/18 n/a(ceil0.90)
 
 * = fraction of transcripts contributing to that cell, when fewer than all of them
 reached the target rate (spectral side); n/a(ceilX) = none did, X is the best ceiling.
@@ -143,14 +144,14 @@ reached the target rate (spectral side); n/a(ceilX) = none did, X is the best ce
 -- atom recall (all-history) delta --
 method (code_only - none)    r=0.05    r=0.1   r=0.15    r=0.2   r=0.25    r=0.3    r=0.4    r=0.5    r=0.6    r=0.7    r=0.8    r=0.9
 --------------------------------------------------------------------------------------------------------------------------------------
-tfidf                        +0.107   +0.065   +0.043   +0.010   +0.005   +0.011   +0.006   +0.019   +0.024   +0.036   +0.036   +0.026
-leverage                     +0.098   +0.042   +0.014   -0.015   -0.018   -0.006   -0.004   -0.005   -0.000   +0.000   -0.000   -0.001
+tfidf                        +0.115   +0.072   +0.048   +0.015   +0.011   +0.015   +0.011   +0.023   +0.027   +0.038   +0.037   +0.026
+leverage                     +0.106   +0.048   +0.018   -0.010   -0.013   -0.001   -0.001   -0.005   -0.000   -0.000   +0.000   -0.001
 
 -- atom recall (final-state) delta --
 method (code_only - none)    r=0.05    r=0.1   r=0.15    r=0.2   r=0.25    r=0.3    r=0.4    r=0.5    r=0.6    r=0.7    r=0.8    r=0.9
 --------------------------------------------------------------------------------------------------------------------------------------
-tfidf                        +0.117   +0.073   +0.048   +0.013   +0.008   +0.015   +0.013   +0.029   +0.034   +0.045   +0.040   +0.034
-leverage                     +0.110   +0.051   +0.022   -0.009   -0.010   +0.001   -0.000   -0.002   +0.002   +0.001   +0.001   -0.001
+tfidf                        +0.126   +0.080   +0.054   +0.019   +0.014   +0.020   +0.018   +0.033   +0.037   +0.046   +0.041   +0.034
+leverage                     +0.117   +0.058   +0.026   -0.004   -0.004   +0.006   +0.003   -0.002   +0.003   +0.000   +0.001   -0.001
 
 -- semantic coverage delta --
 method (code_only - none)    r=0.05    r=0.1   r=0.15    r=0.2   r=0.25    r=0.3    r=0.4    r=0.5    r=0.6    r=0.7    r=0.8    r=0.9
@@ -183,24 +184,24 @@ swe-gym_row214                 70133     0.195
 == atom-recall cost of supersession: supersede+leverage at its own ceiling vs leverage/tfidf constrained to that same rate ==
 transcript             ceiling  sup+lev sup+lev_f leverage  lev_f  tfidf tfidf_f
 --------------------------------------------------------------------------------
-local_100k               0.722    0.921     1.000    0.933  0.964  0.871   0.913
-local_200k               0.900    0.954     0.965    0.945  0.945      -       -
-local_20k                0.791    0.932     1.000    0.903  0.898  0.877   0.920
+local_100k               0.722    0.923     1.000    0.935  0.965  0.870   0.911
+local_200k               0.900    0.954     0.964    0.944  0.944      -       -
+local_20k                0.791    0.936     1.000    0.902  0.897  0.874   0.920
 local_50k                0.900    0.993     0.993        -      -      -       -
-local_5k                 0.641    0.654     1.000    0.936  0.948  0.622   0.659
+local_5k                 0.641    0.664     1.000    0.929  0.938  0.626   0.664
 trace-commons_4c09dfa9   0.894    0.884     0.884    0.884  0.884      -       -
-trace-commons_11ef2190   0.899    0.922     0.922    0.920  0.920      -       -
-trace-commons_ba1b4916   0.584    0.916     1.000    0.924  0.943  0.955   0.976
-trace-commons_479c5e9f   0.622    0.915     1.000    0.915  0.935  0.904   0.930
-trace-commons_c84c0ad3   0.630    0.747     1.000    0.860  0.834  0.841   0.920
-trace-commons_860618e1   0.505    0.663     1.000    0.887  0.849  0.773   0.787
-trace-commons_47d9fc04   0.651    0.953     1.000    0.909  0.931  0.801   0.827
-trace-commons_da5d32d6   0.840    0.978     1.000    0.958  0.959  0.907   0.906
-swe-gym_row309           0.877    1.000     1.000    0.997  0.997  0.814   0.814
-swe-gym_row419           0.805    0.909     1.000    0.985  0.987  0.846   0.888
+trace-commons_11ef2190   0.899    0.926     0.926    0.924  0.924      -       -
+trace-commons_ba1b4916   0.584    0.917     1.000    0.920  0.939  0.953   0.974
+trace-commons_479c5e9f   0.622    0.915     1.000    0.915  0.934  0.886   0.912
+trace-commons_c84c0ad3   0.630    0.751     1.000    0.861  0.836  0.843   0.921
+trace-commons_860618e1   0.505    0.668     1.000    0.889  0.854  0.778   0.795
+trace-commons_47d9fc04   0.651    0.948     1.000    0.909  0.934  0.801   0.829
+trace-commons_da5d32d6   0.840    0.979     1.000    0.960  0.961  0.905   0.904
+swe-gym_row309           0.877    1.000     1.000    0.997  0.997  0.817   0.817
+swe-gym_row419           0.805    0.908     1.000    0.989  0.992  0.846   0.890
 swe-gym_row358           0.813    0.813     1.000    0.785  0.736  0.885   0.874
-swe-gym_row282           0.513    0.439     1.000    0.622  0.343  0.566   0.675
-swe-gym_row214           0.195    0.992     1.000    0.324  0.318  0.376   0.371
+swe-gym_row282           0.513    0.413     1.000    0.633  0.343  0.544   0.673
+swe-gym_row214           0.195    0.992     1.000    0.326  0.320  0.374   0.369
 (_f columns are atom_recall_final; sup+lev's own value is by construction its ceiling
 point, leverage/tfidf are interpolated to the same achieved rate for comparison.)
 
@@ -210,15 +211,104 @@ matched achieved compression. Positive means the variant is better. 'n/a' means 
 the two curves never reached that rate on any transcript.
 method / variant                     d recall_f@2x   d recall_f@3x   d recall_f@4x
 ----------------------------------------------------------------------------------
-leverage  drop_top=1                        +0.000          -0.000          +0.001
+leverage  drop_top=1                        -0.000          -0.000          +0.001
 leverage  drop_top=2                        -0.002          +0.001          +0.002
-leverage  drop_top=4                        -0.001          +0.001          +0.003
+leverage  drop_top=4                        -0.001          +0.002          +0.003
 ridge  drop_top=1                           +0.003          +0.002          +0.000
-ridge  drop_top=2                           +0.004          +0.001          +0.001
-ridge  drop_top=4                           +0.000          -0.003          +0.001
-cur_residual  drop_top=1                    -0.003          -0.004          -0.007
-cur_residual  drop_top=2                    -0.001          -0.004          -0.004
-cur_residual  drop_top=4                    -0.001          -0.005          -0.004
-supersede+leverage  drop_top=1              -0.000          +0.000          +0.002
+ridge  drop_top=2                           +0.004          +0.000          +0.001
+ridge  drop_top=4                           -0.000          -0.002          +0.002
+cur_residual  drop_top=1                    -0.003          -0.004          -0.006
+cur_residual  drop_top=2                    -0.001          -0.005          -0.004
+cur_residual  drop_top=4                    -0.001          -0.006          -0.004
+supersede+leverage  drop_top=1              -0.000          -0.000          +0.002
 supersede+leverage  drop_top=2              +0.001          +0.000          +0.000
-supersede+leverage  drop_top=4              +0.001          +0.001          +0.004
+supersede+leverage  drop_top=4              +0.001          +0.001          +0.003
+
+== path substitution arms vs the base configuration ==
+Deltas against the same method's base curve at matched achieved compression. The table
+is charged into the reported compression ratio ONLY; it is deliberately NOT deducted
+from the selection budget, so a table arm selects from the same token budget as every
+other method and then pays for the table by landing further right on the rate axis.
+These arm results are therefore NOT budget-neutral: the matched-rate comparison below is
+where the table's cost is charged back, so read every cell as 'at the same achieved
+compression' and never as 'at the same budget'. recall_f_earn = final-state atom recall
+over only the atoms
+the table does not guarantee; recall_f = the same including them; coverage = semantic
+coverage. Positive is better. 'n/a' = one of the two curves never reached that rate.
+Arms: score_only = B (substitute for scoring, emit the original, no table),
+table_only = C (emit the table, substitute nothing — pure overhead, not shippable),
+full = D (table plus markers). '+mm=1' is the same arm with the table built from every
+path rather than only the repeated ones; C and D are each swept at both settings.
+method / arm                                    recall_f_earn@2x       recall_f@2x       coverage@2x  recall_f_earn@3x       recall_f@3x       coverage@3x  recall_f_earn@4x       recall_f@4x       coverage@4x
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+tfidf  paths=score_only                                   -0.000            -0.000            -0.000            -0.005            -0.005            -0.001            -0.007            -0.007            -0.001
+tfidf  paths=table_only                                   -0.046            -0.002            -0.009            -0.068            +0.004            -0.010            -0.086            +0.005            -0.015
+tfidf  paths=table_only+mm=1                              -0.121            +0.012            -0.023            -0.172            +0.039            -0.032            -0.190            +0.060            -0.040
+tfidf  paths=full                                         -0.028            +0.014            -0.069            -0.039            +0.029            -0.066            -0.050            +0.035            -0.066
+tfidf  paths=full+mm=1                                    -0.088            +0.033            -0.100            -0.120            +0.072            -0.102            -0.140            +0.091            -0.104
+leverage  paths=score_only                                -0.005            -0.005            +0.005            +0.009            +0.009            +0.009            +0.010            +0.010            +0.009
+leverage  paths=table_only                                -0.024            +0.008            -0.010            -0.027            +0.030            -0.014            -0.033            +0.038            -0.019
+leverage  paths=table_only+mm=1                           -0.028            +0.057            -0.029            -0.048            +0.100            -0.040            -0.068            +0.116            -0.055
+leverage  paths=full                                      -0.019            +0.012            -0.041            -0.006            +0.048            -0.037            -0.025            +0.045            -0.040
+leverage  paths=full+mm=1                                 -0.027            +0.057            -0.074            -0.021            +0.118            -0.075            -0.062            +0.120            -0.084
+ridge  paths=score_only                                   +0.005            +0.005            +0.008            +0.010            +0.010            +0.008            +0.011            +0.011            +0.011
+ridge  paths=table_only                                   -0.022            +0.009            -0.010            -0.025            +0.031            -0.014            -0.034            +0.037            -0.018
+ridge  paths=table_only+mm=1                              -0.027            +0.051            -0.028            -0.045            +0.093            -0.040            -0.083            +0.096            -0.052
+ridge  paths=full                                         -0.015            +0.015            -0.040            -0.015            +0.040            -0.038            -0.024            +0.045            -0.035
+ridge  paths=full+mm=1                                    -0.030            +0.049            -0.074            -0.033            +0.101            -0.074            -0.057            +0.113            -0.077
+supersede+leverage  paths=score_only                      -0.005            -0.005            -0.000            +0.005            +0.005            +0.008            +0.008            +0.008            +0.009
+supersede+leverage  paths=table_only                      -0.029            -0.002            -0.011            -0.034            +0.022            -0.014            -0.042            +0.031            -0.020
+supersede+leverage  paths=table_only+mm=1                 -0.045            +0.022            -0.028            -0.060            +0.075            -0.041            -0.060            +0.111            -0.043
+supersede+leverage  paths=full                            -0.023            +0.002            -0.050            -0.022            +0.031            -0.040            -0.031            +0.040            -0.043
+supersede+leverage  paths=full+mm=1                       -0.042            +0.023            -0.082            -0.039            +0.089            -0.076            -0.070            +0.104            -0.087
+supersede+band+leverage  paths=score_only                 -0.000            -0.000            +0.003            +0.002            +0.002            +0.008            +0.002            +0.002            +0.007
+supersede+band+leverage  paths=table_only                 -0.034            -0.006            -0.011            -0.039            +0.016            -0.014            -0.049            +0.022            -0.017
+supersede+band+leverage  paths=table_only+mm=1            -0.057            +0.017            -0.029            -0.060            +0.072            -0.039            -0.075            +0.095            -0.040
+supersede+band+leverage  paths=full                       -0.028            +0.000            -0.051            -0.028            +0.024            -0.043            -0.043            +0.028            -0.046
+supersede+band+leverage  paths=full+mm=1                  -0.054            +0.019            -0.084            -0.056            +0.074            -0.081            -0.079            +0.093            -0.089
+
+== path table cost and guarantee, per min_mentions setting ==
+This is the tradeoff min_mentions is a knob for, priced directly: 1 tabulates every
+path (recall-optimal, a path mentioned once is the one selection is likeliest to drop),
+2 tabulates only repeated ones (token-optimal, a row for a single mention costs more
+than the mention it replaces). share = fraction of the FINAL-STATE atom set the table
+spells out so selection never has to; cost = table tokens over transcript tokens. Path
+strings are never printed: local sessions are in this corpus.
+transcript                  mm   paths   tokens    cost   share
+---------------------------------------------------------------
+local_100k                   1    1044    15331   0.083   0.357
+local_100k                   2     371     5418   0.029   0.131
+local_200k                   1     964    15081   0.051   0.281
+local_200k                   2     499     7360   0.025   0.142
+local_20k                    1     345     5411   0.146   0.483
+local_20k                    2     115     1369   0.037   0.162
+local_50k                    1     420     5870   0.090   0.304
+local_50k                    2     153     2436   0.037   0.112
+local_5k                     1      44      565   0.062   0.182
+local_5k                     2      10      148   0.016   0.052
+trace-commons_4c09dfa9       1     199     3011   0.340   0.482
+trace-commons_4c09dfa9       2       2       21   0.002   0.005
+trace-commons_11ef2190       1      60      727   0.086   0.125
+trace-commons_11ef2190       2      17      158   0.019   0.037
+trace-commons_ba1b4916       1     278     5120   0.097   0.371
+trace-commons_ba1b4916       2     150     2541   0.048   0.206
+trace-commons_479c5e9f       1     328     3345   0.034   0.291
+trace-commons_479c5e9f       2     191     1845   0.019   0.180
+trace-commons_c84c0ad3       1     241     3315   0.048   0.297
+trace-commons_c84c0ad3       2     116     1520   0.022   0.147
+trace-commons_860618e1       1     327     3809   0.025   0.161
+trace-commons_860618e1       2     153     1671   0.011   0.071
+trace-commons_47d9fc04       1    1064    15226   0.078   0.393
+trace-commons_47d9fc04       2     462     6211   0.032   0.172
+trace-commons_da5d32d6       1    1430    18285   0.089   0.424
+trace-commons_da5d32d6       2     665     7593   0.037   0.204
+swe-gym_row309               1       6       69   0.029   0.098
+swe-gym_row309               2       2       38   0.016   0.033
+swe-gym_row419               1      30      529   0.055   0.135
+swe-gym_row419               2      17      333   0.035   0.077
+swe-gym_row358               1     314     7276   0.487   0.541
+swe-gym_row358               2      13      342   0.023   0.025
+swe-gym_row282               1     212     4088   0.207   0.210
+swe-gym_row282               2      12      174   0.009   0.012
+swe-gym_row214               1     263     5847   0.083   0.306
+swe-gym_row214               2      10      179   0.003   0.011

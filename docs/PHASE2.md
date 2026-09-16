@@ -40,9 +40,10 @@ Corpus atoms fall 32,344 to 27,189.
 > mentions**, appears only in `docs/results/corpus_stats.txt` and nowhere in this document. Do
 > not carry one of these into a share computed against another.
 >
-> **Every atom figure in this document predates `ATOMS_VERSION` 4** (2026-09-10) and is therefore
-> stale — see [the third extractor audit](#the-third-extractor-audit--atoms_version-4). They are
-> left in place as the record of what version 2 and version 3 said.
+> **Every atom figure in this document except the spectral-versus-TF-IDF table predates
+> `ATOMS_VERSION` 4** (2026-09-10) and is therefore stale — see
+> [the third extractor audit](#the-third-extractor-audit--atoms_version-4). They are left in place
+> as the record of what version 2 and version 3 said.
 
 **Rejected: tightening the path regex.** It removes 2,697 atoms rather than 5,137, leaves
 residual junk (`dev/null\necho` survives it), keeps boilerplate parameter names in the atom
@@ -376,33 +377,34 @@ is applied (decided 2026-09-10).
 That also removes the temptation this section was previously exposed to: once numbers exist,
 whichever metric supports the preferred conclusion becomes the tempting one to crown.
 
-The full grid was re-run on 2026-09-09 after the first extractor fix, so these are
-post-`ATOMS_VERSION`-2 numbers; the curves before that fix were reading inflated recall and have
-been discarded.
-
-> **Superseded, pending re-measurement.** The audit above bumped the extractor to
-> `ATOMS_VERSION` 3 and moved the atom set unevenly by kind — `tool_result` +6.5%, prose −3.6%.
-> Atom recall is one of the two metrics this split is made of, so the table below is being
-> re-measured and its direction is not assumed to hold. It is left here as the record of what
-> version 2 said, not as the current answer. `ATOMS_VERSION` 4 has landed since and moves the set
-> again; the re-measurement runs against 4, not 3, and neither bump's effect on this table has
-> been observed. The committed copy at `docs/results/exp_d_summary.txt` is the same version-2
-> grid — see [that directory's README](results/README.md) for what else has changed under it.
+The grid was re-baselined on 2026-09-15 under `ATOMS_VERSION` 4 (18 transcripts × 600 jobs, run
+log at `experiments/output/rebaseline_v4.log`), so the numbers below are current. The version-2
+table this replaces was measured on 2026-09-09 after the first extractor fix; the curves before
+that fix were reading inflated recall and were discarded. The version-2 summary formerly at
+`docs/results/exp_d_summary.txt` was replaced by the version-4 one on 2026-09-16 — see
+[that directory's README](results/README.md).
 
 **The two distortion metrics disagree, consistently and in opposite directions.** Deltas below
-are spectral minus TF-IDF, interpolated onto matched achieved compression.
+are spectral minus TF-IDF, interpolated onto matched achieved compression, from the "spectral
+methods vs tfidf at matched ACHIEVED rate" block of `rebaseline_v4.log`. Each range is the
+smallest and largest delta over the ten achieved rates from 0.8 down to 0.1 (1.25x to 10x). The
+0.05 rate is measured but excluded: for most methods only 8 of 18 transcripts reach it. The
+supersede stacks have the opposite gap — at rates of 0.6 and milder, supersession alone already
+compresses past the target on some transcripts, so those cells rest on 6 to 14 transcripts. They
+are kept; dropping them would leave those methods with no mild-rate cells at all.
 
 | Method | atom recall, all-history | atom recall, final-state | semantic coverage |
 | --- | --- | --- | --- |
-| `leverage` | +0.024 to +0.077 | +0.021 to +0.071 | −0.035 to −0.145 |
-| `ridge` | +0.046 to +0.109 | +0.035 to +0.103 | −0.034 to −0.148 |
-| `cur_residual` | +0.037 to +0.101 | +0.024 to +0.093 | −0.028 to −0.072 |
-| `supersede+leverage` | +0.010 to +0.087 | +0.019 to +0.113 | −0.019 to −0.142 |
-| `supersede+band+leverage` | +0.034 to +0.110 | +0.043 to +0.111 | −0.018 to −0.127 |
-| `topics` | +0.012 to −0.046 | +0.005 to −0.067 | −0.015 to −0.136 |
+| `leverage` | +0.037 to +0.084 | +0.024 to +0.076 | −0.035 to −0.108 |
+| `ridge` | +0.048 to +0.113 | +0.035 to +0.108 | −0.034 to −0.113 |
+| `cur_residual` | +0.038 to +0.109 | +0.025 to +0.101 | −0.028 to −0.042 |
+| `supersede+leverage` | +0.053 to +0.093 | +0.066 to +0.113 | −0.019 to −0.096 |
+| `supersede+band+leverage` | +0.065 to +0.103 | +0.076 to +0.123 | −0.029 to −0.083 |
+| `topics` | +0.003 to −0.036 | −0.007 to −0.054 | −0.015 to −0.136 |
 
-Spectral wins on atom recall at every rate measured. It loses on semantic coverage at every rate
-measured. `topics` loses on both, which confirms the Phase 1 decision to cut it as a selector.
+Spectral wins on atom recall at every rate in the span. It loses on semantic coverage at every
+rate in the span. `topics` is never better than +0.003 on atom recall and loses on coverage
+everywhere, which confirms the Phase 1 decision to cut it as a selector.
 
 **This does not resolve itself by measuring harder, and it is not supposed to.** The two metrics
 were chosen deliberately to disagree — see [DESIGN.md](DESIGN.md#distortion-metrics). Atom
@@ -420,7 +422,8 @@ once rather than competing:
   concentrating on fact-dense segments and thinning the connective material that makes the
   retained facts usable.
 
-`topics` loses on both axes, which is not a split and is why it stays cut.
+`topics` loses on both axes (its one positive cell is +0.003), which is not a split and is why it
+stays cut.
 
 Downstream task evaluation — can a model actually continue the session from each output — would
 price both in a single currency, and remains the most valuable thing on the queue. It is not
@@ -799,6 +802,12 @@ restored such text; what was wrong was the scored text and its re-extracted atom
     never quoted, as today, which keeps continuity with the existing figures) or restrict to the
     public corpora (so every published number is reproducible by someone without the local
     sessions, at the cost of changing what the numbers mean).
+14. **Compression level as a bounded, user-facing control.** Expose the global keep ratio as a
+    slider bounded to the span the grid actually measured (keep 80% down to keep 10%; the 5% rate
+    is reached by fewer than half the transcripts, so it is refused rather than offered), with
+    tick marks at the operating points (2x/3x/4x) and named presets — low, medium, high, extreme —
+    mapped to fixed ratios. Open, to settle together with the default-selector question: what
+    each preset maps to, and whether the selector changes with the level. Raised 2026-09-16.
 
 Resumption and downstream task evaluation are deferred by decision, not forgotten.
 
