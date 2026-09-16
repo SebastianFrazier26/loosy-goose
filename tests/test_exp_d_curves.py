@@ -26,6 +26,7 @@ from experiments.exp_d_curves import (  # noqa: E402
     PROTECT_CODE_ONLY_METHODS,
     SCHEMA_VERSION,
     SPECTRAL_SCORED,
+    SUPERSEDING_METHODS,
     TRANSFORMING_METHODS,
     VARIANTS,
     Job,
@@ -50,6 +51,7 @@ from experiments.exp_d_curves import (  # noqa: E402
     paths_stamp,
     plan_jobs,
     segments_digest,
+    supersede_stamp,
     transforms_stamp,
 )
 from loosy_goose.budget import (  # noqa: E402
@@ -66,6 +68,7 @@ from loosy_goose.segment import (  # noqa: E402
     SegmentKind,
     extract_atoms,
 )
+from loosy_goose.supersede import SUPERSEDE_VERSION  # noqa: E402
 from loosy_goose.tokens import count_tokens  # noqa: E402
 from loosy_goose.transcript import Block, Transcript, Turn  # noqa: E402
 
@@ -170,6 +173,9 @@ def test_methods_respect_the_shared_token_budget(
 def test_variant_key_is_base_only_for_the_default_configuration() -> None:
     assert BASE_VARIANT.key() == "base"
     assert Variant(drop_top=2).key() == "drop_top=2"
+    # The depth knob at its default must leave every existing record's key alone.
+    assert Variant(tool_depth="follow").key() == "base"
+    assert Variant(tool_depth="half").key() == "tool_depth=half"
 
 
 def test_variant_applies_only_to_the_methods_it_names() -> None:
@@ -182,6 +188,80 @@ def test_variant_applies_only_to_the_methods_it_names() -> None:
 def test_variant_threads_drop_top_into_the_compress_config() -> None:
     assert BASE_VARIANT.compress_config("leverage").drop_top == 0
     assert Variant(drop_top=3).compress_config("ridge").drop_top == 3
+
+
+def test_tool_quality_follows_the_depth_setting() -> None:
+    assert BASE_VARIANT.tool_quality(0.3) is None
+    assert Variant(tool_depth="flat0.5").tool_quality(0.3) == 0.5
+    assert Variant(tool_depth="flat0.5").tool_quality(0.9) == 0.5
+    assert Variant(tool_depth="flat0.25").tool_quality(0.05) == 0.25
+    assert Variant(tool_depth="half").tool_quality(0.3) == pytest.approx(0.15)
+    assert Variant(tool_depth="half").tool_quality(0.9) == pytest.approx(0.45)
+
+
+def test_band_threads_the_tool_depth_override_into_the_shrinker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    segs = _corpus()
+    seen: list[tuple[str, float, float | None]] = []
+    real = exp_d.quantize_segment
+
+    def watched(seg: Segment, quality: float, **kwargs: Any) -> Segment:
+        seen.append((seg.kind, quality, kwargs.get("tool_quality")))
+        return real(seg, quality, **kwargs)
+
+    monkeypatch.setattr(exp_d, "quantize_segment", watched)
+    _band(segs, 0.4)
+    assert seen and all(tq is None for _, _, tq in seen)
+    seen.clear()
+    _band(segs, 0.4, 0.2)
+    # The override reaches every shrunk segment; `quantize_segment` itself scopes it to tool_use.
+    assert {(q, tq) for _, q, tq in seen} == {(0.4, 0.2)}
+    assert {kind for kind, _, _ in seen} == {"code", "tool_use"}
+
+
+@pytest.mark.parametrize("name", sorted(TRANSFORMING_METHODS))
+def test_band_methods_hand_the_variants_depth_to_the_shrinker(
+    name: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    segs = _corpus()
+
+    def fake_embed(texts: list[str], model_name: str) -> np.ndarray:
+        rng = np.random.default_rng(0)
+        x = rng.normal(size=(len(texts), 8))
+        return x / np.where((n := np.linalg.norm(x, axis=1, keepdims=True)) > 0, n, 1.0)
+
+    monkeypatch.setattr("loosy_goose.select.embed_texts", fake_embed)
+    seen: set[float | None] = set()
+    real = exp_d.quantize_segment
+
+    def watched(seg: Segment, quality: float, **kwargs: Any) -> Segment:
+        seen.add(kwargs.get("tool_quality"))
+        return real(seg, quality, **kwargs)
+
+    monkeypatch.setattr(exp_d, "quantize_segment", watched)
+    variant = Variant(tool_depth="half", applies_to=TRANSFORMING_METHODS)
+    METHODS[name](segs, 0.5, "none", _ctx(tmp_path, variant, segs))
+    assert seen == {0.25}
+    seen.clear()
+    METHODS[name](segs, 0.5, "none", _ctx(tmp_path, BASE_VARIANT, segs))
+    assert seen == {None}
+
+
+def test_depth_variants_are_swept_on_the_band_methods_only() -> None:
+    depth = [j for j in plan_jobs() if j.variant.tool_depth != "follow"]
+    assert len(depth) == 72
+    assert {j.variant.key() for j in depth} == {
+        "tool_depth=flat0.5",
+        "tool_depth=flat0.25",
+        "tool_depth=half",
+    }
+    assert {j.method for j in depth} == set(TRANSFORMING_METHODS)
+    assert {j.protect for j in depth} == {"none"}
+    for key in ("tool_depth=flat0.5", "tool_depth=flat0.25", "tool_depth=half"):
+        for method in TRANSFORMING_METHODS:
+            ratios = [j.ratio for j in depth if j.variant.key() == key and j.method == method]
+            assert sorted(ratios) == sorted(KEEP_RATIOS)
 
 
 def test_plan_jobs_covers_every_method_ratio_and_variant_exactly_once() -> None:
@@ -206,13 +286,19 @@ def test_protect_code_only_is_measured_on_the_base_variant_only() -> None:
 def test_plan_jobs_totals_the_grid_the_run_is_budgeted_for() -> None:
     # The grid is a multi-hour run, so its size is pinned rather than inferred: 156 base (11
     # methods + 2 protect=code_only rows, x 12 ratios) + 144 drop_top (3 settings x 4 scored
-    # methods x 12) + 300 path (5 arms x 5 methods x 12).
+    # methods x 12) + 300 path (5 arms x 5 methods x 12) + 72 depth (3 settings x 2 band
+    # methods x 12).
     jobs = plan_jobs()
     base = (len(METHODS) + len(PROTECT_CODE_ONLY_METHODS)) * len(KEEP_RATIOS)
     drop_top = len([v for v in VARIANTS if v.drop_top]) * len(SPECTRAL_SCORED) * len(KEEP_RATIOS)
     path = len([v for v in VARIANTS if v.paths != "off"]) * len(PATH_METHODS) * len(KEEP_RATIOS)
-    assert (base, drop_top, path) == (156, 144, 300)
-    assert len(jobs) == base + drop_top + path == 600
+    depth = (
+        len([v for v in VARIANTS if v.tool_depth != "follow"])
+        * len(TRANSFORMING_METHODS)
+        * len(KEEP_RATIOS)
+    )
+    assert (base, drop_top, path, depth) == (156, 144, 300, 72)
+    assert len(jobs) == base + drop_top + path + depth == 672
     assert len({j.identity() for j in jobs}) == len(jobs)
 
 
@@ -239,6 +325,15 @@ def test_segments_digest_covers_the_atom_extractor_version() -> None:
         assert segments_digest(segs) != before
 
 
+def test_segments_digest_covers_the_supersession_version() -> None:
+    # apply_supersession builds final_atoms, the denominator of atom_recall_final on every
+    # record, so a changed pass invalidates the whole checkpoint, not only supersede+* records.
+    segs = [_seg(0, "alpha"), _seg(1, "beta")]
+    before = segments_digest(segs)
+    with mock.patch.object(exp_d, "SUPERSEDE_VERSION", SUPERSEDE_VERSION + 1):
+        assert segments_digest(segs) != before
+
+
 def test_record_identity_defaults_a_variantless_record_to_the_baseline() -> None:
     # Records written before variants existed carry no variant_key; they are baseline records.
     rec = {"method": "tfidf", "protect": "none", "keep_ratio": 0.5}
@@ -249,6 +344,7 @@ def test_record_identity_defaults_a_variantless_record_to_the_baseline() -> None
     # either version stays valid rather than being needlessly recomputed.
     assert identity.transforms_version == 0
     assert identity.paths_version == 0
+    assert identity.supersede_version == 0
 
 
 def test_record_identity_is_read_by_name_not_position() -> None:
@@ -263,6 +359,7 @@ def test_record_identity_is_read_by_name_not_position() -> None:
         "transforms_version",
         "paths_version",
         "band_quality_version",
+        "supersede_version",
     )
 
 
@@ -729,6 +826,76 @@ def test_the_banding_stamp_is_folded_into_the_stored_records_identity(tmp_path: 
     old = {"method": "band+leverage", "protect": "none", "keep_ratio": 0.5}
     assert _record_identity(old).band_quality_version == 0
     assert _record_identity(old) not in {j.identity() for j in plan_jobs()}
+
+
+def test_superseding_methods_lists_every_method_that_supersedes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Same guard as the shrinker list: SUPERSEDING_METHODS is hand-written and decides whose
+    # records a supersession change invalidates, so the true set is observed, not trusted.
+    segs = _corpus()
+
+    def fake_embed(texts: list[str], model_name: str) -> np.ndarray:
+        rng = np.random.default_rng(0)
+        x = rng.normal(size=(len(texts), 8))
+        return x / np.where((n := np.linalg.norm(x, axis=1, keepdims=True)) > 0, n, 1.0)
+
+    monkeypatch.setattr("loosy_goose.select.embed_texts", fake_embed)
+    called: set[str] = set()
+    real = exp_d.apply_supersession
+    current: list[str] = []
+
+    def watched(*args: object, **kwargs: object) -> object:
+        called.add(current[0])
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(exp_d, "apply_supersession", watched)
+    for name, fn in METHODS.items():
+        current[:] = [name]
+        fn(segs, 0.5, "none", _ctx(tmp_path, BASE_VARIANT, segs))
+    assert called == set(SUPERSEDING_METHODS)
+
+
+def test_supersede_stamp_is_zero_for_methods_that_never_supersede() -> None:
+    assert supersede_stamp("leverage") == 0
+    assert supersede_stamp("band+leverage") == 0
+    for name in SUPERSEDING_METHODS:
+        assert supersede_stamp(name) == SUPERSEDE_VERSION
+
+
+def test_a_supersession_change_invalidates_only_the_superseding_methods() -> None:
+    # The pass runs downstream of segmentation, so a changed rule moves no other stamp: without
+    # one of its own, a stored supersede+* record would keep loading as valid while describing
+    # an elision policy that no longer exists (segments_digest also carries it, for final_atoms).
+    stacked = Job("supersede+leverage", "none", 0.5, BASE_VARIANT)
+    plain = Job("leverage", "none", 0.5, BASE_VARIANT)
+    before_stacked, before_plain = stacked.identity(), plain.identity()
+    with mock.patch.object(exp_d, "SUPERSEDE_VERSION", SUPERSEDE_VERSION + 1):
+        assert stacked.identity() != before_stacked
+        assert plain.identity() == before_plain
+
+
+def test_the_supersession_stamp_is_folded_into_the_stored_records_identity(
+    tmp_path: Path,
+) -> None:
+    job = next(j for j in plan_jobs() if j.method == "supersede+leverage")
+    ctx = RunContext(tmp_path, job.variant, PathTable(()))
+    rec = exp_d._record(job.method, job.protect, job.ratio, ctx, 100, [], [], None, set(), 0.0)
+    assert rec["supersede_version"] == SUPERSEDE_VERSION
+    assert _record_identity(rec) == job.identity()
+    # A record written under supersession version 1 (or before the stamp existed) is stale for a
+    # supersede+* method and still valid for a plain one.
+    planned = {j.identity() for j in plan_jobs()}
+    old_stacked = {
+        "method": "supersede+leverage",
+        "protect": "none",
+        "keep_ratio": 0.5,
+        "transforms_version": 0,
+        "supersede_version": 1,
+    }
+    old_plain = {"method": "leverage", "protect": "none", "keep_ratio": 0.5}
+    assert _record_identity(old_stacked) not in planned
+    assert _record_identity(old_plain) in planned
 
 
 def test_metric_backfills_the_earned_fields_of_a_pre_arm_record() -> None:

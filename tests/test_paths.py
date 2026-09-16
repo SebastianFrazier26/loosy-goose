@@ -3,6 +3,7 @@ import json
 import pytest
 
 from loosy_goose.paths import (
+    PATHS_VERSION,
     PathTable,
     build_table,
     expand,
@@ -143,13 +144,51 @@ def test_a_tabulated_path_still_substitutes_against_adjacent_punctuation() -> No
     assert substitute_text("edit src/alpha.py, then run", mapping) == "edit [P1], then run"
 
 
-def test_a_sentence_final_slash_path_is_left_alone_rather_than_split() -> None:
-    # `_PATH_SLASH` accepts `.` inside a segment, so the span here is `src/alpha.py.` — trailing
-    # dot included — and does not equal the table's row. Substituting the prefix anyway is the
-    # defect this module was fixed for; the pattern is shared with the atom extractor and may not
-    # be narrowed here, so the conservative side is taken and the mention simply is not replaced.
-    assert find_paths("edit src/alpha.py.") == ["src/alpha.py."]
-    assert substitute_text("edit src/alpha.py.", {"src/alpha.py": "[P0]"}) == "edit src/alpha.py."
+def test_a_sentence_final_slash_path_drops_the_full_stop_as_the_extractor_does() -> None:
+    # `_PATH_SLASH` accepts `.` inside a component, so the raw match is `src/alpha.py.`; the
+    # extractor strips it and the metric counts `src/alpha.py`, so the table must key on that.
+    assert find_paths("edit src/alpha.py.") == ["src/alpha.py"]
+    assert find_paths("see C:\\repo\\alpha.py.") == ["C:\\repo\\alpha.py"]
+    assert extract_atoms("edit src/alpha.py.")[0] == "src/alpha.py"
+
+
+def test_a_sentence_final_mention_and_a_mid_sentence_one_share_a_row() -> None:
+    segs = [_seg(0, "edit src/alpha.py."), _seg(1, "then src/alpha.py again")]
+    assert build_table(segs).paths == ("src/alpha.py",)
+
+
+def test_substituting_a_sentence_final_path_keeps_the_full_stop() -> None:
+    mapping = {"src/alpha.py": "[P0]"}
+    assert substitute_text("edit src/alpha.py.", mapping) == "edit [P0]."
+    assert substitute_text("edit src/alpha.py...", mapping) == "edit [P0]..."
+
+
+def test_a_last_component_with_inner_dots_is_untouched() -> None:
+    assert find_paths("unpack a/b.tar.gz now") == ["a/b.tar.gz"]
+    assert substitute_text("unpack a/b.tar.gz.", {"a/b.tar.gz": "[P0]"}) == "unpack [P0]."
+
+
+def test_paths_version_is_3() -> None:
+    assert PATHS_VERSION == 3
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "edit src/alpha.py.",
+        "read C:\\repo\\src\\beta.py, then src/gamma.py; done",
+        "unpack a/b.tar.gz. also main.py: and lib/x.c...",
+        "(src/main.c), src/main.c:12",
+        "cd foo/.. and ./tmp/",
+        "no punctuation src/last.py",
+    ],
+)
+def test_every_found_path_is_an_atom_of_the_same_text(text: str) -> None:
+    # The table is keyed on `find_paths` and the metric on `extract_atoms`; a path the first names
+    # that the second does not count is a guarantee the table cannot keep.
+    atoms = set(extract_atoms(text))
+    for p in find_paths(text):
+        assert p in atoms, (p, text)
 
 
 def test_substitution_round_trips_when_a_near_miss_path_shares_a_prefix() -> None:

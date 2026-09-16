@@ -1,11 +1,13 @@
 from loosy_goose.segment import (
     _ATOM_PATTERNS,
+    ATOMS_VERSION,
     extract_atoms,
     looks_like_code_dump,
     scannable,
     segment,
     split_prose,
     split_sentences,
+    strip_line_numbers,
 )
 from loosy_goose.transcript import Block, Transcript, Turn
 
@@ -75,6 +77,53 @@ def test_tool_result_code_dump_becomes_protected_code() -> None:
 def test_plain_log_is_not_a_code_dump() -> None:
     log = "\n".join(["Starting server", "Listening on port", "Ready to accept connections"])
     assert not looks_like_code_dump(log)
+
+
+def test_numbered_read_routes_on_its_body_and_keeps_prefixes() -> None:
+    # Single-digit prefixes: `1→def main():` fails the code-line regex and carries no indent, so
+    # the prefixed text was never a code dump — only the stripped body is.
+    dump = "\n".join(
+        [
+            "1→def main():",
+            "2→    x = load()",
+            "3→    return x",
+            "4→",
+            "5→class Foo:",
+            "6→    pass",
+        ]
+    )
+    assert not looks_like_code_dump(dump)
+    segs = segment(_transcript(Block("tool_result", dump)))
+    assert len(segs) == 1
+    assert segs[0].kind == "code" and segs[0].protected
+    assert segs[0].text == dump
+
+
+def test_numbered_prose_is_not_a_code_dump() -> None:
+    # Right-aligned numbers pad every line past the four-space indentation fallback; before the
+    # strip that alone routed a numbered prose file to `code`.
+    dump = "\n".join(
+        [
+            "     1→The quick brown fox jumps over the lazy dog.",
+            "     2→Nothing here resembles a statement.",
+            "     3→It is plain prose with line numbers.",
+            "     4→Which is what a numbered README read looks like.",
+        ]
+    )
+    assert looks_like_code_dump(dump)
+    segs = segment(_transcript(Block("tool_result", dump)))
+    assert all(s.kind == "tool_result" and not s.protected for s in segs)
+    assert "\n".join(s.text for s in segs) == dump
+
+
+def test_strip_line_numbers_requires_a_numbered_majority() -> None:
+    assert strip_line_numbers("Log line 1\nLog line 2\nLog line 3") is None
+    stripped = strip_line_numbers("1→a\n2→b\n3→c")
+    assert stripped == (["1→", "2→", "3→"], ["a", "b", "c"])
+
+
+def test_atoms_version() -> None:
+    assert ATOMS_VERSION == 5
 
 
 def test_extract_atoms_examples() -> None:

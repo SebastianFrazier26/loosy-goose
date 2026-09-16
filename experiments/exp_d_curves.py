@@ -38,7 +38,7 @@ from loosy_goose.code import TRANSFORMS_VERSION, quantize_segment
 from loosy_goose.paths import PATHS_VERSION, PathTable, build_table, substitute
 from loosy_goose.segment import ATOMS_VERSION, Segment, segment
 from loosy_goose.select import CompressConfig, Strategy, embed_segments, score_segments
-from loosy_goose.supersede import apply_supersession
+from loosy_goose.supersede import SUPERSEDE_VERSION, apply_supersession
 from loosy_goose.tokens import count_tokens
 from loosy_goose.topics import compress as topics_compress
 from loosy_goose.transcript import Transcript, load_claude_code_jsonl, load_messages_json
@@ -98,11 +98,18 @@ PROTECT_CODE_ONLY_METHODS = ("tfidf", "leverage")
 # The list is hand-written, which is a real risk — `test_transforming_methods_lists_every_method_
 # that_shrinks` detects the true set by observation and fails if this drifts from it.
 TRANSFORMING_METHODS = ("band+leverage", "supersede+band+leverage")
+# Methods that run `supersede.apply_supersession` on their candidate pool, so their records
+# carry SUPERSEDE_VERSION the way the shrinking methods carry TRANSFORMS_VERSION. Hand-written
+# like that list and guarded the same way, by `test_superseding_methods_lists_every_method_
+# that_supersedes`.
+SUPERSEDING_METHODS = ("supersede+tfidf", "supersede+leverage", "supersede+band+leverage")
 # Version of the runner's own transform: `_band` hands quantize_segment the sweep's keep
 # ratio as its fidelity knob, so trimming depth follows the global ratio. That mapping lives
 # here and not in code.py, so changing it moves neither segments_digest nor
 # TRANSFORMS_VERSION — stored band records would keep loading as valid while describing a
 # depth policy that no longer exists. Bump on any change to what `_band` passes as `quality`.
+# A `tool_depth` variant's override travels in its variant key, not here: the base mapping is
+# what this stamps, and the base variant still passes no override.
 BAND_QUALITY_VERSION = 1
 # Methods whose selection runs through CompressConfig, so a scoring knob such as drop_top can
 # change their behaviour. The band+ stacks are deliberately excluded from the drop_top variants:
@@ -125,14 +132,20 @@ PATH_METHODS = ("tfidf", "leverage", "ridge", "supersede+leverage", "supersede+b
 PATH_MIN_MENTIONS = 2
 PATH_MIN_MENTIONS_ALT = 1
 # Jobs between incremental checkpoint writes. A job in this grid costs ~1-2s (the largest
-# transcript spends ~19 min on its 600), while a full checkpoint dump is ~500 KB and tens of
-# milliseconds — two orders of magnitude apart. So 10 keeps the write overhead under ~0.5% of run
-# time while capping what a kill can destroy at ~20s of work instead of a whole transcript.
+# transcript spent ~19 min on the 600-job grid), while a full checkpoint dump is ~500 KB and
+# tens of milliseconds — two orders of magnitude apart. So 10 keeps the write overhead under
+# ~0.5% of run time while capping what a kill can destroy at ~20s of work instead of a whole
+# transcript.
 FLUSH_EVERY = 10
 
 # Which of path substitution's three separable effects an arm turns on. See docs/PHASE2.md,
 # "The path arms": the base variant is arm A.
 PathArm = Literal["off", "score_only", "table_only", "full"]
+# How deep `_band` trims `tool_use` relative to the sweep's keep ratio. `follow` is the base
+# mapping (the override stays None, so `quantize_segment` uses the global ratio); the others test
+# PHASE2's "Decided 2026-09-10" argument that this channel should be shrunk hard whatever the
+# rate — two flat depths, and one that follows the ratio but twice as steeply.
+ToolDepth = Literal["follow", "flat0.5", "flat0.25", "half"]
 
 
 @dataclass(frozen=True)
@@ -145,6 +158,7 @@ class Variant:
     drop_top: int = 0
     paths: PathArm = "off"
     path_min_mentions: int = PATH_MIN_MENTIONS
+    tool_depth: ToolDepth = "follow"
     # Methods this variant is meaningful for; None means every method in METHODS. A scoring knob
     # applied to `random` would just duplicate the baseline record at twice the cost.
     applies_to: tuple[str, ...] | None = None
@@ -157,6 +171,7 @@ class Variant:
             f"drop_top={self.drop_top}" if self.drop_top else "",
             f"paths={self.paths}" if self.paths != "off" else "",
             f"mm={self.path_min_mentions}" if mentions else "",
+            f"tool_depth={self.tool_depth}" if self.tool_depth != "follow" else "",
         ]
         return "+".join(p for p in parts if p) or "base"
 
@@ -165,6 +180,18 @@ class Variant:
 
     def compress_config(self, strategy: Strategy) -> CompressConfig:
         return CompressConfig(strategy=strategy, drop_top=self.drop_top)
+
+    def tool_quality(self, ratio: float) -> float | None:
+        """The `tool_use` depth `_band` hands `quantize_segment` at this keep ratio; None means
+        no override, so the channel follows the global ratio as the base mapping has always
+        done."""
+        if self.tool_depth == "flat0.5":
+            return 0.5
+        if self.tool_depth == "flat0.25":
+            return 0.25
+        if self.tool_depth == "half":
+            return ratio / 2
+        return None
 
     @property
     def substitutes(self) -> bool:
@@ -191,6 +218,11 @@ VARIANTS: tuple[Variant, ...] = (
     Variant(paths="table_only", path_min_mentions=PATH_MIN_MENTIONS_ALT, applies_to=PATH_METHODS),
     Variant(paths="full", applies_to=PATH_METHODS),
     Variant(paths="full", path_min_mentions=PATH_MIN_MENTIONS_ALT, applies_to=PATH_METHODS),
+    # Only the banding methods route `tool_use` through `quantize_segment`, so the depth knob
+    # can change nothing else's output.
+    Variant(tool_depth="flat0.5", applies_to=TRANSFORMING_METHODS),
+    Variant(tool_depth="flat0.25", applies_to=TRANSFORMING_METHODS),
+    Variant(tool_depth="half", applies_to=TRANSFORMING_METHODS),
 )
 
 
@@ -284,10 +316,15 @@ def _leverage_scores(segments: list[Segment], ctx: RunContext) -> np.ndarray:
     return score_segments(x, ctx.variant.compress_config("leverage"))
 
 
-def _band(segments: list[Segment], quality: float) -> list[Segment]:
+def _band(
+    segments: list[Segment], quality: float, tool_quality: float | None = None
+) -> list[Segment]:
     # quality == keep_ratio: the quantity available at each sweep point is exactly the fidelity
     # knob quantize_segment expects, and both already live on [0, 1].
-    return [quantize_segment(s, quality) if s.kind in CODE_KINDS else s for s in segments]
+    return [
+        quantize_segment(s, quality, tool_quality=tool_quality) if s.kind in CODE_KINDS else s
+        for s in segments
+    ]
 
 
 def _pool(segs: list[Segment], ctx: RunContext) -> tuple[list[Segment], list[Segment] | None]:
@@ -366,7 +403,7 @@ def _run_band_leverage(
     segs: list[Segment], ratio: float, protect: ProtectPolicy, ctx: RunContext
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
-    scoring, emit = _pool(_band(segs, ratio), ctx)
+    scoring, emit = _pool(_band(segs, ratio, ctx.variant.tool_quality(ratio)), ctx)
     return select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
 
 
@@ -374,7 +411,8 @@ def _run_supersede_band_leverage(
     segs: list[Segment], ratio: float, protect: ProtectPolicy, ctx: RunContext
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
-    scoring, emit = _pool(_band(apply_supersession(segs), ratio), ctx)
+    banded = _band(apply_supersession(segs), ratio, ctx.variant.tool_quality(ratio))
+    scoring, emit = _pool(banded, ctx)
     return select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
 
 
@@ -413,8 +451,12 @@ def segments_digest(segments: list[Segment]) -> str:
     h = hashlib.sha256()
     # The atom extractor is part of the input identity even though it changes no segment text:
     # atoms are the recall metric's denominator, so a changed extractor makes old records
-    # incomparable to new ones in exactly the way a changed segmenter does.
+    # incomparable to new ones in exactly the way a changed segmenter does. Supersession is in
+    # here for the same reason: `apply_supersession` builds `final_atoms`, which is every
+    # record's denominator for `atom_recall_final`, not only the supersede+* methods'.
     h.update(f"atoms={ATOMS_VERSION}".encode())
+    h.update(b"\x02")
+    h.update(f"supersede={SUPERSEDE_VERSION}".encode())
     h.update(b"\x02")
     for s in segments:
         h.update(s.kind.encode("utf-8"))
@@ -440,6 +482,7 @@ class Job:
             transforms_stamp(self.method),
             paths_stamp(self.variant),
             band_quality_stamp(self.method),
+            supersede_stamp(self.method),
         )
 
 
@@ -483,6 +526,12 @@ def band_quality_stamp(method: str) -> int:
     return BAND_QUALITY_VERSION if method in TRANSFORMING_METHODS else 0
 
 
+def supersede_stamp(method: str) -> int:
+    """The supersession-pass version a method's results depend on; 0 for methods that never
+    run it."""
+    return SUPERSEDE_VERSION if method in SUPERSEDING_METHODS else 0
+
+
 class RecordIdentity(NamedTuple):
     """What makes a stored result the answer to a specific question.
 
@@ -499,10 +548,11 @@ class RecordIdentity(NamedTuple):
     # Every stamp is absent on records written before it existed, and defaults to 0. That is what
     # makes the scoping work: a method that never shrinks carries stamp 0 too, so its old records
     # stay valid, while a shrinking method's old record is recomputed. Same for the path arms,
-    # and for the banding-depth mapping this file owns itself.
+    # for the banding-depth mapping this file owns itself, and for the supersession pass.
     transforms_version: int
     paths_version: int
     band_quality_version: int
+    supersede_version: int
 
 
 def _record_identity(rec: dict[str, Any]) -> RecordIdentity:
@@ -514,6 +564,7 @@ def _record_identity(rec: dict[str, Any]) -> RecordIdentity:
         int(rec.get("transforms_version", 0)),
         int(rec.get("paths_version", 0)),
         int(rec.get("band_quality_version", 0)),
+        int(rec.get("supersede_version", 0)),
     )
 
 
@@ -589,10 +640,12 @@ def _record(
         "paths_version": paths_stamp(variant),
         "transforms_version": transforms_stamp(method),
         "band_quality_version": band_quality_stamp(method),
+        "supersede_version": supersede_stamp(method),
         "variant": {
             "drop_top": variant.drop_top,
             "paths": variant.paths,
             "path_min_mentions": variant.path_min_mentions,
+            "tool_depth": variant.tool_depth,
         },
         "compression_ratio": ev["compression_ratio"],
         "atom_recall": ev["atom_recall"],
@@ -1194,7 +1247,7 @@ def _variant_table(results: list[dict[str, Any]]) -> list[str]:
     ]
     if not keys:
         return []
-    header = f"{'method / variant':<34}" + "".join(
+    header = f"{'method / variant':<48}" + "".join(
         f"{'d recall_f@' + f'{1 / r:.0f}x':>16}" for r in AGGRESSIVE_RATES
     )
     out = [
@@ -1219,7 +1272,7 @@ def _variant_table(results: list[dict[str, Any]]) -> list[str]:
                 bv = _weighted_at_rate(base, rate, "recall_final")
                 vv = _weighted_at_rate(variant, rate, "recall_final")
                 cells.append("n/a" if bv is None or vv is None else f"{vv - bv:+.3f}")
-            out.append(f"{method + '  ' + key:<34}" + "".join(f"{c:>16}" for c in cells))
+            out.append(f"{method + '  ' + key:<48}" + "".join(f"{c:>16}" for c in cells))
     return out
 
 

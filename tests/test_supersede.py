@@ -2,12 +2,11 @@ import json
 
 from loosy_goose.segment import Segment, SegmentKind
 from loosy_goose.supersede import (
+    SUPERSEDE_VERSION,
     apply_supersession,
     attribute_results,
     find_superseded,
-    tool_names_from_transcript,
 )
-from loosy_goose.transcript import Block, Transcript, Turn
 
 
 class _Builder:
@@ -15,16 +14,27 @@ class _Builder:
         self.segments: list[Segment] = []
         self.turn = 0
 
-    def add(self, kind: SegmentKind, text: str, role: str = "assistant") -> Segment:
-        seg = Segment(len(self.segments), self.turn, role, kind, text, kind != "prose", [])  # type: ignore[arg-type]
+    def add(
+        self, kind: SegmentKind, text: str, role: str = "assistant", tool_name: str | None = None
+    ) -> Segment:
+        seg = Segment(
+            len(self.segments),
+            self.turn,
+            role,  # type: ignore[arg-type]
+            kind,
+            text,
+            kind != "prose",
+            [],
+            tool_name=tool_name,
+        )
         self.segments.append(seg)
         return seg
 
     def next_turn(self) -> None:
         self.turn += 1
 
-    def call(self, **payload: object) -> Segment:
-        return self.add("tool_use", json.dumps(payload, sort_keys=True))
+    def call(self, tool_name: str | None = None, /, **payload: object) -> Segment:
+        return self.add("tool_use", json.dumps(payload, sort_keys=True), tool_name=tool_name)
 
     def result(self, text: str, kind: SegmentKind = "tool_result") -> Segment:
         self.next_turn()
@@ -147,27 +157,46 @@ def test_attribute_results_ambiguous_count_is_left_unattributed() -> None:
     assert attribute_results(b.segments) == {}
 
 
-def test_tool_names_from_transcript_matches_in_turn_order() -> None:
-    t = Transcript(
-        "t",
-        [
-            Turn(
-                0,
-                "assistant",
-                [
-                    Block("tool_use", "{}", {"name": "Read"}),
-                    Block("tool_use", "{}", {"name": "Edit"}),
-                ],
-            ),
-            Turn(1, "user", [Block("tool_result", "ok")]),
-        ],
-    )
-    segs = [
-        Segment(0, 0, "assistant", "tool_use", "{}", True, []),
-        Segment(1, 0, "assistant", "tool_use", "{}", True, []),
-        Segment(2, 1, "user", "tool_result", "ok", False, []),
-    ]
-    assert tool_names_from_transcript(t, segs) == {0: "Read", 1: "Edit"}
+def test_supersede_version_is_two() -> None:
+    assert SUPERSEDE_VERSION == 2
+
+
+def test_stored_tool_name_wins_where_positional_walk_would_have_drifted() -> None:
+    # The transcript turn carried [Read, Delete] but the loader kept only the second call, so the
+    # v1 positional walk would have paired this lone segment with "Read" and superseded it. The
+    # segment's own name says Delete, and a Delete is never a stale read.
+    b = _Builder()
+    delete = b.call("Delete", file_path="a.py", offset=0)
+    b.result("deleted")
+    read = b.call("Read", file_path="a.py")
+    b.result("     1→x")
+    gone = find_superseded(b.segments)
+    assert delete.id not in gone
+    assert read.id not in gone
+
+
+def test_stored_tool_name_classifies_a_call_payload_shape_cannot() -> None:
+    b = _Builder()
+    # `pages` alone is read-shaped, but with a body key the shape rule says write; the stored name
+    # is what makes it a read.
+    read = b.call("Read", file_path="a.pdf", pages="1-3", content="ignored")
+    dump = b.result("page 1")
+    write = b.call("Write", file_path="a.pdf", content="new")
+    b.result("wrote")
+    gone = find_superseded(b.segments)
+    assert gone[read.id].reason == "read_superseded" and gone[read.id].by == write.id
+    assert gone[dump.id].reason == "read_superseded"
+    assert write.id not in gone
+
+
+def test_explicit_tool_names_override_stored_name() -> None:
+    b = _Builder()
+    odd = b.call("Read", file_path="a.py", offset=0)
+    b.result("deleted")
+    b.call("Read", file_path="a.py")
+    b.result("     1→x")
+    assert find_superseded(b.segments)[odd.id].reason == "read_superseded"
+    assert odd.id not in find_superseded(b.segments, tool_names={odd.id: "Delete"})
 
 
 def test_openhands_xml_payloads_participate_in_supersession() -> None:

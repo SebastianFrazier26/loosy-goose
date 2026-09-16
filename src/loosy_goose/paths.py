@@ -39,7 +39,9 @@ DEFAULT_MARKER = "[P"
 # arms are keyed on it, for the same reason `code.TRANSFORMS_VERSION` exists: `segments_digest`
 # fingerprints the segmenter's output and stops there, so a rewritten `paths.py` would otherwise
 # leave stored arm records looking valid while describing behaviour that no longer exists.
-PATHS_VERSION = 2
+# 3 (2026-09-16): a sentence-final path no longer keeps its full stop, so it is keyed as the
+# extractor keys it and substitutes.
+PATHS_VERSION = 3
 
 # The two path-shaped patterns from segment._ATOM_PATTERNS, sharing that module's extension list
 # rather than restating it. They must stay identical: the table guarantees whatever it names, and
@@ -49,6 +51,17 @@ _PATH_SLASH = re.compile(
     r"(?<![\w.])(?:[A-Za-z]:[\\/](?:[\w.-]+[\\/])*[\w.-]+|(?:[\w.-]+[\\/])+[\w.-]+)"
 )
 _PATH_BARE = re.compile(r"(?<![\w./\\])[\w-]+\.(?:" + _FILE_EXTENSIONS + r")\b")
+# The same trailing punctuation `extract_atoms` strips from every candidate. The slash pattern
+# accepts `.` inside a component, so in `edit src/alpha.py.` it swallows the full stop; the
+# extractor then strips it and the metric counts `src/alpha.py`, so the table must key on that
+# too. Applied to the span rather than the pattern so the patterns stay identical to the
+# extractor's and the two agree on every edge the strip touches, not only the sentence-final one.
+_ATOM_TRAILING = ".,;:"
+
+
+def _trimmed(text: str, span: tuple[int, int]) -> tuple[int, int]:
+    start, end = span
+    return start, start + len(text[start:end].rstrip(_ATOM_TRAILING))
 
 
 def _path_spans(text: str) -> list[tuple[int, int]]:
@@ -60,7 +73,7 @@ def _path_spans(text: str) -> list[tuple[int, int]]:
     spans, which `finditer` already yields sorted and disjoint — scanning them per bare match was
     quadratic, and this now runs over every segment of the corpus, not only over table building.
     """
-    slash = [m.span() for m in _PATH_SLASH.finditer(text)]
+    slash = [_trimmed(text, m.span()) for m in _PATH_SLASH.finditer(text)]
     starts = [a for a, _ in slash]
     spans = list(slash)
     for m in _PATH_BARE.finditer(text):

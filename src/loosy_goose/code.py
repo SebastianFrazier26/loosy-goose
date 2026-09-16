@@ -18,7 +18,13 @@ from typing import Any
 import tree_sitter_language_pack as _pack
 from tree_sitter import Node, Parser, Tree
 
-from loosy_goose.segment import Segment, extract_atoms, looks_like_code_dump, split_prose
+from loosy_goose.segment import (
+    Segment,
+    extract_atoms,
+    looks_like_code_dump,
+    split_prose,
+    strip_line_numbers,
+)
 from loosy_goose.tokens import count_tokens
 
 ELISION = "… ({n} lines elided)"
@@ -141,9 +147,6 @@ _BODY_TYPES = frozenset(
 )
 
 _COMMENT_TYPES = frozenset({"comment", "line_comment", "block_comment"})
-
-# Claude Code's Read tool prints `cat -n` style: right-aligned number, U+2192 arrow, content.
-_NUMBERED_LINE = re.compile(r"^\s*\d+(→|\t)")
 
 # Ordered: ES-module imports and C# usings are checked before Python because a bare `import X`
 # prefix is shared by all three; Python's own patterns are anchored to its statement shapes.
@@ -396,17 +399,6 @@ def _is_docstring(node: Node) -> bool:
     return node.prev_named_sibling is None and _is_definition(parent.parent)
 
 
-def _strip_line_numbers(text: str) -> tuple[list[str], list[str]] | None:
-    lines = text.split("\n")
-    matches = [_NUMBERED_LINE.match(ln) for ln in lines]
-    hits = sum(1 for m in matches if m)
-    if hits < 3 or hits < 0.8 * sum(1 for ln in lines if ln.strip()):
-        return None
-    prefixes = [m.group(0) if m else "" for m in matches]
-    bodies = [ln[len(p) :] for ln, p in zip(lines, prefixes, strict=True)]
-    return prefixes, bodies
-
-
 def _elide(lines: list[str], keep: list[bool]) -> str:
     out: list[str] = []
     i = 0
@@ -437,7 +429,7 @@ def quantize_code(text: str, lang: str | None, quality: float) -> str:
         raise ValueError("quality must be in [0, 1]")
     if quality >= 1.0 or not text.strip():
         return text
-    numbered = _strip_line_numbers(text)
+    numbered = strip_line_numbers(text)
     prefixes, lines = numbered if numbered else ([], text.split("\n"))
     bands = band_lines("\n".join(lines), lang)
     max_band = max(bands) if bands else 0

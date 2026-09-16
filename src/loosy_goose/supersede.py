@@ -15,7 +15,18 @@ from typing import Any, Literal
 
 from loosy_goose.code import parse_tool_payload
 from loosy_goose.segment import Segment
-from loosy_goose.transcript import Transcript
+
+# Bump whenever this pass finds a different set of segments superseded for the same input.
+# Experiment D keys records on it, beside `code.TRANSFORMS_VERSION`: `segments_digest`
+# fingerprints the segmenter's output and this pass runs downstream of it, so without the stamp a
+# changed rule would leave stale records looking valid. Phase 1's 25.9% lossless figure was
+# measured at 1.
+# 1: tool names rebuilt positionally from the transcript — each turn's `tool_use` blocks paired
+#    with that turn's `tool_use` segments by a cursor — and only when the caller supplied them.
+# 2: tool names read from `Segment.tool_name`, which segmentation stored directly, so this pass
+#    and the shrinker can no longer disagree about which tool a call was. The positional walk is
+#    gone; an explicit `tool_names` mapping still wins for the ids it covers.
+SUPERSEDE_VERSION = 2
 
 Reason = Literal["edit_superseded", "read_superseded", "duplicate"]
 Op = Literal["read", "write"]
@@ -61,25 +72,6 @@ def _file_op(payload: dict[str, Any], tool_name: str | None) -> tuple[Op, str] |
     return None
 
 
-def tool_names_from_transcript(transcript: Transcript, segments: list[Segment]) -> dict[int, str]:
-    by_turn: dict[int, list[str]] = defaultdict(list)
-    for turn in transcript.turns:
-        for block in turn.blocks:
-            if block.kind == "tool_use":
-                by_turn[turn.index].append(block.meta.get("name", ""))
-    out: dict[int, str] = {}
-    cursor: dict[int, int] = defaultdict(int)
-    for seg in segments:
-        if seg.kind != "tool_use":
-            continue
-        names = by_turn.get(seg.turn, [])
-        i = cursor[seg.turn]
-        if i < len(names):
-            out[seg.id] = names[i]
-            cursor[seg.turn] = i + 1
-    return out
-
-
 def attribute_results(segments: list[Segment]) -> dict[int, int]:
     """Map each tool-result segment id to the tool_use segment id it answers.
 
@@ -122,7 +114,7 @@ def find_superseded(
     for s in segments:
         payload = _payload(s)
         if payload is not None:
-            file_op = _file_op(payload, names.get(s.id))
+            file_op = _file_op(payload, names.get(s.id, s.tool_name))
             if file_op is not None:
                 ops[s.id] = file_op
 

@@ -21,7 +21,10 @@ SegmentKind = Literal["prose", "code", "tool_result", "tool_use", "thinking"]
 #    and `env` is gone. Landed in two passes — the path requirement first scoped by extension
 #    length, then narrowed to the seven, and double extensions exempted from the chain rule — but
 #    nothing was swept between them, so the whole rule set ships under this one stamp.
-ATOMS_VERSION = 4
+# 5: no extractor change — line-number prefixes are stripped before `looks_like_code_dump`, so a
+#    numbered file read routes on its body and lands in `code` instead of `tool_result`. That moves
+#    segment kinds and texts, hence `segments_digest`, so every stored record has to go anyway.
+ATOMS_VERSION = 5
 
 # File extensions the bare-filename pattern recognises, shared verbatim with `paths.py` so the
 # path table and the recall metric agree on what a filename is. An allowlist rather than a general
@@ -96,6 +99,9 @@ _CODE_LINE = re.compile(
     r"|else|elif |try|except|fn |let |const |var |pub |use |using |namespace |public |private "
     r"|static |void |int |string |\$|>|\w+\s*[=:(]\s*|\w+\.\w+\()"
 )
+
+# Claude Code's Read tool prints `cat -n` style: right-aligned number, U+2192 arrow, content.
+_NUMBERED_LINE = re.compile(r"^\s*\d+(→|\t)")
 
 
 @dataclass
@@ -264,6 +270,17 @@ def split_prose(text: str, max_chars: int) -> list[str]:
     return chunks
 
 
+def strip_line_numbers(text: str) -> tuple[list[str], list[str]] | None:
+    lines = text.split("\n")
+    matches = [_NUMBERED_LINE.match(ln) for ln in lines]
+    hits = sum(1 for m in matches if m)
+    if hits < 3 or hits < 0.8 * sum(1 for ln in lines if ln.strip()):
+        return None
+    prefixes = [m.group(0) if m else "" for m in matches]
+    bodies = [ln[len(p) :] for ln, p in zip(lines, prefixes, strict=True)]
+    return prefixes, bodies
+
+
 def looks_like_code_dump(text: str) -> bool:
     lines = [ln for ln in text.splitlines() if ln.strip()]
     if len(lines) < 3:
@@ -302,7 +319,12 @@ def _segments_for_block(block: Block, max_chars: int) -> list[tuple[SegmentKind,
         return [("tool_use", block.text, True)]
     if block.kind == "thinking":
         return [("thinking", c, False) for c in split_prose(block.text, max_chars)]
-    if looks_like_code_dump(block.text):
+    # Classified on the stripped body: `1→def f():` fails the code-line regex and a right-aligned
+    # number pads any line out to the indentation fallback, so the tool's padding width decided
+    # the route. The stored text keeps its prefixes; `quantize_code` strips and restores them.
+    numbered = strip_line_numbers(block.text)
+    probe = "\n".join(numbered[1]) if numbered else block.text
+    if looks_like_code_dump(probe):
         return [("code", block.text, True)]
     return [("tool_result", c, False) for c in _chunk_lines(block.text, max_chars)]
 
