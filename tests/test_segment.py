@@ -51,7 +51,7 @@ def test_code_and_tool_use_are_atomic_and_protected() -> None:
 
 def test_tool_result_prose_is_chunked_and_unprotected() -> None:
     lines = "\n".join(f"Log line {i}: everything is fine so far" for i in range(50))
-    segs = segment(_transcript(Block("tool_result", lines)), max_prose_chars=200)
+    segs = segment(_transcript(Block("tool_result", lines)), max_result_chars=200)
     assert len(segs) > 1
     assert all(s.kind == "tool_result" and not s.protected for s in segs)
     assert "\n".join(s.text for s in segs) == lines
@@ -123,7 +123,7 @@ def test_strip_line_numbers_requires_a_numbered_majority() -> None:
 
 
 def test_atoms_version() -> None:
-    assert ATOMS_VERSION == 5
+    assert ATOMS_VERSION == 6
 
 
 def test_extract_atoms_examples() -> None:
@@ -186,10 +186,50 @@ def test_split_prose_bounds_a_run_with_no_whitespace_at_all() -> None:
 def test_chunk_lines_bounds_a_single_overlong_line() -> None:
     long_line = " ".join(f"tok{i}" for i in range(300))
     block = Block("tool_result", f"short line\n{long_line}\ntail line")
-    segs = segment(_transcript(block), max_prose_chars=120)
+    segs = segment(_transcript(block), max_result_chars=120)
     assert all(len(s.text) <= 120 for s in segs)
     assert any("tok0" in s.text for s in segs)
     assert any("tail line" in s.text for s in segs)
+
+
+def test_prose_paragraphs_are_whole_segments_under_the_default_bound() -> None:
+    # ATOMS_VERSION 6: a paragraph is one unit up to the 12,000-character cap, so two paragraphs
+    # well past the old 600-character bound yield exactly two prose segments.
+    para_a = " ".join(f"Sentence {i} of the first paragraph says something." for i in range(16))
+    para_b = " ".join(f"Sentence {i} of the second paragraph adds more." for i in range(20))
+    assert 800 <= len(para_a) < 900 <= len(para_b) < 1_000
+    segs = segment(_transcript(Block("text", f"{para_a}\n\n{para_b}")))
+    assert [s.kind for s in segs] == ["prose", "prose"]
+    assert [s.text for s in segs] == [para_a, para_b]
+
+
+def test_thinking_paragraphs_take_the_prose_bound() -> None:
+    para = " ".join(f"Thought {i} continues the same paragraph." for i in range(25))
+    assert len(para) > 600
+    segs = segment(_transcript(Block("thinking", para)))
+    assert [s.kind for s in segs] == ["thinking"]
+    assert segs[0].text == para
+
+
+def test_prose_past_the_cap_is_still_split() -> None:
+    para = " ".join(f"Sentence {i} keeps the paragraph growing past the cap." for i in range(300))
+    assert len(para) > 12_000
+    segs = segment(_transcript(Block("text", para)))
+    assert len(segs) > 1
+    assert all(len(s.text) <= 12_000 for s in segs)
+    assert " ".join(s.text for s in segs) == para
+
+
+def test_tool_result_chunking_is_unchanged_by_the_prose_default() -> None:
+    # The two bounds are independent: widening prose to 12,000 must leave tool_result at 600.
+    lines = "\n".join(f"Log line {i}: everything is fine, nothing changed" for i in range(60))
+    assert len(lines) > 600
+    segs = segment(_transcript(Block("tool_result", lines)))
+    assert len(segs) > 1
+    assert all(s.kind == "tool_result" and len(s.text) <= 600 for s in segs)
+    assert "\n".join(s.text for s in segs) == lines
+    wide = segment(_transcript(Block("tool_result", lines)), max_prose_chars=100)
+    assert [s.text for s in wide] == [s.text for s in segs]
 
 
 def test_scannable_decodes_a_json_payload_to_values_only() -> None:

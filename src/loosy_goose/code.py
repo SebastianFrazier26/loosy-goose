@@ -42,6 +42,8 @@ ELISION = "… ({n} lines elided)"
 #    tool_use output that is empty, or not strictly smaller than its input, falls back to the
 #    input. Those are three separate output changes under one stamp on purpose: no grid has run
 #    since the stamp was introduced, so there are no records at 1 or 2 for a bump to invalidate.
+# Not bumped 2026-09-18 when `quantize_segment` began routing prose/thinking to `shrink_prose`:
+# no stored record ever handed it those kinds, so nothing recorded describes different behaviour.
 TRANSFORMS_VERSION = 2
 
 _FENCE_ALIASES: dict[str, str] = {
@@ -551,8 +553,9 @@ def _payload_language(payload: dict[str, Any]) -> str | None:
 # metric that grades it, the same self-grading the select/score model split exists to prevent.
 PROSE_UNIT_TOKENS: tuple[int, ...] = (1, 8, 14, 20, 29, 40, 52, 70, 100, 145, 322)
 PROSE_ELISION = "… ({n} passages elided)"
-# The segmenter's own prose bound, so the units this splits into are the same shape as the units
-# whose lengths define the budget above.
+# The passage size the segmenter used before 2026-09-18, when it split prose at ~600 characters;
+# it now emits whole paragraphs. Kept at the old size on purpose, so PROSE_UNIT_TOKENS still
+# describes the units it was measured on and `quality` keeps its meaning as a percentile of them.
 _PROSE_CHUNK_CHARS = 600
 
 
@@ -808,6 +811,8 @@ def quantize_segment(
     if segment.kind == "tool_use":
         depth = quality if tool_quality is None else tool_quality
         text = quantize_tool_use(segment.text, depth, segment.tool_name)
+    elif segment.kind in ("prose", "thinking"):
+        text = shrink_prose(segment.text, quality)
     else:
         text = quantize_code(segment.text, detect_language(segment, hint=lang), quality)
     return replace(segment, text=text, protected=False, atoms=extract_atoms(text))

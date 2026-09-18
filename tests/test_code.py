@@ -439,6 +439,31 @@ def test_shrink_prose_is_monotone_in_quality(original: str) -> None:
     assert sizes == sorted(sizes)
 
 
+def test_quantize_segment_shrinks_a_multi_paragraph_prose_segment() -> None:
+    seg = Segment(3, 1, "assistant", "prose", PARAGRAPHS, False, extract_atoms(PARAGRAPHS))
+    out = quantize_segment(seg, 0.2)
+    assert out.text == shrink_prose(PARAGRAPHS, 0.2)
+    assert len(out.text) < len(PARAGRAPHS)
+    assert out.text.endswith("passages elided)")
+    assert out.atoms == extract_atoms(out.text)
+    assert "module_0.py" in out.atoms and "module_7.py" not in out.atoms
+    assert (out.id, out.turn, out.kind) == (3, 1, "prose")
+    thinking = Segment(4, 1, "assistant", "thinking", PARAGRAPHS, False, [])
+    assert quantize_segment(thinking, 0.2).text == out.text
+
+
+def test_quantize_segment_leaves_a_single_paragraph_prose_segment_alone() -> None:
+    text = "One paragraph that names module_1.py and stops before the budget could bite."
+    seg = Segment(0, 0, "assistant", "prose", text, False, extract_atoms(text))
+    assert quantize_segment(seg, 0.2).text == text
+
+
+def test_quantize_segment_code_path_is_unchanged_by_the_prose_branch() -> None:
+    seg = Segment(0, 0, "assistant", "code", BODY, True, extract_atoms(BODY))
+    assert quantize_segment(seg, 0.0).text == quantize_code(BODY, "python", 0.0)
+    assert quantize_segment(seg, 1.0).text == BODY
+
+
 def test_shrink_shell_is_monotone_in_quality() -> None:
     command = " | ".join(f"step{i} --flag value{i} --other value{i}" for i in range(14))
     sizes = [count_tokens(_shrink_shell(command, q / 100)) for q in range(0, 101, 5)]

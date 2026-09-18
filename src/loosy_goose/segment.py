@@ -24,7 +24,10 @@ SegmentKind = Literal["prose", "code", "tool_result", "tool_use", "thinking"]
 # 5: no extractor change — line-number prefixes are stripped before `looks_like_code_dump`, so a
 #    numbered file read routes on its body and lands in `code` instead of `tool_result`. That moves
 #    segment kinds and texts, hence `segments_digest`, so every stored record has to go anyway.
-ATOMS_VERSION = 5
+# 6: no extractor change — prose and thinking blocks are segmented as whole paragraphs (bound 600
+#    to 12,000 characters; tool_result keeps 600). That moves segment texts, hence
+#    `segments_digest`, so every stored record has to go.
+ATOMS_VERSION = 6
 
 # File extensions the bare-filename pattern recognises, shared verbatim with `paths.py` so the
 # path table and the recall metric agree on what a filename is. An allowlist rather than a general
@@ -310,15 +313,17 @@ def _chunk_lines(text: str, max_chars: int) -> list[str]:
     return out
 
 
-def _segments_for_block(block: Block, max_chars: int) -> list[tuple[SegmentKind, str, bool]]:
+def _segments_for_block(
+    block: Block, max_prose_chars: int, max_result_chars: int
+) -> list[tuple[SegmentKind, str, bool]]:
     if block.kind == "text":
-        return [("prose", c, False) for c in split_prose(block.text, max_chars)]
+        return [("prose", c, False) for c in split_prose(block.text, max_prose_chars)]
     if block.kind == "code":
         return [("code", block.text, True)]
     if block.kind == "tool_use":
         return [("tool_use", block.text, True)]
     if block.kind == "thinking":
-        return [("thinking", c, False) for c in split_prose(block.text, max_chars)]
+        return [("thinking", c, False) for c in split_prose(block.text, max_prose_chars)]
     # Classified on the stripped body: `1→def f():` fails the code-line regex and a right-aligned
     # number pads any line out to the indentation fallback, so the tool's padding width decided
     # the route. The stored text keeps its prefixes; `quantize_code` strips and restores them.
@@ -326,14 +331,20 @@ def _segments_for_block(block: Block, max_chars: int) -> list[tuple[SegmentKind,
     probe = "\n".join(numbered[1]) if numbered else block.text
     if looks_like_code_dump(probe):
         return [("code", block.text, True)]
-    return [("tool_result", c, False) for c in _chunk_lines(block.text, max_chars)]
+    return [("tool_result", c, False) for c in _chunk_lines(block.text, max_result_chars)]
 
 
-def segment(transcript: Transcript, *, max_prose_chars: int = 600) -> list[Segment]:
+def segment(
+    transcript: Transcript, *, max_prose_chars: int = 12_000, max_result_chars: int = 600
+) -> list[Segment]:
+    # A prose or thinking paragraph is one unit up to a safety cap (decided 2026-09-18; the cap
+    # exists for the unpunctuated paragraph `_hard_split` describes). tool_result keeps the
+    # 600-character line chunking it had, byte for byte.
     segments: list[Segment] = []
     for turn in transcript.turns:
         for block in turn.blocks:
-            for kind, text, protected in _segments_for_block(block, max_prose_chars):
+            pieces = _segments_for_block(block, max_prose_chars, max_result_chars)
+            for kind, text, protected in pieces:
                 if not text.strip():
                     continue
                 segments.append(

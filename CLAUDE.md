@@ -23,7 +23,7 @@ Core:
 
 - `spectral.py` — PPMI, inverse participation ratio, dense and sparse truncated SVD
 - `transcript.py` — `Transcript`/`Turn`/`Block`; tolerant Claude Code JSONL loader (unknown record/block types are counted in `Transcript.meta`, never fatal) and generic `[{role, content}]` loader
-- `segment.py` — `Segment` units: prose split paragraph→sentence, code/tool_use atomic, tool_result line-chunked; `atoms` = identifiers/paths/numbers/URLs for the recall metric
+- `segment.py` — `Segment` units: prose split into whole paragraphs (12k-char cap), code/tool_use atomic, tool_result line-chunked; `atoms` = identifiers/paths/numbers/URLs for the recall metric
 - `tokens.py` — `count_tokens` via tiktoken `o200k_base` (model-agnostic rate proxy)
 - `embed.py` — pinned select/score model pair
 - `budget.py` — token budget, protect policy, greedy score-based selection. **The shared contract**: every method competes at an identical token budget, or results are not comparable
@@ -44,6 +44,7 @@ Experiment C (code channel):
 
 - `code.py` — tree-sitter language detection, AST-depth line banding, `quantize_segment`
 - `supersede.py` — superseded read/edit elision and exact duplicate detection
+- `paths.py` — path table and marker substitution
 
 Supporting:
 
