@@ -40,8 +40,9 @@ Corpus atoms fall 32,344 to 27,189.
 > mentions**, appears only in `docs/results/corpus_stats.txt` and nowhere in this document. Do
 > not carry one of these into a share computed against another.
 >
-> **Every atom figure in this document except the spectral-versus-TF-IDF table predates
-> `ATOMS_VERSION` 4** (2026-09-10) and is therefore stale — see
+> **Every atom figure in this document predates `ATOMS_VERSION` 4** (2026-09-10) and is
+> therefore stale, except the spectral-versus-TF-IDF table, the path-arm table and the two
+> "Decided" sections dated 2026-09-16 and 2026-09-18, which read the version-5 grid — see
 > [the third extractor audit](#the-third-extractor-audit--atoms_version-4). They are left in place
 > as the record of what version 2 and version 3 said.
 
@@ -202,35 +203,38 @@ table holds — so the extra rows are priced with nothing else moving. Rejected:
 cost by subtracting the two `full` rows, which is the same arithmetic performed on a difference of
 differences and would have carried both arms' noise into the answer for 60 fewer records.
 
-**The whole grid is 600 jobs across 9 variants**: 156 on the base variant (11 methods × 12 rates,
-plus 2 methods × 12 at `protect=code_only`), 144 across the three `drop_top` variants, and 300
-across the five path arms.
+**The whole grid is 660 jobs across 12 variants** (as of 2026-09-18): 144 on the base variant
+(10 methods × 12 rates, plus 2 methods × 12 at `protect=code_only`), 144 across the three
+`drop_top` variants, 300 across the five path arms, and 72 across the three `tool_use` depth
+variants. The 2026-09-16/18 run under `ATOMS_VERSION` 5 was 672 jobs; `topics` left the grid
+after it, see [Decided 2026-09-18](#decided-2026-09-18).
 
 ### What the arms said
 
-Measured 2026-09-15 under `ATOMS_VERSION` 4 (`rebaseline_v4.log`, blocks "path substitution arms
-vs the base configuration" and "path table cost and guarantee, per min_mentions setting"); read
-into this document 2026-09-16. Every cell is the arm minus the same method's base curve at
-matched achieved compression, so the table's own tokens are already charged. Rows below are
+Measured 2026-09-15 under `ATOMS_VERSION` 4 and again 2026-09-16/18 under `ATOMS_VERSION` 5
+(`rebaseline_v5.log`, blocks "path substitution arms vs the base configuration" and "path table
+cost and guarantee, per min_mentions setting"); the table shows version 5, and every finding
+below held under both. Every cell is the arm minus the same method's base curve at matched
+achieved compression, so the table's own tokens are already charged. Rows below are
 `supersede+leverage`, the shipping default; the other four methods swept have the same shape.
 
 | Arm | final-state recall, 2x / 3x / 4x | earned only (atoms the table does not guarantee) | semantic coverage |
 | --- | --- | --- | --- |
-| B `score_only` | −0.005 / +0.005 / +0.008 | same | −0.000 / +0.008 / +0.009 |
-| C `table_only` | −0.002 / +0.022 / +0.031 | −0.029 / −0.034 / −0.042 | −0.011 / −0.014 / −0.020 |
-| D `full` | +0.002 / +0.031 / +0.040 | −0.023 / −0.022 / −0.031 | −0.050 / −0.040 / −0.043 |
-| D `full+mm=1` | +0.023 / +0.089 / +0.104 | −0.042 / −0.039 / −0.070 | −0.082 / −0.076 / −0.087 |
+| B `score_only` | −0.003 / +0.005 / +0.011 | same | +0.001 / +0.007 / +0.007 |
+| C `table_only` | −0.001 / +0.017 / +0.034 | −0.029 / −0.041 / −0.037 | −0.013 / −0.011 / −0.021 |
+| D `full` | +0.005 / +0.027 / +0.044 | −0.021 / −0.029 / −0.026 | −0.054 / −0.042 / −0.048 |
+| D `full+mm=1` | +0.024 / +0.088 / +0.116 | −0.044 / −0.044 / −0.050 | −0.089 / −0.079 / −0.097 |
 
 Three findings.
 
-- **Effect 3 is null.** Arm B moves nothing past ±0.011 on any method at any rate. Hiding paths
+- **Effect 3 is null.** Arm B moves nothing past ±0.014 on any method at any rate. Hiding paths
   from the embedding does not rank segments better.
 - **Every recall gain is guarantee, not selection.** Earned recall is negative in every table
   arm, every method, every rate. This is the question arm C exists to answer: the table lifts
   what the reader sees by guaranteeing facts, while its tokens push selection to a tighter budget
   at the same achieved rate. Markers claw back about a point of that (D's earned column beats
   C's) and no more.
-- **Coverage pays, and the markers pay more of it than the table.** D costs 4–5 coverage points
+- **Coverage pays, and the markers pay more of it than the table.** D costs 4–6 coverage points
   at every rate, including 2x where it gains no recall; C alone costs 1–2. Text full of `[P<n>]`
   embeds worse than text with paths in it.
 
@@ -401,10 +405,14 @@ runs. Recorded here so they are not rediscovered as surprises.
 ## Decided 2026-09-16
 
 - **The shipped `compress` command runs `supersede+leverage`; banding is opt-in.** On final-state
-  atom recall (`exp_e_v4.out`, E1a) the band stack is 1.8 points ahead at 4x (0.578 against
-  0.560), 1.3 ahead at 3x (0.684 against 0.671) and 0.8 *behind* at 2x (0.843 against 0.851),
-  and it costs 15.40 s per 100k tokens against 0.20 s (E4, warm embedding cache) — 149x
-  budget-shaped TF-IDF and 77x `supersede+leverage`. Cheap enough to run on every compaction is
+  atom recall (`exp_e_v4.out`, E1a, the run this was decided on) the band stack is 1.8 points
+  ahead at 4x (0.578 against 0.560), 1.3 ahead at 3x (0.684 against 0.671) and 0.8 *behind* at
+  2x (0.843 against 0.851); `exp_e_v5.out` re-measured it 2026-09-18 at +1.4 (0.576 against
+  0.562), +1.2 (0.669 against 0.657) and −1.3 (0.827 against 0.840), the same shape. It costs
+  15.40 s per 100k tokens against 0.20 s (v4 E4, warm embedding cache) — 149x budget-shaped
+  TF-IDF and 77x `supersede+leverage`. The v5 E4 row for this stack (0.81 s) is not a
+  measurement: its embeddings were read back from the cache the v4 run left on disk, see
+  [Decided 2026-09-18](#decided-2026-09-18). Cheap enough to run on every compaction is
   the property that matters for a tool that sits inside a context window; the extra recall at
   the aggressive end stays reachable through a flag or the aggressive preset (queue item 14), on
   the reasoning that whoever asks for the hardest compression will take the wait. Rejected:
@@ -435,6 +443,31 @@ runs. Recorded here so they are not rediscovered as surprises.
   kept on record for when task evaluation exists. Also rejected: on at 3x and harder only, a
   rate-dependent switch of the kind queue item 7 is trying to remove.
 
+## Decided 2026-09-18
+
+Read from the `ATOMS_VERSION` 5 grid (18 transcripts × 672 jobs, 0 failures, run 2026-09-16 to
+2026-09-18; `rebaseline_v5.log` and `exp_e_v5.out`).
+
+- **`topics` is out of the grid and out of Experiment E.** It lost to budget-shaped TF-IDF on
+  final-state recall at every multiplier in E1a (0.411 against 0.428 at 4x, 0.239 against 0.255
+  at 8x) and on coverage everywhere, for the second run in a row. `topics.py` stays as the Phase
+  1 labeller; the records already in the checkpoints stay too, unprinted. Grid 672 to 660.
+- **The depth sweep is null.** All three `tool_use` depth variants (`flat0.5`, `flat0.25`,
+  `half`) move final-state recall by at most 0.010 against the base mapping on either band
+  method at 2x, 3x or 4x ("variants vs the base configuration" block). The argument that the
+  channel should be shrunk hard regardless of the global rate was measured and found not to
+  matter; the knob stays on the global keep ratio. Queue item 4 is closed.
+- **The embedding cache is wiped before any transcript that reuses no records.** The cache
+  outlives runs and is keyed on the full text list, so when the routing fix left a transcript's
+  post-supersession pool byte-identical to version 4's, `supersede+band+leverage` read its
+  vectors back in ~1 s where a cold job is ~45 s (on `trace-commons_47d9fc04`, whose pool did
+  change, it was 45 s against `band+leverage`'s 62 s — the same 70% version 4 reported).
+  `exp_e_v5.out` E4 therefore reads 0.81 s per 100k tokens for that stack; it is not a
+  measurement, and the version-4 figures (15.40 s against 0.20 s) remain the cost quoted above.
+  From the next run on, every text list is cold on its first sweep point and warm after, within
+  one run only. Rejected: recording a cache-hit flag per record and filtering in E4, which fixes
+  the table but keeps the trap.
+
 ## Spectral versus TF-IDF: two statistics, not one verdict
 
 Phase 1 closed on "no spectral method has yet been shown to beat budget-shaped TF-IDF", and
@@ -448,16 +481,16 @@ is applied (decided 2026-09-10).
 That also removes the temptation this section was previously exposed to: once numbers exist,
 whichever metric supports the preferred conclusion becomes the tempting one to crown.
 
-The grid was re-baselined on 2026-09-15 under `ATOMS_VERSION` 4 (18 transcripts × 600 jobs, run
-log at `experiments/output/rebaseline_v4.log`), so the numbers below are current. The version-2
-table this replaces was measured on 2026-09-09 after the first extractor fix; the curves before
-that fix were reading inflated recall and were discarded. The version-2 summary formerly at
-`docs/results/exp_d_summary.txt` was replaced by the version-4 one on 2026-09-16 — see
-[that directory's README](results/README.md).
+The grid was re-baselined on 2026-09-15 under `ATOMS_VERSION` 4 (18 transcripts × 600 jobs) and
+again on 2026-09-16/18 under `ATOMS_VERSION` 5 (18 × 672, run log at
+`experiments/output/rebaseline_v5.log`), so the numbers below are current. The version-2 table
+this replaces was measured on 2026-09-09 after the first extractor fix; the curves before that
+fix were reading inflated recall and were discarded. `docs/results/exp_d_summary.txt` holds the
+version-5 summary — see [that directory's README](results/README.md).
 
 **The two distortion metrics disagree, consistently and in opposite directions.** Deltas below
 are spectral minus TF-IDF, interpolated onto matched achieved compression, from the "spectral
-methods vs tfidf at matched ACHIEVED rate" block of `rebaseline_v4.log`. Each range is the
+methods vs tfidf at matched ACHIEVED rate" block of `rebaseline_v5.log`. Each range is the
 smallest and largest delta over the ten achieved rates from 0.8 down to 0.1 (1.25x to 10x). The
 0.05 rate is measured but excluded: for most methods only 8 of 18 transcripts reach it. The
 supersede stacks have the opposite gap — at rates of 0.6 and milder, supersession alone already
@@ -466,16 +499,20 @@ are kept; dropping them would leave those methods with no mild-rate cells at all
 
 | Method | atom recall, all-history | atom recall, final-state | semantic coverage |
 | --- | --- | --- | --- |
-| `leverage` | +0.037 to +0.084 | +0.024 to +0.076 | −0.035 to −0.108 |
-| `ridge` | +0.048 to +0.113 | +0.035 to +0.108 | −0.034 to −0.113 |
-| `cur_residual` | +0.038 to +0.109 | +0.025 to +0.101 | −0.028 to −0.042 |
-| `supersede+leverage` | +0.053 to +0.093 | +0.066 to +0.113 | −0.019 to −0.096 |
-| `supersede+band+leverage` | +0.065 to +0.103 | +0.076 to +0.123 | −0.029 to −0.083 |
-| `topics` | +0.003 to −0.036 | −0.007 to −0.054 | −0.015 to −0.136 |
+| `leverage` | +0.050 to +0.132 | +0.047 to +0.123 | −0.043 to −0.114 |
+| `ridge` | +0.052 to +0.133 | +0.051 to +0.129 | −0.041 to −0.121 |
+| `cur_residual` | +0.063 to +0.135 | +0.046 to +0.130 | −0.031 to −0.057 |
+| `supersede+leverage` | +0.064 to +0.118 | +0.074 to +0.135 | −0.016 to −0.117 |
+| `supersede+band+leverage` | +0.059 to +0.127 | +0.070 to +0.148 | −0.026 to −0.098 |
 
 Spectral wins on atom recall at every rate in the span. It loses on semantic coverage at every
-rate in the span. `topics` is never better than +0.003 on atom recall and loses on coverage
-everywhere, which confirms the Phase 1 decision to cut it as a selector.
+rate in the span. Both gaps widened from version 4 to version 5 (the version-4 table is in git
+history at 4cf7c7e); the routing fix changed which segments are `code` and so what the atom
+denominator holds, and this document does not attribute the widening further than that.
+`topics` (in the version-5 run: −0.002 to −0.044 on
+final-state recall across the span, never better than +0.013 on all-history, coverage negative
+everywhere) was removed from the grid on 2026-09-18; version 4 had it at +0.003 to −0.036,
+−0.007 to −0.054 and −0.015 to −0.136 on the same three columns.
 
 **This does not resolve itself by measuring harder, and it is not supposed to.** The two metrics
 were chosen deliberately to disagree — see [DESIGN.md](DESIGN.md#distortion-metrics). Atom
@@ -831,10 +868,10 @@ restored such text; what was wrong was the scored text and its re-extracted atom
    both `min_mentions` settings for C and D — five path arms in all. Measured 2026-09-15 under
    `ATOMS_VERSION` 4 and read in 2026-09-16 — see [What the arms said](#what-the-arms-said).
 4. ~~A dedicated `tool_use` shrinker.~~ Built — see [The tool_use channel](#the-tool_use-channel).
-   **Still to do: sweep the depth knob as its own variant**, so it is measured on the curve rather
-   than asserted from channel-level token counts. That sweep is also where the argument for
-   holding the depth flat gets tested rather than asserted, and it needs instrumentation that
-   would regenerate the stale channel table at the same time.
+   ~~Still to do: sweep the depth knob as its own variant.~~ Swept 2026-09-16/18, null — see
+   [Decided 2026-09-18](#decided-2026-09-18). The stale channel table under
+   [The tool_use channel](#the-tool_use-channel) still has no regenerating script; that part
+   stays open.
 5. Format-aware shrinker for the prose *channel*. `shrink_prose` exists and is wired into tool
    arguments; whether whole prose segments should be shrunk as well as selected is a separate
    question, because there the two mechanisms compete for the same budget — shrinking a segment

@@ -1,0 +1,164 @@
+Experiment E — analysis over 18 Experiment D checkpoints.
+All rates below are ACHIEVED compression ratios, never requested keep_ratio.
+
+== E1a  final-state atom recall by compression multiplier ==
+Token-weighted, interpolated onto achieved compression multiplier (1/achieved rate).
+'n/a' = no transcript's curve reached that multiplier; for supersede/band stacks that
+is a real ceiling, not a gap in the sweep.
+method                       1.25x    1.5x    2.0x    2.5x    3.0x    4.0x    5.0x    6.0x    8.0x
+--------------------------------------------------------------------------------------------------
+random                       0.890   0.816   0.700   0.618   0.562   0.488   0.416   0.363   0.299
+recency                      0.793   0.722   0.612   0.522   0.471   0.388   0.333   0.301   0.252
+tfidf                        0.896   0.846   0.730   0.634   0.552   0.428   0.364   0.315   0.255
+leverage                     0.948   0.892   0.796   0.714   0.639   0.551   0.485   0.411   0.324
+ridge                        0.948   0.898   0.800   0.713   0.645   0.557   0.486   0.410   0.325
+cur_residual                 0.948   0.892   0.796   0.721   0.648   0.558   0.488   0.431   0.347
+supersede+tfidf              0.897   0.868   0.776   0.662   0.573   0.487   0.414   0.355   0.280
+supersede+leverage           0.942   0.908   0.840   0.740   0.657   0.562   0.499   0.433   0.347
+band+leverage                0.952   0.900   0.791   0.710   0.643   0.545   0.475   0.414   0.332
+supersede+band+leverage      0.926   0.879   0.827   0.749   0.669   0.576   0.492   0.430   0.343
+
+== E1b  marginal cost: final-state recall points lost per +1x compression ==
+The elasticity the project is steered by. A cell of 0.080 means: inside that band, each
+additional 1x of compression costs 8.0 points of final-state atom recall. Lower is
+better. Bands where a method cannot reach the upper multiplier are 'n/a'.
+method                       1.25-2.0x    2.0-4.0x    4.0-8.0x    worst band
+----------------------------------------------------------------------------
+random                           0.254       0.106       0.047     1.25-2.0x
+recency                          0.242       0.112       0.034     1.25-2.0x
+tfidf                            0.222       0.151       0.043     1.25-2.0x
+leverage                         0.204       0.122       0.057     1.25-2.0x
+ridge                            0.198       0.121       0.058     1.25-2.0x
+cur_residual                     0.203       0.119       0.053     1.25-2.0x
+supersede+tfidf                  0.162       0.144       0.052     1.25-2.0x
+supersede+leverage               0.137       0.139       0.054      2.0-4.0x
+band+leverage                    0.215       0.123       0.053     1.25-2.0x
+supersede+band+leverage          0.132       0.126       0.058     1.25-2.0x
+
+== E1c  the same cost in relative terms (log-log elasticity) ==
+E1b is measured in absolute recall points, and recall is bounded at 0, so its decline
+across bands is partly a floor effect rather than a real bargain at high compression.
+This table divides it out: a cell of 0.60 means a 1% increase in compression costs 0.60%
+of the recall still remaining. A method whose row is FLAT is a power law — compressing
+harder is neither a bargain nor a penalty. A row that RISES means the deep end really is
+more expensive, and the E1b decline was the floor effect talking.
+method                       1.25-2.0x    2.0-4.0x    4.0-8.0x    worst band
+----------------------------------------------------------------------------
+random                           0.512       0.519       0.708      4.0-8.0x
+recency                          0.552       0.656       0.624      2.0-4.0x
+tfidf                            0.438       0.769       0.751      2.0-4.0x
+leverage                         0.373       0.529       0.769      4.0-8.0x
+ridge                            0.362       0.521       0.779      4.0-8.0x
+cur_residual                     0.373       0.511       0.685      4.0-8.0x
+supersede+tfidf                  0.309       0.671       0.800      4.0-8.0x
+supersede+leverage               0.245       0.580       0.696      4.0-8.0x
+band+leverage                    0.395       0.536       0.715      4.0-8.0x
+supersede+band+leverage          0.241       0.523       0.745      4.0-8.0x
+
+== E2  per-channel breakdown at the aggressive operating points ==
+recall: is the atom-recall metric restricted to atoms first seen in a segment of that
+kind (all-history, since the checkpoints carry no per-kind final-state variant).
+cov: is mean best-match cosine for that kind's segments. '.' = no transcript reached
+that rate.
+Kinds omitted, carried by fewer than 3 transcripts: thinking (1)
+
+-- achieved rate 0.5 (2.00x) --
+method                         rec:prose      rec:code  rec:tool_use rec:tool_resu     cov:prose      cov:code  cov:tool_use cov:tool_resu
+------------------------------------------------------------------------------------------------------------------------------------------
+random                             0.786         0.778         0.806         0.752         0.843         0.871         0.920         0.903
+recency                            0.697         0.654         0.732         0.593         0.803         0.819         0.884         0.831
+tfidf                              0.931         0.539         0.701         0.905         0.979         0.890         0.938         0.951
+leverage                           0.919         0.894         0.685         0.844         0.958         0.931         0.763         0.864
+ridge                              0.922         0.893         0.683         0.847         0.960         0.932         0.752         0.870
+cur_residual                       0.915         0.891         0.690         0.857         0.962         0.938         0.784         0.902
+supersede+tfidf                    0.958         0.537         0.730         0.887         0.985         0.872         0.913         0.950
+supersede+leverage                 0.939         0.859         0.708         0.811         0.971         0.919         0.793         0.875
+band+leverage                      0.916         0.874         0.688         0.858         0.958         0.920         0.746         0.875
+supersede+band+leverage            0.936         0.868         0.684         0.867         0.972         0.923         0.758         0.892
+
+-- achieved rate 0.33 (3.03x) --
+method                         rec:prose      rec:code  rec:tool_use rec:tool_resu     cov:prose      cov:code  cov:tool_use cov:tool_resu
+------------------------------------------------------------------------------------------------------------------------------------------
+random                             0.658         0.661         0.673         0.603         0.763         0.802         0.870         0.847
+recency                            0.554         0.573         0.584         0.437         0.715         0.743         0.802         0.749
+tfidf                              0.740         0.402         0.596         0.714         0.931         0.821         0.905         0.890
+leverage                           0.785         0.711         0.533         0.725         0.899         0.860         0.674         0.807
+ridge                              0.787         0.720         0.530         0.718         0.904         0.866         0.669         0.807
+cur_residual                       0.783         0.717         0.549         0.738         0.910         0.873         0.712         0.855
+supersede+tfidf                    0.791         0.367         0.575         0.719         0.942         0.806         0.880         0.898
+supersede+leverage                 0.817         0.683         0.533         0.683         0.919         0.845         0.675         0.805
+band+leverage                      0.803         0.674         0.565         0.750         0.908         0.825         0.687         0.815
+supersede+band+leverage            0.838         0.662         0.570         0.702         0.929         0.828         0.692         0.822
+
+-- achieved rate 0.25 (4.00x) --
+method                         rec:prose      rec:code  rec:tool_use rec:tool_resu     cov:prose      cov:code  cov:tool_use cov:tool_resu
+------------------------------------------------------------------------------------------------------------------------------------------
+random                             0.593         0.591         0.589         0.536         0.724         0.760         0.841         0.821
+recency                            0.436         0.500         0.495         0.376         0.645         0.685         0.763         0.703
+tfidf                              0.636         0.299         0.536         0.607         0.898         0.783         0.876         0.855
+leverage                           0.705         0.609         0.458         0.647         0.866         0.814         0.633         0.767
+ridge                              0.709         0.613         0.460         0.647         0.871         0.814         0.630         0.769
+cur_residual                       0.705         0.605         0.484         0.671         0.875         0.826         0.685         0.825
+supersede+tfidf                    0.696         0.340         0.538         0.624         0.915         0.785         0.866         0.867
+supersede+leverage                 0.732         0.581         0.461         0.619         0.888         0.806         0.648         0.781
+band+leverage                      0.721         0.555         0.487         0.664         0.875         0.784         0.652         0.777
+supersede+band+leverage            0.760         0.570         0.493         0.640         0.899         0.790         0.671         0.794
+
+== E3  what predicts how far 'supersede+band+leverage' can compress? ==
+Spearman rank correlation over transcripts. n is small (see below), so these are
+descriptive: they say which properties are worth designing around, not which are
+significant. knee = lowest achieved rate still holding final-state recall >= 0.90, so a
+NEGATIVE correlation with knee means 'more of this property lets us compress further'.
+
+transcripts with a usable knee: 17 of 18
+feature                rho vs knee    rho vs recall_f@4x
+--------------------------------------------------------
+code_seg_share              -0.081                +0.002
+log10_tokens                -0.402                +0.627
+n_segments                  -0.373                +0.569
+prose_seg_share             +0.510                -0.498
+supersede_ceiling           +0.887                -0.809
+tool_seg_share              -0.515                +0.515
+
+-- per transcript --
+label                       supersede_ceiling      knee   recall_f@4x
+---------------------------------------------------------------------
+trace-commons_4c09dfa9                  1.000       n/a         0.177
+trace-commons_11ef2190                  0.998     0.700         0.174
+swe-gym_row358                          0.998     0.899         0.230
+swe-gym_row282                          0.998     0.900         0.211
+local_50k                               0.984     0.700         0.463
+local_200k                              0.950     0.800         0.467
+swe-gym_row309                          0.942     0.872         0.311
+swe-gym_row419                          0.929     0.798         0.239
+trace-commons_da5d32d6                  0.840     0.654         0.514
+local_20k                               0.791     0.687         0.458
+local_100k                              0.722     0.500         0.630
+trace-commons_47d9fc04                  0.690     0.500         0.654
+local_5k                                0.641     0.495         0.652
+trace-commons_c84c0ad3                  0.630     0.500         0.541
+trace-commons_479c5e9f                  0.622     0.400         0.787
+trace-commons_ba1b4916                  0.584     0.500         0.403
+trace-commons_860618e1                  0.505     0.400         0.734
+swe-gym_row214                          0.297     0.268         0.871
+
+== E4  what the machinery costs ==
+s/100k tok is the median over all sweep points of that method's wall-clock seconds
+scaled to a 100K-token transcript. The embedding cache is wiped before any transcript
+that reuses no records, so within one run the first sweep point of each text list is
+COLD and later points are warm; nothing is inherited from an earlier run. The median
+therefore leans warm — treat it as the steady-state figure, not first-run cost.
+'s per point@4x' is the extra seconds over tfidf bought per point of final-state recall
+gained at 4x; negative means the method is both slower and worse.
+method                      s/100k tok  vs tfidf  d recall_f@2x  d recall_f@4x  s per point@4x
+----------------------------------------------------------------------------------------------
+random                            0.06      0.7x         -0.030          0.060           -0.00
+recency                           0.05      0.6x         -0.118         -0.040           +0.01
+tfidf                             0.09      1.0x          0.000          0.000             n/a
+leverage                          0.21      2.4x          0.066          0.123           +0.01
+ridge                             0.17      2.0x          0.070          0.129           +0.01
+cur_residual                      0.21      2.5x          0.066          0.130           +0.01
+supersede+tfidf                   0.07      0.8x          0.046          0.059           -0.00
+supersede+leverage                0.18      2.1x          0.110          0.134           +0.01
+band+leverage                    20.09    234.1x          0.061          0.117           +1.71
+supersede+band+leverage           0.81      9.5x          0.097          0.148           +0.05

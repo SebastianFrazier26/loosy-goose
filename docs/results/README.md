@@ -2,7 +2,7 @@
 
 Verbatim summary tables as emitted by the experiment scripts, kept here so the findings survive
 independently of any one machine. The first four are Phase 1, run 2026-09-08; `exp_d_summary.txt`
-is Phase 2, re-baselined 2026-09-15. Interpretation lives in [../PHASE1.md](../PHASE1.md) and
+is Phase 2, re-baselined 2026-09-16/18. Interpretation lives in [../PHASE1.md](../PHASE1.md) and
 [../PHASE2.md](../PHASE2.md).
 
 | File | Produced by |
@@ -11,7 +11,7 @@ is Phase 2, re-baselined 2026-09-15. Interpretation lives in [../PHASE1.md](../P
 | `exp_a_summary.txt` | `experiments/exp_a_ppmi.py` — PPMI-SVD eigen-topic stability and labels |
 | `exp_b_summary.txt` | `experiments/exp_b_embed.py` — embedding-SVD spectrum and leverage selection |
 | `exp_c_summary.txt` | `experiments/exp_c_code.py` — C1 banding, C2 supersession, C3 embedder comparison |
-| `exp_d_summary.txt` | `experiments/exp_d_curves.py` — Phase 2 rate-distortion grid at matched budgets, re-baselined 2026-09-15 under `ATOMS_VERSION` 4 (600-job grid) |
+| `exp_d_summary.txt` | `experiments/exp_d_curves.py` — Phase 2 rate-distortion grid at matched budgets, re-baselined 2026-09-16/18 under `ATOMS_VERSION` 5 (672-job grid; `topics` rows omitted) |
 
 Full per-transcript JSON and plots are **not** committed; they land in the gitignored
 `experiments/output/` when the scripts run.
@@ -34,12 +34,15 @@ distinct union either. Three conventions are in use across this project; see the
 Regenerate with `uv run python experiments/corpus_stats.py`, which reads `data/local/` as well as
 the public corpora.
 
-**`exp_d_summary.txt` — current as of `ATOMS_VERSION` 4 and `TRANSFORMS_VERSION` 2.** Replaced
-2026-09-16 with the summary block from the 2026-09-15 re-baseline (the tail of the committed
-`experiments/output/rebaseline_v4.log`); the version-2 summary it replaced is in git history at
-929997c. The Experiment E analysis over the same checkpoints is
-`experiments/output/exp_e_v4.out`. Regenerate with `uv run python experiments/exp_d_curves.py
---force`, which takes 6–12 hours.
+**`exp_d_summary.txt` — current as of `ATOMS_VERSION` 5, `TRANSFORMS_VERSION` 2, `PATHS_VERSION` 3
+and `SUPERSEDE_VERSION` 2.** Replaced 2026-09-18 with the summary regenerated from the
+2026-09-16/18 re-baseline's checkpoints after `topics` left the grid (the run log is the committed
+`experiments/output/rebaseline_v5.log`, whose own summary tail still carries the `topics` rows);
+the version-4 summary it replaced is in git history at 4cf7c7e, the version-2 one at 929997c. The
+Experiment E analysis over the same checkpoints is `experiments/output/exp_e_v5.out`; its E4
+timing row for `supersede+band+leverage` is contaminated by cross-run cache hits — see
+`docs/PHASE2.md`, "Decided 2026-09-18". Regenerate with `uv run python experiments/exp_d_curves.py
+--force`, which takes 6–24 hours depending on what else the machine is doing.
 
 `exp_a_summary.txt`, `exp_b_summary.txt` and `exp_c_summary.txt` report Phase 1 results whose
 conclusions are relative — stability against a pre-registered threshold, methods against each

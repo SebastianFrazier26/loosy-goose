@@ -22,3 +22,5 @@ experiments/output/*
 # local_* ones carry per-transcript metadata for the private corpus.
 !experiments/output/rebaseline_v4.log
 !experiments/output/exp_e_v4.out
+!experiments/output/rebaseline_v5.log
+!experiments/output/exp_e_v5.out
