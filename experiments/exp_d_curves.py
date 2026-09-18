@@ -1,9 +1,9 @@
 """Phase 2 / Experiment D: the unified rate-distortion runner.
 
-Puts every method — baselines, Experiment A (as a labeller falsification check), Experiment B
-selection strategies, and the Experiment C stacked variants — on one rate-distortion curve per
-transcript, all competing at the identical token budget. This is the experiment that decides
-whether the eigen-machinery stays in the design (see docs/PHASE1.md, "Honest overall read").
+Puts every method — baselines, Experiment B selection strategies, and the Experiment C stacked
+variants — on one rate-distortion curve per transcript, all competing at the identical token
+budget. This is the experiment that decides whether the eigen-machinery stays in the design (see
+docs/PHASE1.md, "Honest overall read").
 
 Usage: uv run python experiments/exp_d_curves.py [--public-sample 8] [--swe-gym-sample 5]
                                                   [--only NAME_SUBSTR] [--limit N] [--force]
@@ -40,7 +40,6 @@ from loosy_goose.segment import ATOMS_VERSION, Segment, segment
 from loosy_goose.select import CompressConfig, Strategy, embed_segments, score_segments
 from loosy_goose.supersede import SUPERSEDE_VERSION, apply_supersession
 from loosy_goose.tokens import count_tokens
-from loosy_goose.topics import compress as topics_compress
 from loosy_goose.transcript import Transcript, load_claude_code_jsonl, load_messages_json
 
 matplotlib.use("Agg")
@@ -86,7 +85,6 @@ SPECTRAL_METHODS = (
     "leverage",
     "ridge",
     "cur_residual",
-    "topics",
     "supersede+leverage",
     "band+leverage",
     "supersede+band+leverage",
@@ -94,7 +92,7 @@ SPECTRAL_METHODS = (
 PROTECT_CODE_ONLY_METHODS = ("tfidf", "leverage")
 # Methods that put segment text through `code.quantize_segment`, and so depend on the shrinker's
 # behaviour rather than only on the segmenter's output. Their records carry TRANSFORMS_VERSION,
-# so rewriting the shrinker recomputes them and leaves the other nine methods' records valid.
+# so rewriting the shrinker recomputes them and leaves the other eight methods' records valid.
 # The list is hand-written, which is a real risk — `test_transforming_methods_lists_every_method_
 # that_shrinks` detects the true set by observation and fails if this drifts from it.
 TRANSFORMING_METHODS = ("band+leverage", "supersede+band+leverage")
@@ -118,10 +116,11 @@ BAND_QUALITY_VERSION = 1
 # expect. See docs/PHASE1.md on measuring one thing at a time.
 SPECTRAL_SCORED = ("leverage", "ridge", "cur_residual", "supersede+leverage")
 # Methods the path-substitution arms are swept on. Deliberately a subset: three arms across all
-# eleven methods would more than double a grid that already takes ~2h, and the question the arms
+# ten methods would more than double a grid that already takes ~2h, and the question the arms
 # ask ("does naming each file once help?") is answered by the strongest non-spectral control plus
-# the spectral methods that currently lead. `random`/`recency` cannot be helped by better scoring,
-# and `topics` was cut in Phase 1.
+# the spectral methods that currently lead. `random`/`recency` cannot be helped by better scoring.
+# (`topics`, cut as a selector in Phase 1, left the grid entirely on 2026-09-18; it stays the
+# Phase 1 labeller.)
 PATH_METHODS = ("tfidf", "leverage", "ridge", "supersede+leverage", "supersede+band+leverage")
 # A genuine tradeoff rather than a tuning constant, so it is measured rather than picked: at 2
 # the table holds only paths that repeat, which is token-optimal, and at 1 it holds every path,
@@ -376,13 +375,6 @@ def _run_spectral(strategy: Strategy) -> MethodFn:
     return run
 
 
-def _run_topics(
-    segs: list[Segment], ratio: float, protect: ProtectPolicy, ctx: RunContext
-) -> list[Segment]:
-    del ctx
-    return topics_compress(segs, ratio, protect=protect)
-
-
 def _run_supersede_tfidf(
     segs: list[Segment], ratio: float, protect: ProtectPolicy, ctx: RunContext
 ) -> list[Segment]:
@@ -423,7 +415,6 @@ METHODS: dict[str, MethodFn] = {
     "leverage": _run_spectral("leverage"),
     "ridge": _run_spectral("ridge"),
     "cur_residual": _run_spectral("cur_residual"),
-    "topics": _run_topics,
     "supersede+tfidf": _run_supersede_tfidf,
     "supersede+leverage": _run_supersede_leverage,
     "band+leverage": _run_band_leverage,
@@ -665,6 +656,14 @@ def _job_desc(job: Job) -> str:
     return f"{job.method} [{job.variant.key()}] protect={job.protect} r={job.ratio}"
 
 
+def _clear_cache(cache_dir: Path) -> None:
+    if cache_dir.is_dir():
+        for p in cache_dir.iterdir():
+            if p.is_file():
+                p.unlink()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+
 def analyse(
     label: str,
     public: bool,
@@ -731,6 +730,15 @@ def analyse(
         result["records"] = kept_records
         result["supersede_ceiling"] = prior.get("supersede_ceiling", 1.0) if prior else 1.0
         return result
+    if not kept_records:
+        # The embedding cache outlives the run, and a text-transforming method whose pool happens
+        # to be byte-identical to an earlier run's reads its vectors back in ~1s where a cold job
+        # is ~45s — which corrupted E4's elapsed_seconds column. A transcript starting from
+        # nothing therefore starts cold: timing is then cold-then-warm within this run only. The
+        # wipe is per transcript and safe because no two transcripts share a text list.
+        _clear_cache(cache_dir)
+        if progress is not None:
+            progress("embedding cache cleared (no records reused)")
 
     # The supersession pass does not depend on keep_ratio, so its ceiling is one number per
     # transcript: the largest achievable compression_ratio any supersede+* method can reach

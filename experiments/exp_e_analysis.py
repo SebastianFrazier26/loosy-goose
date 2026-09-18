@@ -62,6 +62,22 @@ MIN_KIND_TRANSCRIPTS = 3
 # how far *this* method can push, since a per-method predictor table would be mostly noise at
 # n = 18 transcripts.
 FOCUS_METHOD = "supersede+band+leverage"
+# The runner's planned methods, in its order. Rows are drawn from this and not from the records:
+# a checkpoint deliberately keeps records for jobs no longer planned (`topics` since 2026-09-18),
+# and those must not print. A literal for the same reason as BASE_VARIANT_KEY, pinned to
+# exp_d_curves.METHODS by a test.
+METHODS: tuple[str, ...] = (
+    "random",
+    "recency",
+    "tfidf",
+    "leverage",
+    "ridge",
+    "cur_residual",
+    "supersede+tfidf",
+    "supersede+leverage",
+    "band+leverage",
+    "supersede+band+leverage",
+)
 PLOT_METHODS: tuple[str, ...] = (
     "random",
     "tfidf",
@@ -475,8 +491,10 @@ def e4_cost(curves: dict[tuple[str, str], list[dict[str, Any]]], methods: list[s
         "",
         "== E4  what the machinery costs ==",
         "s/100k tok is the median over all sweep points of that method's wall-clock seconds",
-        "scaled to a 100K-token transcript, measured on a WARM embedding cache — a cold run pays",
-        "the embedding cost on top, so treat this as the steady-state figure, not first-run cost.",
+        "scaled to a 100K-token transcript. The embedding cache is wiped before any transcript",
+        "that reuses no records, so within one run the first sweep point of each text list is",
+        "COLD and later points are warm; nothing is inherited from an earlier run. The median",
+        "therefore leans warm — treat it as the steady-state figure, not first-run cost.",
         "'s per point@4x' is the extra seconds over tfidf bought per point of final-state recall",
         "gained at 4x; negative means the method is both slower and worse.",
         header,
@@ -537,8 +555,7 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     results = load_checkpoints()
     curves = build_curves(results)
-    methods = [m for (m, p) in curves if p == "none"]
-    methods = sorted(set(methods), key=methods.index)
+    methods = [m for m in METHODS if (m, "none") in curves]
 
     lines = [
         f"Experiment E — analysis over {len(results)} Experiment D checkpoints.",

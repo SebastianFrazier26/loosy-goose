@@ -33,6 +33,7 @@ from experiments.exp_d_curves import (  # noqa: E402
     RunContext,
     Variant,
     _band,
+    _clear_cache,
     _interp_at,
     _is_path_key,
     _knee,
@@ -284,7 +285,7 @@ def test_protect_code_only_is_measured_on_the_base_variant_only() -> None:
 
 
 def test_plan_jobs_totals_the_grid_the_run_is_budgeted_for() -> None:
-    # The grid is a multi-hour run, so its size is pinned rather than inferred: 156 base (11
+    # The grid is a multi-hour run, so its size is pinned rather than inferred: 144 base (10
     # methods + 2 protect=code_only rows, x 12 ratios) + 144 drop_top (3 settings x 4 scored
     # methods x 12) + 300 path (5 arms x 5 methods x 12) + 72 depth (3 settings x 2 band
     # methods x 12).
@@ -297,8 +298,8 @@ def test_plan_jobs_totals_the_grid_the_run_is_budgeted_for() -> None:
         * len(TRANSFORMING_METHODS)
         * len(KEEP_RATIOS)
     )
-    assert (base, drop_top, path, depth) == (156, 144, 300, 72)
-    assert len(jobs) == base + drop_top + path + depth == 672
+    assert (base, drop_top, path, depth) == (144, 144, 300, 72)
+    assert len(jobs) == base + drop_top + path + depth == 660
     assert len({j.identity() for j in jobs}) == len(jobs)
 
 
@@ -1029,6 +1030,43 @@ def test_an_incremental_checkpoint_survives_a_mid_transcript_abort_and_resumes(
     assert sorted(rec["keep_ratio"] for rec in resumed["records"]) == sorted(ratios)
     # Only the jobs the checkpoint did not already hold were paid for a second time.
     assert ran[12:] == list(ratios[FLUSH_EVERY:])
+
+
+def test_clear_cache_empties_the_directory_but_keeps_it(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "a.npy").write_bytes(b"x")
+    (cache / "b.npy").write_bytes(b"y")
+    _clear_cache(cache)
+    assert cache.is_dir()
+    assert list(cache.iterdir()) == []
+    # A missing directory is created, not an error: main() creates it, but analyse() is also
+    # called directly.
+    _clear_cache(tmp_path / "absent")
+    assert (tmp_path / "absent").is_dir()
+
+
+def test_a_transcript_reusing_nothing_starts_from_a_cold_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_embed: None
+) -> None:
+    # Warm entries left by an earlier RUN made supersede+band+leverage report ~1s where a cold
+    # job is ~45s, corrupting E4's timing column; a resumed transcript keeps its cache.
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    stale = cache / "stale.npy"
+    stale.write_bytes(b"x")
+    _fake_grid(monkeypatch, lambda segs, ratio, protect, ctx: segs[:2], (0.5, 0.25))
+    seen: list[str] = []
+    r = analyse("t", True, _transcript(), cache, progress=seen.append)
+    assert not stale.exists()
+    assert any("embedding cache cleared" in m for m in seen)
+
+    stale.write_bytes(b"x")
+    _fake_grid(monkeypatch, lambda segs, ratio, protect, ctx: segs[:2], (0.5, 0.25, 0.1))
+    seen.clear()
+    analyse("t", True, _transcript(), cache, prior=r, progress=seen.append)
+    assert stale.exists()
+    assert not any("embedding cache cleared" in m for m in seen)
 
 
 def test_checkpoint_writes_are_atomic_so_a_kill_leaves_no_truncated_json(
