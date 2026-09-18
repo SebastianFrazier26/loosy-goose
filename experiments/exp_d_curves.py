@@ -23,7 +23,7 @@ import sys
 import time
 import traceback
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
@@ -499,12 +499,23 @@ class Job:
         )
 
 
-def plan_jobs() -> list[Job]:
+def plan_jobs(
+    methods: Collection[str] | None = None, variants: Collection[str] | None = None
+) -> list[Job]:
     """Every (method, protect, ratio, variant) combination the current configuration asks for.
-    Order puts the base variant first so an interrupted run still leaves a usable baseline."""
+    Order puts the base variant first so an interrupted run still leaves a usable baseline.
+
+    `methods` and `variants` (variant keys) narrow the plan for a partial run — the way to
+    measure one question in hours instead of re-running the whole grid for a day. Records it
+    leaves out are reported as missing cells, never averaged, and a later full run reuses what
+    this one wrote."""
     jobs: list[Job] = []
     for variant in VARIANTS:
+        if variants is not None and variant.key() not in variants:
+            continue
         for name in METHODS:
+            if methods is not None and name not in methods:
+                continue
             if variant.covers(name):
                 jobs += [Job(name, "none", r, variant) for r in KEEP_RATIOS]
         # protect=code_only exists to price the old binary protect flag against protect=none.
@@ -514,6 +525,8 @@ def plan_jobs() -> list[Job]:
         if variant.key() != BASE_VARIANT.key():
             continue
         for name in PROTECT_CODE_ONLY_METHODS:
+            if methods is not None and name not in methods:
+                continue
             if variant.covers(name):
                 jobs += [Job(name, "code_only", r, variant) for r in KEEP_RATIOS]
     return jobs
@@ -703,6 +716,8 @@ def analyse(
     t: Transcript,
     cache_dir: Path,
     prior: dict[str, Any] | None = None,
+    methods: Collection[str] | None = None,
+    variants: Collection[str] | None = None,
     progress: Callable[[str], None] | None = None,
     checkpoint: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
@@ -756,7 +771,7 @@ def analyse(
         prior = None
     kept_records = list(prior.get("records", [])) if prior else []
     have = {_record_identity(r) for r in kept_records}
-    todo = [j for j in plan_jobs() if j.identity() not in have]
+    todo = [j for j in plan_jobs(methods, variants) if j.identity() not in have]
     if progress is not None:
         progress(f"{len(kept_records)} records reused, {len(todo)} to run")
     if not todo:
@@ -1613,6 +1628,16 @@ def _load_checkpoint(out_path: Path, force: bool) -> tuple[dict[str, Any] | None
     return candidate, None
 
 
+def _parse_names(raw: str | None, known: Collection[str], what: str) -> list[str] | None:
+    if raw is None:
+        return None
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        raise SystemExit(f"unknown {what}(s): {', '.join(unknown)}; known: {', '.join(known)}")
+    return names
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--public-sample", type=int, default=8)
@@ -1620,8 +1645,24 @@ def main() -> int:
     parser.add_argument("--only", type=str, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--methods",
+        type=str,
+        default=None,
+        help="comma-separated method names to run (partial run)",
+    )
+    parser.add_argument(
+        "--variants",
+        type=str,
+        default=None,
+        help="comma-separated variant keys, e.g. base,prose_shrink",
+    )
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    methods = _parse_names(args.methods, METHODS, "method")
+    variants = _parse_names(args.variants, [v.key() for v in VARIANTS], "variant")
+    if methods or variants:
+        print(f"partial run: methods={methods or 'all'} variants={variants or 'all'}", flush=True)
     OUT.mkdir(parents=True, exist_ok=True)
     CACHE.mkdir(parents=True, exist_ok=True)
 
@@ -1643,6 +1684,8 @@ def main() -> int:
             t,
             CACHE,
             prior=prior,
+            methods=methods,
+            variants=variants,
             progress=lambda msg, label=label: print(  # type: ignore[misc]
                 f"{time.strftime('%H:%M:%S')} [{label}] {msg}", flush=True
             ),

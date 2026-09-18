@@ -1039,7 +1039,7 @@ def _fake_grid(monkeypatch: pytest.MonkeyPatch, fn: Any, ratios: tuple[float, ..
     for real selection."""
     monkeypatch.setattr(exp_d, "METHODS", {"fake": fn})
     jobs = [Job("fake", "none", r, BASE_VARIANT) for r in ratios]
-    monkeypatch.setattr(exp_d, "plan_jobs", lambda: list(jobs))
+    monkeypatch.setattr(exp_d, "plan_jobs", lambda methods=None, variants=None: list(jobs))
 
 
 def test_a_job_that_raises_is_isolated_and_the_grid_keeps_going(
@@ -1287,3 +1287,25 @@ def test_write_summary_puts_failures_above_the_tables(tmp_path: Path) -> None:
     assert "INCOMPLETE RUN" in text
     assert "MemoryError: out of memory" in text
     assert text.index("INCOMPLETE RUN") < text.index("aggressive rates")
+
+
+def test_plan_filters_narrow_methods_and_variants_without_reordering() -> None:
+    full = exp_d.plan_jobs()
+    part = exp_d.plan_jobs(
+        methods=("tfidf", "leverage", "supersede+leverage", "supersede+band+leverage"),
+        variants=("base", "prose_shrink"),
+    )
+    assert {j.method for j in part} == {
+        "tfidf",
+        "leverage",
+        "supersede+leverage",
+        "supersede+band+leverage",
+    }
+    assert {j.variant.key() for j in part} == {"base", "prose_shrink"}
+    # 4 methods x 12 ratios + code_only for tfidf/leverage (24) + prose_shrink on 2 methods (24).
+    assert len(part) == 48 + 24 + 24
+    identities = [j.identity() for j in full]
+    assert [identities.index(j.identity()) for j in part] == sorted(
+        identities.index(j.identity()) for j in part
+    )
+    assert exp_d.plan_jobs(None, None) == full
