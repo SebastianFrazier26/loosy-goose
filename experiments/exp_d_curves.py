@@ -769,10 +769,18 @@ def analyse(
         if progress is not None:
             progress("segments digest changed, discarding all prior records")
         prior = None
-    kept_records = list(prior.get("records", [])) if prior else []
+    # Eviction is against the FULL plan, not this run's filter, so a partial run leaves the other
+    # arms' records alone. What it does evict is a record whose stamps no job carries any more:
+    # a bumped TRANSFORMS_VERSION re-runs the job, but without this the stale record stayed in
+    # the checkpoint beside the fresh one and every table averaged both.
+    planned = {j.identity() for j in plan_jobs()}
+    prior_records = list(prior.get("records", [])) if prior else []
+    kept_records = [r for r in prior_records if _record_identity(r) in planned]
     have = {_record_identity(r) for r in kept_records}
     todo = [j for j in plan_jobs(methods, variants) if j.identity() not in have]
     if progress is not None:
+        if len(kept_records) < len(prior_records):
+            progress(f"{len(prior_records) - len(kept_records)} stale records evicted")
         progress(f"{len(kept_records)} records reused, {len(todo)} to run")
     if not todo:
         result["records"] = kept_records

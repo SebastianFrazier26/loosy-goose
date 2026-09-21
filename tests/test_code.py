@@ -5,7 +5,6 @@ import pytest
 from loosy_goose.code import (
     _MAX_ARG_DEPTH,
     ELISION,
-    PROSE_UNIT_TOKENS,
     SHELL_COMMAND_TOKENS,
     _percentile_budget,
     _shrink_shell,
@@ -439,6 +438,22 @@ def test_shrink_prose_is_monotone_in_quality(original: str) -> None:
     assert sizes == sorted(sizes)
 
 
+@pytest.mark.parametrize("original", [PARAGRAPHS, NEWLINE_PROSE])
+def test_shrink_prose_quality_actually_moves_the_cut(original: str) -> None:
+    # Monotone alone passed with a dead knob (TRANSFORMS_VERSION 3): every quality below 0.9
+    # kept the same single chunk, and a constant is sorted. The cut has to move.
+    sizes = [count_tokens(shrink_prose(original, q)) for q in (0.1, 0.3, 0.5, 0.8)]
+    assert len(set(sizes)) == len(sizes)
+    total = count_tokens(original)
+    assert sizes[1] < 0.5 * total < sizes[3]
+
+
+def test_shrink_prose_keeps_the_second_sentence_of_a_pair_at_high_quality() -> None:
+    pair = "The first sentence states the claim. The second sentence gives the evidence for it."
+    assert shrink_prose(pair, 0.8) == pair
+    assert shrink_prose(pair, 0.3) != pair
+
+
 def test_quantize_segment_shrinks_a_multi_paragraph_prose_segment() -> None:
     seg = Segment(3, 1, "assistant", "prose", PARAGRAPHS, False, extract_atoms(PARAGRAPHS))
     out = quantize_segment(seg, 0.2)
@@ -475,7 +490,7 @@ def test_shell_budget_matches_the_generic_percentile_helper() -> None:
     # the comment above it plans for a wider corpus.
     for q in range(0, 101, 5):
         assert shell_budget(q / 100) == _percentile_budget(SHELL_COMMAND_TOKENS, q / 100)
-    assert _percentile_budget(PROSE_UNIT_TOKENS, 1.0) == PROSE_UNIT_TOKENS[-1]
+    assert _percentile_budget(SHELL_COMMAND_TOKENS, 1.0) == SHELL_COMMAND_TOKENS[-1]
 
 
 EMPTYABLE = [

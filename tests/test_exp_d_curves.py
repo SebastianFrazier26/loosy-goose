@@ -1134,6 +1134,43 @@ def test_an_incremental_checkpoint_survives_a_mid_transcript_abort_and_resumes(
     assert ran[12:] == list(ratios[FLUSH_EVERY:])
 
 
+def test_a_prior_record_no_planned_job_carries_is_evicted_not_averaged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_embed: None
+) -> None:
+    # Found on the first stamp bump that did not also move segments_digest (TRANSFORMS_VERSION
+    # 2 to 3, 2026-09-21): the re-run added fresh records but the stale ones stayed in the
+    # checkpoint, so 96 reused + 36 to run wrote 132 records and the tables averaged both.
+    fn = lambda segs, ratio, protect, ctx: segs[:2]  # noqa: E731
+    monkeypatch.setattr(exp_d, "METHODS", {"fake": fn, "other": fn})
+    full = [Job(m, "none", r, BASE_VARIANT) for m in ("fake", "other") for r in (0.5, 0.25)]
+    monkeypatch.setattr(
+        exp_d,
+        "plan_jobs",
+        lambda methods=None, variants=None: [j for j in full if not methods or j.method in methods],
+    )
+    prior = analyse("t", True, _transcript(), tmp_path)
+    assert len(prior["records"]) == 4
+    stale = dict(
+        prior["records"][0], transforms_version=prior["records"][0]["transforms_version"] + 1
+    )
+    prior["records"].append(stale)
+    prior["records"].append(dict(prior["records"][1], method="retired"))
+
+    seen: list[str] = []
+    r = analyse(
+        "t", True, _transcript(), tmp_path, prior=prior, methods=["fake"], progress=seen.append
+    )
+
+    assert any("2 stale records evicted" in m for m in seen)
+    assert any("4 records reused, 0 to run" in m for m in seen)
+    # The partial filter did not evict the other arm's records.
+    assert sorted(rec["method"] for rec in r["records"]) == ["fake", "fake", "other", "other"]
+    assert all(
+        rec["transforms_version"] == exp_d.transforms_stamp(rec["method"], BASE_VARIANT)
+        for rec in r["records"]
+    )
+
+
 def test_clear_cache_empties_the_directory_but_keeps_it(tmp_path: Path) -> None:
     cache = tmp_path / "cache"
     cache.mkdir()

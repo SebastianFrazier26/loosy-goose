@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import sys
 from collections.abc import Iterator
 from dataclasses import replace
 from functools import lru_cache
@@ -23,6 +24,7 @@ from loosy_goose.segment import (
     extract_atoms,
     looks_like_code_dump,
     split_prose,
+    split_sentences,
     strip_line_numbers,
 )
 from loosy_goose.tokens import count_tokens
@@ -44,7 +46,12 @@ ELISION = "… ({n} lines elided)"
 #    since the stamp was introduced, so there are no records at 1 or 2 for a bump to invalidate.
 # Not bumped 2026-09-18 when `quantize_segment` began routing prose/thinking to `shrink_prose`:
 # no stored record ever handed it those kinds, so nothing recorded describes different behaviour.
-TRANSFORMS_VERSION = 2
+# 3: `shrink_prose` keeps leading sentences up to `quality` of the passage's own tokens. The
+#    previous rule indexed `PROSE_UNIT_TOKENS` (deciles of ~600-char units, 145 tokens at the
+#    90th) and compared that against a running total of 600-char chunks, so the first chunk
+#    alone exceeded the budget at every quality below 0.9: one chunk kept, rest elided, knob
+#    dead. The 2026-09-21 partial grid measured it as a null for exactly that reason.
+TRANSFORMS_VERSION = 3
 
 _FENCE_ALIASES: dict[str, str] = {
     "py": "python",
@@ -544,19 +551,10 @@ def _payload_language(payload: dict[str, Any]) -> str | None:
     return None
 
 
-# Token lengths of the corpus's own prose segments, by decile — complete units by construction,
-# since the segmenter produced them. Measured 2026-09-10 over n=4,374. Same role the shell table
-# plays: `quality` names how much prose we still keep, as a percentile of real prose units.
-#
 # Rejected on method, not on results: keeping the sentences that contain atoms and dropping the
 # rest. That scores well on atom recall by construction — the shrinker would be optimising the
 # metric that grades it, the same self-grading the select/score model split exists to prevent.
-PROSE_UNIT_TOKENS: tuple[int, ...] = (1, 8, 14, 20, 29, 40, 52, 70, 100, 145, 322)
 PROSE_ELISION = "… ({n} passages elided)"
-# The passage size the segmenter used before 2026-09-18, when it split prose at ~600 characters;
-# it now emits whole paragraphs. Kept at the old size on purpose, so PROSE_UNIT_TOKENS still
-# describes the units it was measured on and `quality` keeps its meaning as a percentile of them.
-_PROSE_CHUNK_CHARS = 600
 
 
 def _percentile_budget(table: tuple[int, ...], quality: float) -> int:
@@ -568,9 +566,10 @@ def _percentile_budget(table: tuple[int, ...], quality: float) -> int:
     return int(round(lower + (upper - lower) * (position - low)))
 
 
-def prose_budget(quality: float) -> int:
-    """The token length `quality` says a prose value is allowed to reach."""
-    return _percentile_budget(PROSE_UNIT_TOKENS, quality)
+def _prose_units(text: str) -> list[str]:
+    # Whole paragraphs from split_prose (it already drops punctuation-only ones), then sentences
+    # within each, so the unit is the sentence and no paragraph is ever hard-split mid-sentence.
+    return [s for para in split_prose(text, sys.maxsize) for s in split_sentences(para)]
 
 
 def _match_at(text: str, chunk: str, start: int) -> int | None:
@@ -617,31 +616,38 @@ def _chunk_end(text: str, chunks: list[str], keep: int) -> int | None:
 
 
 def shrink_prose(text: str, quality: float) -> str:
-    """Keep whole leading passages while the value stays within the length real prose reaches at
-    this quality, then elide the rest.
+    """Keep leading whole sentences while they fit within `quality` of the passage's own tokens
+    (the first sentence always), then elide the rest.
 
     Leading rather than best-scoring: picking the best would need the embedding machinery inside
     a per-segment shrinker, which is a different cost profile entirely, and picking by atom
-    content would grade itself. First-passage-first is the prose analogue of band 0.
+    content would grade itself. First-sentence-first is the prose analogue of band 0.
+
+    The budget is a fraction of this passage, not a corpus percentile: a fixed table cannot
+    serve both a two-sentence reply and a forty-sentence plan, and the one it replaced ended up
+    keeping exactly one chunk at every quality (see TRANSFORMS_VERSION 3).
     """
     if quality >= 1.0 or not text.strip():
         return text
-    chunks = split_prose(text, _PROSE_CHUNK_CHARS)
-    if len(chunks) <= 1:
+    units = _prose_units(text)
+    if len(units) <= 1:
         return text
-    budget = prose_budget(quality)
+    sizes = [count_tokens(u) for u in units]
+    budget = quality * sum(sizes)
     keep, used = 0, 0
-    while keep < len(chunks):
-        used += count_tokens(chunks[keep])
-        if keep and used > budget:
+    # Nearest sentence boundary, not floor: with two-sentence passages the common case, flooring
+    # would drop the second sentence at quality 0.8, which is not what 0.8 means.
+    while keep < len(units):
+        used += sizes[keep]
+        if keep and used - budget > sizes[keep] / 2:
             break
         keep += 1
-    if keep >= len(chunks):
+    if keep >= len(units):
         return text
-    cut = _chunk_end(text, chunks, keep)
+    cut = _chunk_end(text, units, keep)
     if cut is None:
         return text
-    marker = PROSE_ELISION.format(n=len(chunks) - keep)
+    marker = PROSE_ELISION.format(n=len(units) - keep)
     # Same guard as _elide: a marker costing what it replaces is pure loss.
     if count_tokens(text[cut:]) <= count_tokens(marker):
         return text
