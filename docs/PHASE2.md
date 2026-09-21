@@ -41,8 +41,9 @@ Corpus atoms fall 32,344 to 27,189.
 > not carry one of these into a share computed against another.
 >
 > **Every atom figure in this document predates `ATOMS_VERSION` 4** (2026-09-10) and is
-> therefore stale, except the spectral-versus-TF-IDF table, the path-arm table and the two
-> "Decided" sections dated 2026-09-16 and 2026-09-18, which read the version-5 grid — see
+> therefore stale, except the spectral-versus-TF-IDF table, the path-arm table and the
+> "Decided" sections dated 2026-09-16 and 2026-09-18 (version-5 grid) and 2026-09-21 (version-6
+> partial grids) — see
 > [the third extractor audit](#the-third-extractor-audit--atoms_version-4). They are left in place
 > as the record of what version 2 and version 3 said.
 
@@ -468,6 +469,42 @@ Read from the `ATOMS_VERSION` 5 grid (18 transcripts × 672 jobs, 0 failures, ru
   one run only. Rejected: recording a cache-hit flag per record and filtering in E4, which fixes
   the table but keeps the trap.
 
+## Decided 2026-09-21
+
+Read from two partial grids under `ATOMS_VERSION` 6 (18 transcripts; `tfidf`, `leverage`,
+`supersede+leverage`, `supersede+band+leverage` on the base variant plus `prose_shrink` on the
+two leverage methods; `rebaseline_v6_partial.log` and `rebaseline_v6b_partial.log`, both 0
+failures). Experiment E was not re-run: it reads base records only and nothing base changed.
+
+- **Whole-paragraph prose segments are neutral.** `ATOMS_VERSION` 6 splits prose and thinking
+  into paragraphs (12k-char safety cap) instead of ~600-char sentence runs. Every base cell at
+  2x/3x/4x moved by at most 0.006 against the version-5 numbers (`supersede+leverage`
+  final-state recall 0.840 to 0.836 at 2x, 0.562 to 0.566 at 4x). Kept, because the code is
+  simpler and the unit is the one a reader would name.
+- **Shrinking prose segments is a null, twice, and the arm is out of the grid.** First run
+  (2026-09-18 to 21): final-state recall within ±0.005 of base at 2x/3x/4x, coverage +0.005 to
+  +0.011. That run was measuring a dead knob — `PROSE_UNIT_TOKENS` was a decile table of ~600-char
+  units (145 tokens at the 90th) compared against a running total of 600-char chunks, so the
+  first chunk exceeded the budget at every quality below 0.9 and the same 22.5% of prose tokens
+  came off at 0.5, 0.3 and 0.1. `TRANSFORMS_VERSION` 3 replaced it with a fraction of the
+  passage's own tokens at sentence granularity (1.6% of prose removed at 0.9, 25.1% at 0.5,
+  35.8% at 0.1). Second run, with the knob live: final-state recall −0.004 / +0.003 / +0.004
+  (`leverage`) and −0.004 / −0.002 / +0.009 (`supersede+leverage`) at 2x/3x/4x; **coverage
+  −0.012 to −0.019 at every rate from 2x to 4x on both methods**; 24 s per 100k tokens against
+  0.17 s, because shrunk prose is new text and misses the embedding cache at every sweep point.
+  The mechanism reads clearly: the atoms in dropped tail sentences are bought back by the extra
+  segments the freed budget affords, so recall nets to zero, and the meaning is not. Prose is
+  13.0% of corpus tokens and most paragraphs are one to three sentences, so even a perfect
+  shrinker frees under 5% of the budget. Same rule as `topics`: loses or ties on both metrics,
+  out. `shrink_prose` stays for prose-shaped `tool_use` arguments, where the knob now works.
+  Queue item 5 is closed. Grid 684 back to 660.
+- **Stale-stamped records are evicted, not averaged.** The first `TRANSFORMS_VERSION` bump that
+  did not also move `segments_digest` showed that a re-run added fresh records beside the stale
+  ones (96 reused + 36 to run wrote 132) and every table averaged both. `analyse()` now drops
+  any prior record whose identity no job in the full plan carries; a partial run's filter does
+  not evict the other arms. The one-transcript smoke that caught it is now the rule before any
+  grid: prove the arm moves with its knob on one transcript first.
+
 ## Spectral versus TF-IDF: two statistics, not one verdict
 
 Phase 1 closed on "no spectral method has yet been shown to beat budget-shaped TF-IDF", and
@@ -562,7 +599,10 @@ still keep, as a percentile of real examples:
   boundaries, so no length threshold is invented. Quality 0.5 gives 20 tokens — the median real
   command.
 - **Prose**, `PROSE_UNIT_TOKENS`: the corpus's own prose segments (n=4,374), deciles
-  1/8/14/20/29/40/52/70/100/145/322.
+  1/8/14/20/29/40/52/70/100/145/322. *[Replaced 2026-09-21, `TRANSFORMS_VERSION` 3: the budget
+  is now `quality` × the passage's own tokens, cut at the nearest sentence boundary. The table
+  described unit length but was applied to a running total of units, so one chunk always fit
+  and the knob never moved — see [Decided 2026-09-21](#decided-2026-09-21).]*
 
 The first prose reference tried was *tool arguments that are a single sentence*, by analogy with
 the shell population. Measurement rejected it: n=1,609 with a median of **6 tokens**, because
@@ -746,6 +786,9 @@ curve, whereas a changed ratio grid silently shifts every interpolation.
   matches; an extension-or-drive rule kept 1,558 and retained junk such as `n\nconsole.log`; a
   fourth variant measured identical to the second and so added nothing.
 - **`topics.py` as a selector.** Measured worse than random in Phase 1 and cut.
+- **Shrinking prose segments before selection** (`prose_shrink`). Null on recall twice, coverage
+  −0.012 to −0.019 once the knob was live, 100x the cost — see
+  [Decided 2026-09-21](#decided-2026-09-21). The shrinker stays for `tool_use` arguments only.
 
 ## The second extractor audit — `ATOMS_VERSION` 3
 
@@ -872,12 +915,11 @@ restored such text; what was wrong was the scored text and its re-extracted atom
    [Decided 2026-09-18](#decided-2026-09-18). The stale channel table under
    [The tool_use channel](#the-tool_use-channel) still has no regenerating script; that part
    stays open.
-5. Format-aware shrinker for the prose *channel*. `shrink_prose` exists and is wired into tool
-   arguments; whether whole prose segments should be shrunk as well as selected is a separate
-   question, because there the two mechanisms compete for the same budget — shrinking a segment
-   makes it cheaper to keep, which changes what selection can afford, so the two cannot be priced
-   independently the way the tool channel's can. A `thinking` shrinker cannot be evaluated — the
-   corpus contains exactly one `thinking` segment.
+5. ~~Format-aware shrinker for the prose *channel*.~~ Measured 2026-09-18 to 21 as the
+   `prose_shrink` variant and closed as a null — see [Decided 2026-09-21](#decided-2026-09-21).
+   The competing-budget argument held up exactly: shrinking bought back the atoms it dropped and
+   nothing more. `shrink_prose` stays wired into tool arguments. A `thinking` shrinker still
+   cannot be evaluated — the corpus contains exactly one `thinking` segment.
 6. Numbered-file routing fix, measured against path substitution before stacking. Costs a full
    re-baseline when it lands, since it moves segment kind and text.
 7. Untangle code-trimming depth from compression level (`_band` currently ties quality to the

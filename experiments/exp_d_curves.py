@@ -79,7 +79,6 @@ AGGRESSIVE_RATES: tuple[float, ...] = (0.5, 0.33, 0.25)
 # numerical second-derivative estimate would be noise-dominated.
 KNEE_FLOOR = 0.90
 CODE_KINDS = ("code", "tool_use")
-PROSE_KINDS = ("prose", "thinking")
 # Excludes supersede+tfidf: that stack is TF-IDF plus lossless dedupe, not a spectral method, so
 # it is not part of the head-to-head this experiment exists to answer.
 SPECTRAL_METHODS = (
@@ -93,15 +92,10 @@ SPECTRAL_METHODS = (
 PROTECT_CODE_ONLY_METHODS = ("tfidf", "leverage")
 # Methods that put segment text through `code.quantize_segment`, and so depend on the shrinker's
 # behaviour rather than only on the segmenter's output. Their records carry TRANSFORMS_VERSION,
-# so rewriting the shrinker recomputes them and leaves the other eight methods' base records
-# valid (a `prose_shrink` record is stamped too, by variant rather than by method).
+# so rewriting the shrinker recomputes them and leaves the other eight methods' records valid.
 # The list is hand-written, which is a real risk — `test_transforming_methods_lists_every_method_
 # that_shrinks` detects the true set by observation and fails if this drifts from it.
 TRANSFORMING_METHODS = ("band+leverage", "supersede+band+leverage")
-# Methods the `prose_shrink` variant is swept on: the shipping default and its no-supersession
-# control. Under that variant these two also route text through `quantize_segment`, so their
-# records carry TRANSFORMS_VERSION as well — see `transforms_stamp`, which reads the variant.
-PROSE_SHRINK_METHODS = ("leverage", "supersede+leverage")
 # Methods that run `supersede.apply_supersession` on their candidate pool, so their records
 # carry SUPERSEDE_VERSION the way the shrinking methods carry TRANSFORMS_VERSION. Hand-written
 # like that list and guarded the same way, by `test_superseding_methods_lists_every_method_
@@ -164,10 +158,6 @@ class Variant:
     paths: PathArm = "off"
     path_min_mentions: int = PATH_MIN_MENTIONS
     tool_depth: ToolDepth = "follow"
-    # Shrink prose and thinking segments with `shrink_prose` before scoring, at the sweep's keep
-    # ratio. Exists because the segmenter now emits whole paragraphs (ATOMS_VERSION 6): this is
-    # the arm that prices trimming those units against dropping them whole.
-    prose_shrink: bool = False
     # Methods this variant is meaningful for; None means every method in METHODS. A scoring knob
     # applied to `random` would just duplicate the baseline record at twice the cost.
     applies_to: tuple[str, ...] | None = None
@@ -181,7 +171,6 @@ class Variant:
             f"paths={self.paths}" if self.paths != "off" else "",
             f"mm={self.path_min_mentions}" if mentions else "",
             f"tool_depth={self.tool_depth}" if self.tool_depth != "follow" else "",
-            "prose_shrink" if self.prose_shrink else "",
         ]
         return "+".join(p for p in parts if p) or "base"
 
@@ -233,8 +222,6 @@ VARIANTS: tuple[Variant, ...] = (
     Variant(tool_depth="flat0.5", applies_to=TRANSFORMING_METHODS),
     Variant(tool_depth="flat0.25", applies_to=TRANSFORMING_METHODS),
     Variant(tool_depth="half", applies_to=TRANSFORMING_METHODS),
-    # The shipping default plus its no-supersession control; 24 jobs.
-    Variant(prose_shrink=True, applies_to=PROSE_SHRINK_METHODS),
 )
 
 
@@ -339,11 +326,6 @@ def _band(
     ]
 
 
-def _shrink_prose_segments(segments: list[Segment], quality: float) -> list[Segment]:
-    # Same quality == keep_ratio convention as `_band`, for the same reason.
-    return [quantize_segment(s, quality) if s.kind in PROSE_KINDS else s for s in segments]
-
-
 def _pool(segs: list[Segment], ctx: RunContext) -> tuple[list[Segment], list[Segment] | None]:
     """(what scoring sees, what is emitted when that differs).
 
@@ -385,8 +367,7 @@ def _run_spectral(strategy: Strategy) -> MethodFn:
     def run(
         segs: list[Segment], ratio: float, protect: ProtectPolicy, ctx: RunContext
     ) -> list[Segment]:
-        pool = _shrink_prose_segments(segs, ratio) if ctx.variant.prose_shrink else segs
-        scoring, emit = _pool(pool, ctx)
+        scoring, emit = _pool(segs, ctx)
         x = embed_segments(scoring, embed.SELECT_MODEL, cache_dir=ctx.cache_dir)
         scores = score_segments(x, ctx.variant.compress_config(strategy))
         return select_with_budget(scoring, scores, token_budget(segs, ratio), protect, emit)
@@ -406,10 +387,7 @@ def _run_supersede_leverage(
     segs: list[Segment], ratio: float, protect: ProtectPolicy, ctx: RunContext
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
-    pool = apply_supersession(segs)
-    if ctx.variant.prose_shrink:
-        pool = _shrink_prose_segments(pool, ratio)
-    scoring, emit = _pool(pool, ctx)
+    scoring, emit = _pool(apply_supersession(segs), ctx)
     return select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
 
 
@@ -492,9 +470,9 @@ class Job:
             self.protect,
             self.ratio,
             self.variant.key(),
-            transforms_stamp(self.method, self.variant),
+            transforms_stamp(self.method),
             paths_stamp(self.variant),
-            band_quality_stamp(self.method, self.variant),
+            band_quality_stamp(self.method),
             supersede_stamp(self.method),
         )
 
@@ -532,16 +510,9 @@ def plan_jobs(
     return jobs
 
 
-def transforms_stamp(method: str, variant: Variant) -> int:
-    """The shrinker version a record's results depend on; 0 when nothing in it shrank text.
-
-    Method OR variant: the band methods always shrink, and the `prose_shrink` variant makes a
-    method shrink that otherwise never does. The base variant of a non-banding method still
-    stamps 0, so every record already on disk keeps its identity.
-    """
-    if method in TRANSFORMING_METHODS or variant.prose_shrink:
-        return TRANSFORMS_VERSION
-    return 0
+def transforms_stamp(method: str) -> int:
+    """The shrinker version a method's results depend on; 0 for methods that never shrink text."""
+    return TRANSFORMS_VERSION if method in TRANSFORMING_METHODS else 0
 
 
 def paths_stamp(variant: Variant) -> int:
@@ -549,17 +520,14 @@ def paths_stamp(variant: Variant) -> int:
     return PATHS_VERSION if variant.paths != "off" else 0
 
 
-def band_quality_stamp(method: str, variant: Variant) -> int:
-    """The ratio-to-quality mapping version a record depends on; 0 when nothing in it shrank text.
+def band_quality_stamp(method: str) -> int:
+    """The banding-depth mapping version a method depends on; 0 for methods that never band.
 
-    Same rule as `transforms_stamp`: the band methods always hand `quantize_segment` the sweep's
-    keep ratio, and the `prose_shrink` variant makes `_shrink_prose_segments` do the identical
-    thing for prose, so a change to that mapping stales both sets of records. The set is detected
-    by observation in the tests rather than trusted to stay hand-written.
+    Scoped by TRANSFORMING_METHODS because banding is exactly what routes a method's text through
+    quantize_segment, so "bands" and "shrinks" are one set here — and that set is detected by
+    observation in the tests rather than trusted to stay hand-written.
     """
-    if method in TRANSFORMING_METHODS or variant.prose_shrink:
-        return BAND_QUALITY_VERSION
-    return 0
+    return BAND_QUALITY_VERSION if method in TRANSFORMING_METHODS else 0
 
 
 def supersede_stamp(method: str) -> int:
@@ -674,15 +642,14 @@ def _record(
         "budget_binding": kept_tokens >= 0.99 * budget,
         "variant_key": variant.key(),
         "paths_version": paths_stamp(variant),
-        "transforms_version": transforms_stamp(method, variant),
-        "band_quality_version": band_quality_stamp(method, variant),
+        "transforms_version": transforms_stamp(method),
+        "band_quality_version": band_quality_stamp(method),
         "supersede_version": supersede_stamp(method),
         "variant": {
             "drop_top": variant.drop_top,
             "paths": variant.paths,
             "path_min_mentions": variant.path_min_mentions,
             "tool_depth": variant.tool_depth,
-            "prose_shrink": variant.prose_shrink,
         },
         "compression_ratio": ev["compression_ratio"],
         "atom_recall": ev["atom_recall"],
@@ -1663,7 +1630,7 @@ def main() -> int:
         "--variants",
         type=str,
         default=None,
-        help="comma-separated variant keys, e.g. base,prose_shrink",
+        help="comma-separated variant keys, e.g. base,drop_top=2",
     )
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]

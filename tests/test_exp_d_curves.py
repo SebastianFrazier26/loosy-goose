@@ -23,7 +23,6 @@ from experiments.exp_d_curves import (  # noqa: E402
     PATH_METHODS,
     PATH_MIN_MENTIONS,
     PATH_MIN_MENTIONS_ALT,
-    PROSE_SHRINK_METHODS,
     PROTECT_CODE_ONLY_METHODS,
     SCHEMA_VERSION,
     SPECTRAL_SCORED,
@@ -289,7 +288,7 @@ def test_plan_jobs_totals_the_grid_the_run_is_budgeted_for() -> None:
     # The grid is a multi-hour run, so its size is pinned rather than inferred: 144 base (10
     # methods + 2 protect=code_only rows, x 12 ratios) + 144 drop_top (3 settings x 4 scored
     # methods x 12) + 300 path (5 arms x 5 methods x 12) + 72 depth (3 settings x 2 band
-    # methods x 12) + 24 prose_shrink (1 setting x 2 methods x 12).
+    # methods x 12).
     jobs = plan_jobs()
     base = (len(METHODS) + len(PROTECT_CODE_ONLY_METHODS)) * len(KEEP_RATIOS)
     drop_top = len([v for v in VARIANTS if v.drop_top]) * len(SPECTRAL_SCORED) * len(KEEP_RATIOS)
@@ -299,11 +298,8 @@ def test_plan_jobs_totals_the_grid_the_run_is_budgeted_for() -> None:
         * len(TRANSFORMING_METHODS)
         * len(KEEP_RATIOS)
     )
-    prose = (
-        len([v for v in VARIANTS if v.prose_shrink]) * len(PROSE_SHRINK_METHODS) * len(KEEP_RATIOS)
-    )
-    assert (base, drop_top, path, depth, prose) == (144, 144, 300, 72, 24)
-    assert len(jobs) == base + drop_top + path + depth + prose == 684
+    assert (base, drop_top, path, depth) == (144, 144, 300, 72)
+    assert len(jobs) == base + drop_top + path + depth == 660
     assert len({j.identity() for j in jobs}) == len(jobs)
 
 
@@ -787,93 +783,26 @@ def test_transforming_methods_lists_every_method_that_shrinks(
 
 
 def test_transforms_stamp_is_zero_for_methods_that_never_shrink() -> None:
-    assert transforms_stamp("tfidf", BASE_VARIANT) == 0
-    assert transforms_stamp("leverage", BASE_VARIANT) == 0
-    assert transforms_stamp("band+leverage", BASE_VARIANT) == TRANSFORMS_VERSION
-    # The variant can make a method shrink that never does on its own.
-    assert transforms_stamp("leverage", Variant(prose_shrink=True)) == TRANSFORMS_VERSION
+    assert transforms_stamp("tfidf") == 0
+    assert transforms_stamp("leverage") == 0
+    assert transforms_stamp("band+leverage") == TRANSFORMS_VERSION
 
 
-def test_variant_key_names_prose_shrink_and_leaves_the_base_key_alone() -> None:
-    assert Variant(prose_shrink=True).key() == "prose_shrink"
-    assert Variant(prose_shrink=False).key() == "base"
-    assert Variant(drop_top=2, prose_shrink=True).key() == "drop_top=2+prose_shrink"
-
-
-def test_prose_shrink_round_trips_through_the_stored_variant_fields(tmp_path: Path) -> None:
-    variant = Variant(prose_shrink=True)
-    ctx = RunContext(tmp_path, variant, PathTable(()))
-    rec = exp_d._record("leverage", "none", 0.5, ctx, 100, [], [], None, set(), 0.0)
-    assert rec["variant_key"] == "prose_shrink"
-    assert Variant(**rec["variant"]).key() == variant.key()
-
-
-def test_prose_shrink_is_swept_on_the_shipping_default_and_its_control_only() -> None:
-    prose = [j for j in plan_jobs() if j.variant.prose_shrink]
-    assert len(prose) == 24
-    assert {j.variant.key() for j in prose} == {"prose_shrink"}
-    assert set(PROSE_SHRINK_METHODS) == {"leverage", "supersede+leverage"}
-    assert {j.method for j in prose} == set(PROSE_SHRINK_METHODS)
-    assert {j.protect for j in prose} == {"none"}
-    for method in PROSE_SHRINK_METHODS:
-        assert sorted(j.ratio for j in prose if j.method == method) == sorted(KEEP_RATIOS)
-
-
-@pytest.mark.parametrize("name", sorted(PROSE_SHRINK_METHODS))
-def test_prose_shrink_variant_hands_prose_and_thinking_to_the_shrinker(
-    name: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    segs = _corpus()
-
-    def fake_embed(texts: list[str], model_name: str) -> np.ndarray:
-        rng = np.random.default_rng(0)
-        x = rng.normal(size=(len(texts), 8))
-        return x / np.where((n := np.linalg.norm(x, axis=1, keepdims=True)) > 0, n, 1.0)
-
-    monkeypatch.setattr("loosy_goose.select.embed_texts", fake_embed)
-    seen: list[tuple[str, float]] = []
-    real = exp_d.quantize_segment
-
-    def watched(seg: Segment, quality: float, **kwargs: Any) -> Segment:
-        seen.append((seg.kind, quality))
-        return real(seg, quality, **kwargs)
-
-    monkeypatch.setattr(exp_d, "quantize_segment", watched)
-    variant = Variant(prose_shrink=True, applies_to=PROSE_SHRINK_METHODS)
-    METHODS[name](segs, 0.4, "none", _ctx(tmp_path, variant, segs))
-    # Prose only, at the sweep's keep ratio; code and tool_use are the band methods' business.
-    assert seen and {kind for kind, _ in seen} == {"prose"}
-    assert {q for _, q in seen} == {0.4}
-    seen.clear()
-    METHODS[name](segs, 0.4, "none", _ctx(tmp_path, BASE_VARIANT, segs))
-    assert seen == []
-
-
-def test_a_prose_shrink_record_carries_the_shrinker_stamp_and_a_base_one_does_not(
-    tmp_path: Path,
-) -> None:
-    shrunk = next(j for j in plan_jobs() if j.method == "leverage" and j.variant.prose_shrink)
-    plain = next(j for j in plan_jobs() if j.method == "leverage" and j.variant == BASE_VARIANT)
-    for job in (shrunk, plain):
-        ctx = RunContext(tmp_path, job.variant, PathTable(()))
-        rec = exp_d._record(job.method, job.protect, job.ratio, ctx, 100, [], [], None, set(), 0.0)
-        assert _record_identity(rec) == job.identity()
-        if job is shrunk:
-            assert rec["transforms_version"] == TRANSFORMS_VERSION
-            assert rec["variant"]["prose_shrink"] is True
-        else:
-            assert rec["transforms_version"] == 0
-            assert rec["variant"]["prose_shrink"] is False
-    # A shrinker rewrite recomputes the prose_shrink rows and leaves the base rows alone.
-    before_shrunk, before_plain = shrunk.identity(), plain.identity()
+def test_a_base_leverage_record_carries_no_shrinker_stamp(tmp_path: Path) -> None:
+    job = next(j for j in plan_jobs() if j.method == "leverage" and j.variant == BASE_VARIANT)
+    ctx = RunContext(tmp_path, job.variant, PathTable(()))
+    rec = exp_d._record(job.method, job.protect, job.ratio, ctx, 100, [], [], None, set(), 0.0)
+    assert _record_identity(rec) == job.identity()
+    assert rec["transforms_version"] == 0
+    # A shrinker rewrite leaves the base rows alone.
+    before = job.identity()
     with mock.patch.object(exp_d, "TRANSFORMS_VERSION", TRANSFORMS_VERSION + 1):
-        assert shrunk.identity() != before_shrunk
-        assert plain.identity() == before_plain
+        assert job.identity() == before
 
 
 def test_base_leverage_identity_is_what_the_stored_records_already_carry() -> None:
-    # Built the way records on disk were built before prose_shrink existed: no variant fields,
-    # every stamp absent. Adding the variant must not evict a single one of them.
+    # Built the way records on disk were built before any variant existed: no variant fields,
+    # every stamp absent. Adding a variant must not evict a single one of them.
     old = {"method": "leverage", "protect": "none", "keep_ratio": 0.5}
     assert _record_identity(old) == Job("leverage", "none", 0.5, BASE_VARIANT).identity()
     literal = exp_d.RecordIdentity("leverage", "none", 0.5, "base", 0, 0, 0, 0)
@@ -898,12 +827,10 @@ def test_a_shrinker_rewrite_invalidates_only_the_records_that_depend_on_it() -> 
 
 
 def test_band_quality_stamp_is_zero_for_methods_that_never_band() -> None:
-    assert band_quality_stamp("tfidf", BASE_VARIANT) == 0
-    assert band_quality_stamp("leverage", BASE_VARIANT) == 0
+    assert band_quality_stamp("tfidf") == 0
+    assert band_quality_stamp("leverage") == 0
     for name in TRANSFORMING_METHODS:
-        assert band_quality_stamp(name, BASE_VARIANT) == BAND_QUALITY_VERSION
-    # The prose_shrink variant maps ratio to quality exactly as `_band` does, so it is stamped too.
-    assert band_quality_stamp("leverage", Variant(prose_shrink=True)) == BAND_QUALITY_VERSION
+        assert band_quality_stamp(name) == BAND_QUALITY_VERSION
 
 
 def test_a_banding_depth_change_invalidates_only_the_banding_methods() -> None:
@@ -1166,8 +1093,7 @@ def test_a_prior_record_no_planned_job_carries_is_evicted_not_averaged(
     # The partial filter did not evict the other arm's records.
     assert sorted(rec["method"] for rec in r["records"]) == ["fake", "fake", "other", "other"]
     assert all(
-        rec["transforms_version"] == exp_d.transforms_stamp(rec["method"], BASE_VARIANT)
-        for rec in r["records"]
+        rec["transforms_version"] == exp_d.transforms_stamp(rec["method"]) for rec in r["records"]
     )
 
 
@@ -1330,7 +1256,7 @@ def test_plan_filters_narrow_methods_and_variants_without_reordering() -> None:
     full = exp_d.plan_jobs()
     part = exp_d.plan_jobs(
         methods=("tfidf", "leverage", "supersede+leverage", "supersede+band+leverage"),
-        variants=("base", "prose_shrink"),
+        variants=("base", "drop_top=2"),
     )
     assert {j.method for j in part} == {
         "tfidf",
@@ -1338,8 +1264,9 @@ def test_plan_filters_narrow_methods_and_variants_without_reordering() -> None:
         "supersede+leverage",
         "supersede+band+leverage",
     }
-    assert {j.variant.key() for j in part} == {"base", "prose_shrink"}
-    # 4 methods x 12 ratios + code_only for tfidf/leverage (24) + prose_shrink on 2 methods (24).
+    assert {j.variant.key() for j in part} == {"base", "drop_top=2"}
+    # 4 methods x 12 ratios + code_only for tfidf/leverage (24) + drop_top=2 on the two of
+    # SPECTRAL_SCORED that are in the filter, leverage and supersede+leverage (24).
     assert len(part) == 48 + 24 + 24
     identities = [j.identity() for j in full]
     assert [identities.index(j.identity()) for j in part] == sorted(
