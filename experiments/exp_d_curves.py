@@ -7,6 +7,8 @@ docs/PHASE1.md, "Honest overall read").
 
 Usage: uv run python experiments/exp_d_curves.py [--public-sample 8] [--swe-gym-sample 5]
                                                   [--only NAME_SUBSTR] [--limit N] [--force]
+                                                  [--grid exp_d|exp_f] [--methods A,B]
+                                                  [--variants K]
 Per transcript writes experiments/output/exp_d/<label>.json (checkpoint, skipped on rerun unless
 --force) and <label>.png, plus experiments/output/exp_d/summary.txt aggregated across whatever
 has been checkpointed so far. Local sessions are private: only aggregate numbers and the
@@ -23,8 +25,8 @@ import sys
 import time
 import traceback
 from collections import Counter, defaultdict
-from collections.abc import Callable, Collection, Iterator
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Iterator, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
@@ -32,7 +34,7 @@ import matplotlib
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-from loosy_goose import embed, metrics
+from loosy_goose import compress_select, embed, metrics
 from loosy_goose.budget import ProtectPolicy, select_with_budget, token_budget
 from loosy_goose.code import TRANSFORMS_VERSION, quantize_segment
 from loosy_goose.paths import PATHS_VERSION, PathTable, build_table, substitute
@@ -100,7 +102,25 @@ TRANSFORMING_METHODS = ("band+leverage", "supersede+band+leverage")
 # carry SUPERSEDE_VERSION the way the shrinking methods carry TRANSFORMS_VERSION. Hand-written
 # like that list and guarded the same way, by `test_superseding_methods_lists_every_method_
 # that_supersedes`.
-SUPERSEDING_METHODS = ("supersede+tfidf", "supersede+leverage", "supersede+band+leverage")
+# Experiment F's compression-based selectors (experiments/exp_f_compress.py). Named here rather
+# than there because every stamp below is keyed on method name and this module cannot import that
+# one; a test pins the two lists together.
+COMPRESS_SCORERS = (
+    "zlib-greedy",
+    "zlib-lazy",
+    "zlib-onepass",
+    "lzma-lazy",
+    "lzma-onepass",
+    "zlib-stochastic",
+    "lzma-stochastic",
+)
+COMPRESS_SELECT_METHODS = COMPRESS_SCORERS + tuple(f"supersede+{n}" for n in COMPRESS_SCORERS)
+SUPERSEDING_METHODS = (
+    "supersede+tfidf",
+    "supersede+leverage",
+    "supersede+band+leverage",
+    *(f"supersede+{n}" for n in COMPRESS_SCORERS),
+)
 # Version of the runner's own transform: `_band` hands quantize_segment the sweep's keep
 # ratio as its fidelity knob, so trimming depth follows the global ratio. That mapping lives
 # here and not in code.py, so changing it moves neither segments_digest nor
@@ -158,7 +178,7 @@ class Variant:
     paths: PathArm = "off"
     path_min_mentions: int = PATH_MIN_MENTIONS
     tool_depth: ToolDepth = "follow"
-    # Methods this variant is meaningful for; None means every method in METHODS. A scoring knob
+    # Methods this variant is meaningful for; None means every method in the grid. A scoring knob
     # applied to `random` would just duplicate the baseline record at twice the cost.
     applies_to: tuple[str, ...] | None = None
 
@@ -238,6 +258,9 @@ class RunContext:
     cache_dir: Path
     variant: Variant
     table: PathTable
+    # Fields a method adds to its own record. Empty for every exp_d method, so their records keep
+    # exactly the fields they always had.
+    extras: dict[str, Any] = field(default_factory=dict)
 
 
 MethodFn = Callable[[list[Segment], float, ProtectPolicy, RunContext], list[Segment]]
@@ -421,6 +444,27 @@ METHODS: dict[str, MethodFn] = {
     "supersede+band+leverage": _run_supersede_band_leverage,
 }
 
+
+@dataclass(frozen=True)
+class Grid:
+    """One sweep: which jobs it plans and where its checkpoints and summary live.
+
+    `out` must differ between grids, not for tidiness: analyse() evicts every prior record whose
+    identity is outside the grid's full plan, so a second grid sharing a folder would delete the
+    first grid's records on its next run, and the first would return the favour.
+    """
+
+    name: str
+    out: Path
+    methods: Mapping[str, MethodFn]
+    variants: tuple[Variant, ...]
+    # Swept at protect=code_only as well, on the base variant only.
+    protect_code_only: tuple[str, ...]
+    write_summary: Callable[[list[dict[str, Any]], Path], None]
+    plots: bool
+    ratios: tuple[float, ...] = KEEP_RATIOS
+
+
 # Bump only when a record's FIELDS change shape or meaning — that is the one thing a checkpoint
 # cannot recover from, so it discards the file. Adding a method, a ratio or a variant does not
 # bump this: those are new job identities, and analyse() simply runs the ones it is missing.
@@ -474,39 +518,45 @@ class Job:
             paths_stamp(self.variant),
             band_quality_stamp(self.method),
             supersede_stamp(self.method),
+            select_stamp(self.method),
         )
 
 
 def plan_jobs(
-    methods: Collection[str] | None = None, variants: Collection[str] | None = None
+    methods: Collection[str] | None = None,
+    variants: Collection[str] | None = None,
+    *,
+    grid: Grid | None = None,
 ) -> list[Job]:
-    """Every (method, protect, ratio, variant) combination the current configuration asks for.
+    """Every (method, protect, ratio, variant) combination `grid` (default EXP_D) asks for.
     Order puts the base variant first so an interrupted run still leaves a usable baseline.
 
     `methods` and `variants` (variant keys) narrow the plan for a partial run — the way to
     measure one question in hours instead of re-running the whole grid for a day. Records it
     leaves out are reported as missing cells, never averaged, and a later full run reuses what
     this one wrote."""
+    # None rather than an EXP_D default: EXP_D holds the summary writer, which is defined below.
+    g = EXP_D if grid is None else grid
     jobs: list[Job] = []
-    for variant in VARIANTS:
+    for variant in g.variants:
         if variants is not None and variant.key() not in variants:
             continue
-        for name in METHODS:
+        for name in g.methods:
             if methods is not None and name not in methods:
                 continue
             if variant.covers(name):
-                jobs += [Job(name, "none", r, variant) for r in KEEP_RATIOS]
+                jobs += [Job(name, "none", r, variant) for r in g.ratios]
         # protect=code_only exists to price the old binary protect flag against protect=none.
         # That is a question about the baseline, not about any knob a variant turns, so it is
         # swept on the base variant alone. Guarding only the path arms left 36 drop_top x
         # code_only records that every table, curve and plot filtered back out again.
         if variant.key() != BASE_VARIANT.key():
             continue
-        for name in PROTECT_CODE_ONLY_METHODS:
+        for name in g.protect_code_only:
             if methods is not None and name not in methods:
                 continue
             if variant.covers(name):
-                jobs += [Job(name, "code_only", r, variant) for r in KEEP_RATIOS]
+                jobs += [Job(name, "code_only", r, variant) for r in g.ratios]
     return jobs
 
 
@@ -536,6 +586,14 @@ def supersede_stamp(method: str) -> int:
     return SUPERSEDE_VERSION if method in SUPERSEDING_METHODS else 0
 
 
+def select_stamp(method: str) -> int:
+    """The compress_select version a method's results depend on; 0 for every other method.
+
+    Read off the module at call time rather than bound at import, so the constant a bump edits
+    is the one identity sees."""
+    return compress_select.SELECT_VERSION if method in COMPRESS_SELECT_METHODS else 0
+
+
 class RecordIdentity(NamedTuple):
     """What makes a stored result the answer to a specific question.
 
@@ -557,6 +615,7 @@ class RecordIdentity(NamedTuple):
     paths_version: int
     band_quality_version: int
     supersede_version: int
+    select_version: int
 
 
 def _record_identity(rec: dict[str, Any]) -> RecordIdentity:
@@ -569,6 +628,7 @@ def _record_identity(rec: dict[str, Any]) -> RecordIdentity:
         int(rec.get("paths_version", 0)),
         int(rec.get("band_quality_version", 0)),
         int(rec.get("supersede_version", 0)),
+        int(rec.get("select_version", 0)),
     )
 
 
@@ -645,6 +705,7 @@ def _record(
         "transforms_version": transforms_stamp(method),
         "band_quality_version": band_quality_stamp(method),
         "supersede_version": supersede_stamp(method),
+        "select_version": select_stamp(method),
         "variant": {
             "drop_top": variant.drop_top,
             "paths": variant.paths,
@@ -687,8 +748,10 @@ def analyse(
     variants: Collection[str] | None = None,
     progress: Callable[[str], None] | None = None,
     checkpoint: Callable[[dict[str, Any]], None] | None = None,
+    grid: Grid | None = None,
 ) -> dict[str, Any]:
-    """Run every planned job that `prior` does not already hold, and merge the two.
+    """Run every job `grid` (default EXP_D) plans that `prior` does not already hold, and merge
+    the two.
 
     `prior` is a checkpoint whose segments_digest already matched, so its records were scored
     against the same segmenter output this run produces. Records it holds for jobs still in the
@@ -740,11 +803,12 @@ def analyse(
     # arms' records alone. What it does evict is a record whose stamps no job carries any more:
     # a bumped TRANSFORMS_VERSION re-runs the job, but without this the stale record stayed in
     # the checkpoint beside the fresh one and every table averaged both.
-    planned = {j.identity() for j in plan_jobs()}
+    g = EXP_D if grid is None else grid
+    planned = {j.identity() for j in plan_jobs(grid=g)}
     prior_records = list(prior.get("records", [])) if prior else []
     kept_records = [r for r in prior_records if _record_identity(r) in planned]
     have = {_record_identity(r) for r in kept_records}
-    todo = [j for j in plan_jobs(methods, variants) if j.identity() not in have]
+    todo = [j for j in plan_jobs(methods, variants, grid=g) if j.identity() not in have]
     if progress is not None:
         if len(kept_records) < len(prior_records):
             progress(f"{len(prior_records) - len(kept_records)} stale records evicted")
@@ -788,7 +852,7 @@ def analyse(
             checkpoint(result)
 
     for n, job in enumerate(todo, start=1):
-        fn = METHODS[job.method]
+        fn = g.methods[job.method]
         ctx = RunContext(
             cache_dir=cache_dir,
             variant=job.variant,
@@ -798,20 +862,19 @@ def analyse(
         t0 = time.perf_counter()
         try:
             kept = fn(segs, job.ratio, job.protect, ctx)
-            fresh.append(
-                _record(
-                    job.method,
-                    job.protect,
-                    job.ratio,
-                    ctx,
-                    budget,
-                    segs,
-                    kept,
-                    original_vectors,
-                    final_atoms,
-                    time.perf_counter() - t0,
-                )
+            rec = _record(
+                job.method,
+                job.protect,
+                job.ratio,
+                ctx,
+                budget,
+                segs,
+                kept,
+                original_vectors,
+                final_atoms,
+                time.perf_counter() - t0,
             )
+            fresh.append({**rec, **ctx.extras})
         except Exception as exc:
             # One job must not take a multi-hour grid down with it, and must not be mistaken for
             # a job that ran badly either. The failure is kept out of "records" entirely, and its
@@ -842,12 +905,12 @@ def analyse(
     return result
 
 
-def _plot(label: str, records: list[dict[str, Any]]) -> None:
+def _plot(label: str, records: list[dict[str, Any]], grid: Grid) -> None:
     by_method: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in records:
         if r["protect"] == "none":
             by_method[r["method"]].append(r)
-    names = list(METHODS)
+    names = list(grid.methods)
     cmap = plt.get_cmap("tab20")
     colors = {name: cmap(i / max(len(names) - 1, 1)) for i, name in enumerate(names)}
 
@@ -878,7 +941,7 @@ def _plot(label: str, records: list[dict[str, Any]]) -> None:
     axes[2].legend(fontsize=7, ncols=1, frameon=False, loc="lower right")
     fig.suptitle(f"{label}  (protect=none)")
     fig.tight_layout()
-    fig.savefig(OUT / f"{label}.png", dpi=110)
+    fig.savefig(grid.out / f"{label}.png", dpi=110)
     plt.close(fig)
 
 
@@ -1499,7 +1562,7 @@ def _path_table_cost_table(results: list[dict[str, Any]]) -> list[str]:
     return out
 
 
-def failure_report(results: list[dict[str, Any]]) -> list[str]:
+def failure_report(results: list[dict[str, Any]], grid: Grid | None = None) -> list[str]:
     """Failed and missing cells, first thing in the summary.
 
     Counts both, because they are different holes: a failure is a job that raised this run, while
@@ -1508,7 +1571,7 @@ def failure_report(results: list[dict[str, Any]]) -> list[str]:
     cells exist, so a silent hole reads as a normal curve measured on fewer points — which is why
     this is loud and at the top rather than a footnote.
     """
-    planned = {j.identity() for j in plan_jobs()}
+    planned = {j.identity() for j in plan_jobs(grid=grid)}
     rows: list[str] = []
     errors: Counter[tuple[str, str, str]] = Counter()
     total_failed = 0
@@ -1547,12 +1610,14 @@ def failure_report(results: list[dict[str, Any]]) -> list[str]:
     return out
 
 
-def _write_summary(results: list[dict[str, Any]]) -> None:
+def _write_summary(results: list[dict[str, Any]], out: Path) -> None:
+    """Experiment D's summary. Its tables read METHODS, VARIANTS and the method subsets above
+    directly: they are exp_d's report, not a generic one, and another grid writes its own."""
     base_results = _base_only(results)
     idx = _index_records(base_results)
     curves = _curves_by_method(base_results)
     lines = [f"{len(results)} transcripts checkpointed.", ""]
-    lines += failure_report(results)
+    lines += failure_report(results, grid=EXP_D)
     lines += _aggressive_rate_table(curves)
     lines += _knee_table(curves)
     lines += _aggregate_table(idx)
@@ -1564,8 +1629,29 @@ def _write_summary(results: list[dict[str, Any]]) -> None:
     lines += _path_arm_table(results)
     lines += _path_table_cost_table(results)
     text = "\n".join(lines)
-    (OUT / "summary.txt").write_text(text + "\n", encoding="utf-8")
+    (out / "summary.txt").write_text(text + "\n", encoding="utf-8")
     print("\n" + text)
+
+
+EXP_D = Grid(
+    name="exp_d",
+    out=OUT,
+    methods=METHODS,
+    variants=VARIANTS,
+    protect_code_only=PROTECT_CODE_ONLY_METHODS,
+    write_summary=_write_summary,
+    plots=True,
+)
+GRIDS: dict[str, Grid] = {"exp_d": EXP_D}
+
+
+def grids() -> dict[str, Grid]:
+    """GRIDS with the grids other modules define registered into it. Those modules import this
+    one, so they are resolved on call; importing them at module level would be a cycle."""
+    from experiments.exp_f_compress import EXP_F
+
+    GRIDS.setdefault(EXP_F.name, EXP_F)
+    return GRIDS
 
 
 def _write_checkpoint(out_path: Path, payload: dict[str, Any]) -> None:
@@ -1632,13 +1718,16 @@ def main() -> int:
         default=None,
         help="comma-separated variant keys, e.g. base,drop_top=2",
     )
+    registry = grids()
+    parser.add_argument("--grid", choices=sorted(registry), default=EXP_D.name)
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
-    methods = _parse_names(args.methods, METHODS, "method")
-    variants = _parse_names(args.variants, [v.key() for v in VARIANTS], "variant")
+    grid = registry[args.grid]
+    methods = _parse_names(args.methods, grid.methods, "method")
+    variants = _parse_names(args.variants, [v.key() for v in grid.variants], "variant")
     if methods or variants:
         print(f"partial run: methods={methods or 'all'} variants={variants or 'all'}", flush=True)
-    OUT.mkdir(parents=True, exist_ok=True)
+    grid.out.mkdir(parents=True, exist_ok=True)
     CACHE.mkdir(parents=True, exist_ok=True)
 
     results: list[dict[str, Any]] = []
@@ -1648,7 +1737,7 @@ def main() -> int:
             continue
         if args.limit is not None and n_done >= args.limit:
             break
-        out_path = OUT / f"{label}.json"
+        out_path = grid.out / f"{label}.json"
         prior, discard_reason = _load_checkpoint(out_path, args.force)
         if prior is None and discard_reason:
             print(f"[{label}] prior checkpoint discarded ({discard_reason})", flush=True)
@@ -1665,6 +1754,7 @@ def main() -> int:
                 f"{time.strftime('%H:%M:%S')} [{label}] {msg}", flush=True
             ),
             checkpoint=lambda payload, out_path=out_path: _write_checkpoint(out_path, payload),  # type: ignore[misc]
+            grid=grid,
         )
         elapsed = time.perf_counter() - t0
         # Checkpoint immediately: a crash on the next transcript must not lose this one.
@@ -1672,8 +1762,8 @@ def main() -> int:
         base_records = [
             rec for rec in r["records"] if _record_identity(rec).variant_key == BASE_VARIANT.key()
         ]
-        if base_records:
-            _plot(label, base_records)
+        if grid.plots and base_records:
+            _plot(label, base_records, grid)
         failed = len(r.get("failures", []))
         note = f", {failed} JOBS FAILED" if failed else ""
         print(
@@ -1684,7 +1774,7 @@ def main() -> int:
         results.append(r)
         n_done += 1
 
-    _write_summary(results)
+    grid.write_summary(results, grid.out)
     total_failed = sum(len(r.get("failures", [])) for r in results)
     if total_failed:
         print("\n" + "!" * 78, flush=True)
@@ -1706,4 +1796,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Run through the importable module, not this __main__ copy: exp_f imports
+    # experiments.exp_d_curves, and two copies of this file would hold two GRIDS, two Grid
+    # classes and two sets of stamp globals, so a grid registered in one is invisible to the other.
+    from experiments import exp_d_curves
+
+    raise SystemExit(exp_d_curves.main())

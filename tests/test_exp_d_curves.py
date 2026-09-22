@@ -13,11 +13,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from experiments import exp_d_curves as exp_d  # noqa: E402
+from experiments import exp_f_compress as exp_f  # noqa: E402
 from experiments.baselines import tfidf as baseline_tfidf  # noqa: E402
 from experiments.exp_d_curves import (  # noqa: E402
     BAND_QUALITY_VERSION,
     BASE_VARIANT,
+    EXP_D,
     FLUSH_EVERY,
+    GRIDS,
     KEEP_RATIOS,
     METHODS,
     PATH_METHODS,
@@ -29,6 +32,7 @@ from experiments.exp_d_curves import (  # noqa: E402
     SUPERSEDING_METHODS,
     TRANSFORMING_METHODS,
     VARIANTS,
+    Grid,
     Job,
     RunContext,
     Variant,
@@ -303,6 +307,18 @@ def test_plan_jobs_totals_the_grid_the_run_is_budgeted_for() -> None:
     assert len({j.identity() for j in jobs}) == len(jobs)
 
 
+def test_the_default_plan_is_the_exp_d_grids_plan_job_for_job() -> None:
+    # The Grid refactor must not move a single exp_d job or its position: identity decides reuse
+    # and eviction, and order decides what an interrupted run leaves behind.
+    assert plan_jobs() == plan_jobs(grid=EXP_D)
+    assert EXP_D.methods is METHODS
+    assert EXP_D.variants is VARIANTS
+    assert EXP_D.protect_code_only is PROTECT_CODE_ONLY_METHODS
+    assert EXP_D.ratios is KEEP_RATIOS
+    assert EXP_D.out == exp_d.OUT
+    assert GRIDS["exp_d"] is EXP_D
+
+
 def test_plan_jobs_puts_the_baseline_first_so_an_interrupted_run_is_still_usable() -> None:
     jobs = plan_jobs()
     first_non_base = next(i for i, j in enumerate(jobs) if j.variant.key() != "base")
@@ -361,7 +377,9 @@ def test_record_identity_is_read_by_name_not_position() -> None:
         "paths_version",
         "band_quality_version",
         "supersede_version",
+        "select_version",
     )
+    assert identity.select_version == 0
 
 
 def test_a_paths_rewrite_invalidates_only_the_arm_records() -> None:
@@ -734,8 +752,8 @@ def test_write_summary_renders_every_section_for_a_full_grid(tmp_path: Path) -> 
     """
     results = _full_grid_results(tmp_path)
 
-    with mock.patch.object(exp_d, "OUT", tmp_path), contextlib.redirect_stdout(io.StringIO()):
-        exp_d._write_summary(results)
+    with contextlib.redirect_stdout(io.StringIO()):
+        exp_d._write_summary(results, tmp_path)
     text = (tmp_path / "summary.txt").read_text(encoding="utf-8")
     for section in (
         "aggressive rates",
@@ -748,6 +766,32 @@ def test_write_summary_renders_every_section_for_a_full_grid(tmp_path: Path) -> 
         "path table cost",
     ):
         assert section in text, section
+
+
+def _every_grids_methods() -> dict[str, Any]:
+    """Every method any registered grid runs. The stamp lists are keyed on method name across
+    grids, so their observation guards must see every grid's methods, not only exp_d's."""
+    out: dict[str, Any] = {}
+    for grid in exp_d.grids().values():
+        for name, fn in grid.methods.items():
+            assert out.setdefault(name, fn) is fn, f"{name} means two things in two grids"
+    return out
+
+
+def _patch_everywhere(monkeypatch: pytest.MonkeyPatch, name: str, value: object) -> None:
+    # Each grid module binds the helper under its own name, so patching one module alone would
+    # let the other grid's calls slip past the watcher.
+    for module in (exp_d, exp_f):
+        if hasattr(module, name):
+            monkeypatch.setattr(module, name, value)
+
+
+def test_every_grid_is_registered_and_the_stamp_lists_cover_exp_f() -> None:
+    registry = exp_d.grids()
+    assert registry["exp_d"] is EXP_D
+    assert registry["exp_f"] is exp_f.EXP_F
+    assert tuple(exp_f.METHODS) == exp_d.COMPRESS_SELECT_METHODS
+    assert set(_every_grids_methods()) == set(METHODS) | set(exp_f.METHODS)
 
 
 def test_transforming_methods_lists_every_method_that_shrinks(
@@ -775,8 +819,8 @@ def test_transforming_methods_lists_every_method_that_shrinks(
         called.add(current[0])
         return real(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(exp_d, "quantize_segment", watched)
-    for name, fn in METHODS.items():
+    _patch_everywhere(monkeypatch, "quantize_segment", watched)
+    for name, fn in _every_grids_methods().items():
         current[:] = [name]
         fn(segs, 0.5, "none", _ctx(tmp_path, BASE_VARIANT, segs))
     assert called == set(TRANSFORMING_METHODS)
@@ -805,7 +849,7 @@ def test_base_leverage_identity_is_what_the_stored_records_already_carry() -> No
     # every stamp absent. Adding a variant must not evict a single one of them.
     old = {"method": "leverage", "protect": "none", "keep_ratio": 0.5}
     assert _record_identity(old) == Job("leverage", "none", 0.5, BASE_VARIANT).identity()
-    literal = exp_d.RecordIdentity("leverage", "none", 0.5, "base", 0, 0, 0, 0)
+    literal = exp_d.RecordIdentity("leverage", "none", 0.5, "base", 0, 0, 0, 0, 0)
     assert _record_identity(old) == literal
     old_stacked = {
         "method": "supersede+leverage",
@@ -879,8 +923,8 @@ def test_superseding_methods_lists_every_method_that_supersedes(
         called.add(current[0])
         return real(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(exp_d, "apply_supersession", watched)
-    for name, fn in METHODS.items():
+    _patch_everywhere(monkeypatch, "apply_supersession", watched)
+    for name, fn in _every_grids_methods().items():
         current[:] = [name]
         fn(segs, 0.5, "none", _ctx(tmp_path, BASE_VARIANT, segs))
     assert called == set(SUPERSEDING_METHODS)
@@ -961,16 +1005,23 @@ def stub_embed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("loosy_goose.select.embed_texts", fake_embed)
 
 
-def _fake_grid(monkeypatch: pytest.MonkeyPatch, fn: Any, ratios: tuple[float, ...]) -> None:
-    """One synthetic method over `ratios`, so analyse()'s job loop is exercised without paying
-    for real selection."""
-    monkeypatch.setattr(exp_d, "METHODS", {"fake": fn})
-    jobs = [Job("fake", "none", r, BASE_VARIANT) for r in ratios]
-    monkeypatch.setattr(exp_d, "plan_jobs", lambda methods=None, variants=None: list(jobs))
+def _fake_grid(out: Path, methods: dict[str, Any], ratios: tuple[float, ...]) -> Grid:
+    """Synthetic methods over `ratios`, base variant only, so analyse()'s job loop is exercised
+    without paying for real selection."""
+    return Grid(
+        name="fake",
+        out=out,
+        methods=methods,
+        variants=(BASE_VARIANT,),
+        protect_code_only=(),
+        write_summary=lambda results, out: None,
+        plots=False,
+        ratios=ratios,
+    )
 
 
 def test_a_job_that_raises_is_isolated_and_the_grid_keeps_going(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_embed: None
+    tmp_path: Path, stub_embed: None
 ) -> None:
     # Before isolation a single unhandled exception killed a multi-hour grid AND discarded every
     # completed job for the in-flight transcript.
@@ -982,8 +1033,8 @@ def test_a_job_that_raises_is_isolated_and_the_grid_keeps_going(
             raise RuntimeError("boom in the middle of the grid")
         return segs[:2]
 
-    _fake_grid(monkeypatch, flaky, (0.5, 0.25, 0.1))
-    r = analyse("t", True, _transcript(), tmp_path)
+    grid = _fake_grid(tmp_path, {"fake": flaky}, (0.5, 0.25, 0.1))
+    r = analyse("t", True, _transcript(), tmp_path, grid=grid)
 
     assert seen == [0.5, 0.25, 0.1]
     assert sorted(rec["keep_ratio"] for rec in r["records"]) == [0.1, 0.5]
@@ -997,7 +1048,7 @@ def test_a_job_that_raises_is_isolated_and_the_grid_keeps_going(
 
 
 def test_a_failed_job_is_not_a_record_so_nothing_reads_it_as_a_low_score(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_embed: None
+    tmp_path: Path, stub_embed: None
 ) -> None:
     # The dangerous shape of this bug is the silent one: a failure stored as a record with zeroed
     # metrics would be averaged into every table, curve and plot as a genuine measurement.
@@ -1008,8 +1059,8 @@ def test_a_failed_job_is_not_a_record_so_nothing_reads_it_as_a_low_score(
         # the curve builder does not dedupe one of them away.
         return segs[: max(1, int(len(segs) * ratio))]
 
-    _fake_grid(monkeypatch, flaky, (0.5, 0.25, 0.1))
-    r = analyse("t", True, _transcript(), tmp_path)
+    grid = _fake_grid(tmp_path, {"fake": flaky}, (0.5, 0.25, 0.1))
+    r = analyse("t", True, _transcript(), tmp_path, grid=grid)
 
     assert ("fake", "none", 0.25) not in exp_d._index_records([r])
     curve = exp_d._curves_by_method([r])[("fake", "none")][0]
@@ -1021,7 +1072,7 @@ def test_a_failed_job_is_not_a_record_so_nothing_reads_it_as_a_low_score(
 
 
 def test_an_incremental_checkpoint_survives_a_mid_transcript_abort_and_resumes(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_embed: None
+    tmp_path: Path, stub_embed: None
 ) -> None:
     # Previously the checkpoint was written only once analyse() returned all 600 jobs, so a kill
     # part-way through a transcript threw away everything it had done (up to ~19 min).
@@ -1043,9 +1094,9 @@ def test_an_incremental_checkpoint_survives_a_mid_transcript_abort_and_resumes(
     def flush(payload: dict[str, Any]) -> None:
         exp_d._write_checkpoint(out_path, payload)
 
-    _fake_grid(monkeypatch, fn, ratios)
+    grid = _fake_grid(tmp_path, {"fake": fn}, ratios)
     with pytest.raises(Killed):
-        analyse("t", True, _transcript(), tmp_path, checkpoint=flush)
+        analyse("t", True, _transcript(), tmp_path, checkpoint=flush, grid=grid)
 
     prior, reason = _load_checkpoint(out_path, force=False)
     assert reason is None
@@ -1054,7 +1105,7 @@ def test_an_incremental_checkpoint_survives_a_mid_transcript_abort_and_resumes(
     assert len(prior["records"]) == FLUSH_EVERY
 
     budget["left"] = 1_000
-    resumed = analyse("t", True, _transcript(), tmp_path, prior=prior, checkpoint=flush)
+    resumed = analyse("t", True, _transcript(), tmp_path, prior=prior, checkpoint=flush, grid=grid)
 
     assert sorted(rec["keep_ratio"] for rec in resumed["records"]) == sorted(ratios)
     # Only the jobs the checkpoint did not already hold were paid for a second time.
@@ -1062,20 +1113,14 @@ def test_an_incremental_checkpoint_survives_a_mid_transcript_abort_and_resumes(
 
 
 def test_a_prior_record_no_planned_job_carries_is_evicted_not_averaged(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_embed: None
+    tmp_path: Path, stub_embed: None
 ) -> None:
     # Found on the first stamp bump that did not also move segments_digest (TRANSFORMS_VERSION
     # 2 to 3, 2026-09-21): the re-run added fresh records but the stale ones stayed in the
     # checkpoint, so 96 reused + 36 to run wrote 132 records and the tables averaged both.
     fn = lambda segs, ratio, protect, ctx: segs[:2]  # noqa: E731
-    monkeypatch.setattr(exp_d, "METHODS", {"fake": fn, "other": fn})
-    full = [Job(m, "none", r, BASE_VARIANT) for m in ("fake", "other") for r in (0.5, 0.25)]
-    monkeypatch.setattr(
-        exp_d,
-        "plan_jobs",
-        lambda methods=None, variants=None: [j for j in full if not methods or j.method in methods],
-    )
-    prior = analyse("t", True, _transcript(), tmp_path)
+    grid = _fake_grid(tmp_path, {"fake": fn, "other": fn}, (0.5, 0.25))
+    prior = analyse("t", True, _transcript(), tmp_path, grid=grid)
     assert len(prior["records"]) == 4
     stale = dict(
         prior["records"][0], transforms_version=prior["records"][0]["transforms_version"] + 1
@@ -1085,7 +1130,14 @@ def test_a_prior_record_no_planned_job_carries_is_evicted_not_averaged(
 
     seen: list[str] = []
     r = analyse(
-        "t", True, _transcript(), tmp_path, prior=prior, methods=["fake"], progress=seen.append
+        "t",
+        True,
+        _transcript(),
+        tmp_path,
+        prior=prior,
+        methods=["fake"],
+        progress=seen.append,
+        grid=grid,
     )
 
     assert any("2 stale records evicted" in m for m in seen)
@@ -1095,6 +1147,62 @@ def test_a_prior_record_no_planned_job_carries_is_evicted_not_averaged(
     assert all(
         rec["transforms_version"] == exp_d.transforms_stamp(rec["method"]) for rec in r["records"]
     )
+
+
+def test_each_grid_keeps_its_own_checkpoints_because_a_shared_folder_would_evict(
+    tmp_path: Path, stub_embed: None
+) -> None:
+    # Why Grid.out exists: eviction is against the analysing grid's full plan, so records of a
+    # method only another grid plans are "stale" to it and deleted on its next pass.
+    fn = lambda segs, ratio, protect, ctx: segs[:2]  # noqa: E731
+    grid_a = _fake_grid(tmp_path / "a", {"x": fn}, (0.5, 0.25))
+    grid_b = _fake_grid(tmp_path / "b", {"y": fn}, (0.5, 0.25))
+
+    def run(grid: Grid, prior: dict[str, Any] | None, seen: list[str]) -> dict[str, Any]:
+        # The checkpoint path main() derives from the grid, so each grid writes its own file.
+        path = grid.out / "t.json"
+        grid.out.mkdir(parents=True, exist_ok=True)
+        r = analyse(
+            "t",
+            True,
+            _transcript(),
+            tmp_path / "cache",
+            prior=prior,
+            progress=seen.append,
+            grid=grid,
+        )
+        exp_d._write_checkpoint(path, r)
+        return r
+
+    run(grid_a, None, [])
+    run(grid_b, None, [])
+    for grid, method in ((grid_a, "x"), (grid_b, "y")):
+        stored, _ = _load_checkpoint(grid.out / "t.json", force=False)
+        assert stored is not None
+        assert {rec["method"] for rec in stored["records"]} == {method}
+
+    seen: list[str] = []
+    prior_a, _ = _load_checkpoint(grid_a.out / "t.json", force=False)
+    run(grid_a, prior_a, seen)
+    assert not any("evicted" in m for m in seen)
+    assert any("2 records reused, 0 to run" in m for m in seen)
+    prior_b, _ = _load_checkpoint(grid_b.out / "t.json", force=False)
+    assert {rec["method"] for rec in prior_b["records"]} == {"y"}  # type: ignore[index]
+
+    # The failure the split prevents: grid B analysing grid A's checkpoint evicts every x record.
+    seen.clear()
+    prior_a, _ = _load_checkpoint(grid_a.out / "t.json", force=False)
+    shared = analyse(
+        "t",
+        True,
+        _transcript(),
+        tmp_path / "cache",
+        prior=prior_a,
+        progress=seen.append,
+        grid=grid_b,
+    )
+    assert any("2 stale records evicted" in m for m in seen)
+    assert {rec["method"] for rec in shared["records"]} == {"y"}
 
 
 def test_clear_cache_empties_the_directory_but_keeps_it(tmp_path: Path) -> None:
@@ -1112,7 +1220,7 @@ def test_clear_cache_empties_the_directory_but_keeps_it(tmp_path: Path) -> None:
 
 
 def test_a_transcript_reusing_nothing_starts_from_a_cold_cache(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_embed: None
+    tmp_path: Path, stub_embed: None
 ) -> None:
     # Warm entries left by an earlier RUN made supersede+band+leverage report ~1s where a cold
     # job is ~45s, corrupting E4's timing column; a resumed transcript keeps its cache.
@@ -1120,16 +1228,17 @@ def test_a_transcript_reusing_nothing_starts_from_a_cold_cache(
     cache.mkdir()
     stale = cache / "stale.npy"
     stale.write_bytes(b"x")
-    _fake_grid(monkeypatch, lambda segs, ratio, protect, ctx: segs[:2], (0.5, 0.25))
+    fn = lambda segs, ratio, protect, ctx: segs[:2]  # noqa: E731
     seen: list[str] = []
-    r = analyse("t", True, _transcript(), cache, progress=seen.append)
+    grid = _fake_grid(tmp_path, {"fake": fn}, (0.5, 0.25))
+    r = analyse("t", True, _transcript(), cache, progress=seen.append, grid=grid)
     assert not stale.exists()
     assert any("embedding cache cleared" in m for m in seen)
 
     stale.write_bytes(b"x")
-    _fake_grid(monkeypatch, lambda segs, ratio, protect, ctx: segs[:2], (0.5, 0.25, 0.1))
+    grid = _fake_grid(tmp_path, {"fake": fn}, (0.5, 0.25, 0.1))
     seen.clear()
-    analyse("t", True, _transcript(), cache, prior=r, progress=seen.append)
+    analyse("t", True, _transcript(), cache, prior=r, progress=seen.append, grid=grid)
     assert stale.exists()
     assert not any("embedding cache cleared" in m for m in seen)
 
@@ -1198,12 +1307,8 @@ def test_trace_commons_sampling_breaks_size_ties_on_name_not_glob_order(
     assert labels == ["trace-commons_aaa00000", "trace-commons_ccc00000"]
 
 
-def test_failure_report_names_every_failed_and_missing_cell(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        exp_d, "plan_jobs", lambda: [Job("fake", "none", r, BASE_VARIANT) for r in (0.5, 0.25)]
-    )
+def test_failure_report_names_every_failed_and_missing_cell(tmp_path: Path) -> None:
+    grid = _fake_grid(tmp_path, {"fake": lambda segs, ratio, protect, ctx: segs}, (0.5, 0.25))
     result = {
         "label": "t0",
         "total_tokens": 100,
@@ -1218,7 +1323,7 @@ def test_failure_report_names_every_failed_and_missing_cell(
             }
         ],
     }
-    text = "\n".join(failure_report([result]))
+    text = "\n".join(failure_report([result], grid=grid))
     assert "INCOMPLETE RUN" in text
     assert "RuntimeError: boom" in text
     assert "t0" in text
@@ -1244,8 +1349,8 @@ def test_write_summary_puts_failures_above_the_tables(tmp_path: Path) -> None:
             "error": "MemoryError: out of memory",
         }
     ]
-    with mock.patch.object(exp_d, "OUT", tmp_path), contextlib.redirect_stdout(io.StringIO()):
-        exp_d._write_summary(results)
+    with contextlib.redirect_stdout(io.StringIO()):
+        exp_d._write_summary(results, tmp_path)
     text = (tmp_path / "summary.txt").read_text(encoding="utf-8")
     assert "INCOMPLETE RUN" in text
     assert "MemoryError: out of memory" in text

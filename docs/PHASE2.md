@@ -505,6 +505,74 @@ failures). Experiment E was not re-run: it reads base records only and nothing b
   not evict the other arms. The one-transcript smoke that caught it is now the rule before any
   grid: prove the arm moves with its knob on one transcript first.
 
+## Experiment F: selection by compressed novelty (set up 2026-09-22)
+
+Delétang et al., *Language Modeling Is Compression* (ICLR 2024), push the prediction–compression
+equivalence to the point where any compressor is a predictor. Our selectors score each segment
+once, statically (`budget.select_by_score`), so two near-duplicates both score high and both get
+kept; supersession patches that by hand for read/edit pairs. Scoring a segment by the compressed
+bytes it *adds* to what is already kept is conditional surprisal, and a real compressor gives it
+without a model. Experiment F measures that, on its own grid (`--grid exp_f`, checkpoints in
+`experiments/output/exp_f`) so the main grid's eviction cannot touch it, against exp_d's
+reference records for `tfidf`, `leverage` and `supersede+leverage`. It measures a selector; the
+paper's lossless arithmetic coding is out of scope (DESIGN.md: the tokenizer does the lossless
+part, and reconstruction error is never a metric).
+
+**Why two codecs.** On our corpus (32 transcripts, 11.8 MiB of segment text), lzma compresses to
+0.175 of raw against gzip's 0.243 — it finds 28.1% more redundancy, almost exactly the paper's
+enwik9 gap (32.3% against 23.0%, Table 1). The paper's own chunked row explains it: cut to 2048
+bytes, LZMA2 falls to 50.0% against gzip's 48.1%, so the whole advantage is window length.
+Supersession removes 36.3% of bytes but only closes the gap from 28.1% to 19.1%, so zlib's
+32 KiB window leaves real long-range redundancy unseen even on the stacked arms.
+
+**Why these scoring shapes.** Exact greedy re-scores every candidate against the kept set at
+every pick. `zlib.compressobj` forks (`copy()`), so a candidate costs its own bytes: 23 µs on a
+400 KiB kept buffer. `lzma` cannot fork, so a candidate costs a full recompression, 63 ms —
+exact lzma greedy measured at ~32 h per job on the largest transcript, ~287 days per grid method,
+and is not an arm. Lazy greedy (Minoux) and stochastic greedy (Mirzasoleiman et al., 2015) are
+the two affordable approximations; one-pass novelty scores against preceding text instead of
+the kept set.
+
+Arms (14; each also stacked on supersession): `zlib-greedy`, `zlib-lazy`, `zlib-onepass`,
+`zlib-stochastic`, `lzma-lazy`, `lzma-onepass`, `lzma-stochastic`. 168 jobs per transcript,
+3,024 in all.
+
+**Stochastic greedy's epsilon was calibrated, not chosen.** Against exact greedy on the
+selector's own objective — f(S), the compressed length of the kept text — never on recall or
+coverage, which would tune on the grading metric. 18 transcripts × keep 0.5/0.3/0.1, five seeds
+per cell; cells are f(stochastic)/f(exact), mean over seeds. Rule fixed in advance: the largest
+epsilon whose median is at least 0.99 with a 10th percentile at least 0.97.
+
+| epsilon | zlib median / p10 / min | seed spread (median) | Jaccard vs exact | lzma median / p10 (24 cells) |
+|---|---|---|---|---|
+| 0.3 | 0.974 / 0.931 / 0.791 | 0.032 | 0.54 | 0.959 / 0.919 |
+| 0.1 | 0.993 / 0.964 / 0.796 | 0.025 | 0.65 | 0.990 / 0.966 |
+| **0.03** | **0.998 / 0.986** / 0.839 | 0.017 | 0.71 | **0.998 / 0.976** |
+| 0.01 | 0.999 / 0.987 / 0.729 | 0.016 | 0.74 | 1.000 / 0.988 |
+
+Lazy greedy for comparison: zlib 1.002 / 0.999 / 0.990 (Jaccard 0.88), lzma 1.000 / 0.999. So
+lazy's kept sets differ from exact's (307 of ~1,100 segments on the largest transcript) while
+scoring at least as well on the objective — its gains are not monotone (compressed gain can
+grow as context grows), but the stale bounds do not cost it the objective.
+
+Three caveats that carry into any reading of the grid:
+- The lzma column covers only the 8 transcripts, all 37k tokens or smaller, where exact lzma
+  greedy finished in 10 minutes. `lzma-stochastic` is unvalidated above that.
+- **One seed is not a representative draw.** The median seed spread at 0.03 (0.017) is far
+  larger than half the stochastic-versus-lazy gap (0.0018). A stochastic-versus-lazy difference
+  in the grid is inside draw noise; one arm per codec runs one draw (seed 0). Worst cell:
+  `swe-gym_row214` at keep 0.5, seeds scoring 0.75, 0.73, 0.72, 1.01, 0.99.
+- The sample-size formula's k estimate (budget ÷ mean candidate cost) undercounts real picks by
+  a median 47%, worst 88%, because picked segments are cheaper than average. That only enlarges
+  samples; epsilon was calibrated end to end with this estimator, so the numbers above include it.
+
+**Smokes.** `swe-gym_row214` (70k tokens) and `trace-commons_ba1b4916` (53k), 288 jobs, 0
+failures, every arm distinct and moving with the ratio. `swe-gym_row214` saturates: supersession
+caps it at 0.297, so the supersede+ arms coincide at keep 0.3 and above. Projected full grid,
+scaling the mid transcript's 1,381 s by tokens (18 transcripts = 28.5× it): ~11 h; if lzma cost
+grows with tokens squared the lzma arms alone could reach ~19 h, but `swe-gym_row214` ran below
+the linear estimate, so ~11 h is the likelier figure.
+
 ## Spectral versus TF-IDF: two statistics, not one verdict
 
 Phase 1 closed on "no spectral method has yet been shown to beat budget-shaped TF-IDF", and

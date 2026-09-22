@@ -39,6 +39,7 @@ Experiment A (topic basis):
 Experiment B (selection):
 
 - `select.py` — embedding-matrix SVD, leverage / ridge-leverage / CUR-residual scores, direction labelling
+- `compress_select.py` — compression-based selection: one-pass novelty scores and conditional greedy (exact/lazy) over the compressed bytes a segment adds, zlib or lzma
 
 Experiment C (code channel):
 
@@ -55,6 +56,8 @@ Supporting:
   - `corpus_stats.py` — per-transcript segment/token/per-kind/atom table
   - `baselines.py` — random drop, recency, TF-IDF
   - `exp_a_ppmi.py`, `exp_b_embed.py`, `exp_c_code.py` — the three Phase 1 tracks
+  - `exp_f_compress.py` — Experiment F grid (`exp_d_curves.py --grid exp_f`): the `compress_select` arms, compared against exp_d's reference checkpoints
+  - `grid_status.py` — read-only progress watcher for a running grid (`--grid NAME [--log PATH] [--watch]`): done/planned per transcript and method, rough ETA, NOT RUNNING / stall warnings
 - `docs/` — design spec, Phase 1 write-up, committed result tables
 - `data/local/` — user's own session logs, gitignored, **never committed**
 - `data/public/` — public dataset downloads, gitignored; regenerate with `fetch_public.py`
