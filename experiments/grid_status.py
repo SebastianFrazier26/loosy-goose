@@ -30,7 +30,7 @@ from experiments.exp_d_curves import (  # noqa: E402
     Grid,
     RecordIdentity,
     _record_identity,
-    plan_jobs,
+    plan_for_transcript,
 )
 
 WIDTH = 120
@@ -111,10 +111,15 @@ class Status:
 
 
 def planned_by_method(
-    grid: Grid, methods: Collection[str] | None, variants: Collection[str] | None
+    grid: Grid,
+    methods: Collection[str] | None,
+    variants: Collection[str] | None,
+    total_tokens: int | None = None,
 ) -> dict[str, set[RecordIdentity]]:
+    """The plan for one transcript of `total_tokens`; None (size unknown) is the unfiltered plan,
+    which is also the union over every transcript size."""
     out: dict[str, set[RecordIdentity]] = {}
-    for job in plan_jobs(methods, variants, grid=grid):
+    for job in plan_for_transcript(total_tokens, methods, variants, grid=grid):
         out.setdefault(job.method, set()).add(job.identity())
     return out
 
@@ -127,13 +132,19 @@ def collect(
     labels: Sequence[str],
     planned: Mapping[str, set[RecordIdentity]],
     checkpoints: Mapping[str, Checkpoint],
+    by_label: Mapping[str, Mapping[str, set[RecordIdentity]]] | None = None,
 ) -> dict[tuple[str, str], Cell]:
     """Done counts only records whose full identity (stamps included) is still planned: a stale
-    record is one the runner will redo, so counting it would overstate progress."""
+    record is one the runner will redo, so counting it would overstate progress.
+
+    `by_label` holds a transcript's own plan where the grid's job_filter makes it differ from
+    `planned`, whose methods still set the columns."""
     cells: dict[tuple[str, str], Cell] = {}
     for label in labels:
         cp = checkpoints.get(label)
-        for method, ids in planned.items():
+        own = planned if by_label is None else by_label.get(label, planned)
+        for method in planned:
+            ids = own.get(method, set())
             if cp is not None and cp.skipped:
                 cells[(label, method)] = Cell(0, 0, 0)
                 continue
@@ -458,7 +469,8 @@ def build_status(
     labels = ordered + sorted((set(tokens) | set(own)) - set(ordered))
     planned = planned_by_method(grid, methods, variants)
     method_list = [m for m in grid.methods if m in planned]
-    cells = collect(labels, planned, own)
+    by_label = {lab: planned_by_method(grid, methods, variants, tokens.get(lab)) for lab in labels}
+    cells = collect(labels, planned, own, by_label)
     rates = method_rates(planned, own)
     newest = newest_write(stamps)
     current = log.current if log and not log.finished else None

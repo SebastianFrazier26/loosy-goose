@@ -31,13 +31,17 @@ from experiments.exp_d_curves import (  # noqa: E402
     KNEE_FLOOR,
     METRICS,
     Grid,
+    Job,
     MethodFn,
     RunContext,
+    Variant,
+    _base_only,
     _curves_by_method,
     _interp_at,
     _knee,
     _record_identity,
     _weighted_mean,
+    plan_for_transcript,
     plan_jobs,
 )
 from loosy_goose.budget import ProtectPolicy, select_with_budget, token_budget  # noqa: E402
@@ -61,9 +65,31 @@ SHIPPED = "supersede+leverage"
 # 0.03 is it: median 0.998, p10 0.986 (0.1 failed at p10 0.964). Against exact lzma greedy it
 # also passes (median 0.998, p10 0.976), but only on the 8 smallest transcripts (<= 37k tokens)
 # where exact lzma finished in 10 minutes. Seed spread (median 0.017) exceeds half the
-# stochastic-vs-lazy gap (0.0035), so one seed is not a representative draw.
+# stochastic-vs-lazy gap (0.0035), so one seed is not a representative draw. The seed is the
+# variant's stoch_seed; the base variant's 0 is the draw every seed-0 record was taken with.
 STOCHASTIC_EPSILON = 0.03
-STOCHASTIC_SEED = 0
+
+ZLIB_STOCHASTIC = ("zlib-stochastic", "supersede+zlib-stochastic")
+LZMA_STOCHASTIC = ("lzma-stochastic", "supersede+lzma-stochastic")
+ZLIB_SEEDS = 10
+LZMA_SEEDS = 5
+# lzma seeds 1..4 run only up to here. The corpus jumps from 98,917 to 151,611 tokens, and per
+# extra seed the lzma pair costs ~1.8 h on the 13 transcripts below the cap against ~5.9 h on all
+# 18 (scaled from 741 s on the 52,853-token smoke transcript). Seed 0 runs everywhere.
+LZMA_SEED_MAX_TOKENS = 100_000
+SEED_VARIANTS: tuple[Variant, ...] = tuple(
+    Variant(stoch_seed=s, applies_to=ZLIB_STOCHASTIC + (LZMA_STOCHASTIC if s < LZMA_SEEDS else ()))
+    for s in range(1, ZLIB_SEEDS)
+)
+
+
+def _job_filter(job: Job, total_tokens: int) -> bool:
+    return not (
+        job.method in LZMA_STOCHASTIC
+        and job.variant.stoch_seed != 0
+        and total_tokens > LZMA_SEED_MAX_TOKENS
+    )
+
 
 # One-pass scores do not depend on the keep ratio, and lzma's cost ~277 s on the largest
 # transcript, so each (codec, pool) is scored once per process and every ratio reuses it. The
@@ -123,11 +149,15 @@ def _run_stochastic(codec: Codec, *, supersede: bool) -> MethodFn:
     def run(
         segs: list[Segment], ratio: float, protect: ProtectPolicy, ctx: RunContext
     ) -> list[Segment]:
-        del ctx
         budget = token_budget(segs, ratio)
         pool = apply_supersession(segs) if supersede else segs
         return stochastic_select(
-            pool, budget, codec, epsilon=STOCHASTIC_EPSILON, seed=STOCHASTIC_SEED, protect=protect
+            pool,
+            budget,
+            codec,
+            epsilon=STOCHASTIC_EPSILON,
+            seed=ctx.variant.stoch_seed,
+            protect=protect,
         )
 
     return run
@@ -199,20 +229,23 @@ def _n_transcripts(results: list[dict[str, Any]]) -> int:
 
 def _header(results: list[dict[str, Any]], excluded: list[str], grid: Grid) -> list[str]:
     n = _n_transcripts(results)
-    planned = {j.identity() for j in plan_jobs(grid=grid)}
-    per_method = len(grid.ratios)
+    plans = {
+        r["label"]: {j.identity() for j in plan_for_transcript(r.get("total_tokens"), grid=grid)}
+        for r in results
+        if "skipped" not in r
+    }
     rows: list[str] = []
     not_run: list[str] = []
     incomplete: list[str] = []
     for method in grid.methods:
-        mine = {i for i in planned if i.method == method}
-        present = failed = 0
+        present = failed = want = 0
         for r in results:
             if "skipped" in r:
                 continue
+            mine = {i for i in plans[r["label"]] if i.method == method}
+            want += len(mine)
             present += len({_record_identity(rec) for rec in r["records"]} & mine)
             failed += sum(1 for f in r.get("failures", []) if f.get("method") == method)
-        want = n * per_method
         if present == 0 and failed == 0:
             not_run.append(method)
         elif present < want or failed:
@@ -243,7 +276,12 @@ def _header(results: list[dict[str, Any]], excluded: list[str], grid: Grid) -> l
             "methods are summarised over fewer rates or transcripts than the others. Failures",
             "and tracebacks are in each checkpoint's `failures` list and retry on the next run.",
         ]
-    out.append("")
+    out += [
+        "",
+        "planned/present count every seed; every table below reads seed 0 (the base variant)",
+        "only, except the seed section at the end.",
+        "",
+    ]
     return out
 
 
@@ -382,11 +420,220 @@ def _cost_table(merged: list[dict[str, Any]], methods: list[str]) -> list[str]:
     return out
 
 
+_STOCHASTIC_SEEDS: dict[str, tuple[int, ...]] = {
+    **{m: tuple(range(ZLIB_SEEDS)) for m in ZLIB_STOCHASTIC},
+    **{m: tuple(range(LZMA_SEEDS)) for m in LZMA_STOCHASTIC},
+}
+# (stochastic arm, deterministic arm it is judged against, verdict name for that arm). lzma has
+# no exact arm: exact greedy is infeasible for it (compress_select.greedy_select).
+_SEED_PAIRS: tuple[tuple[str, str, str], ...] = (
+    ("zlib-stochastic", "zlib-lazy", "lazy"),
+    ("zlib-stochastic", "zlib-greedy", "exact"),
+    ("supersede+zlib-stochastic", "supersede+zlib-lazy", "lazy"),
+    ("supersede+zlib-stochastic", "supersede+zlib-greedy", "exact"),
+    ("lzma-stochastic", "lzma-lazy", "lazy"),
+    ("supersede+lzma-stochastic", "supersede+lzma-lazy", "lazy"),
+)
+
+
+def _only_variant(results: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
+    return [
+        {
+            **r,
+            "records": [
+                rec for rec in r.get("records", []) if _record_identity(rec).variant_key == key
+            ],
+        }
+        for r in results
+    ]
+
+
+def _all_seed_labels(
+    results: list[dict[str, Any]], arm: str, seeds: tuple[int, ...], grid: Grid
+) -> list[str]:
+    """Transcripts holding every planned ratio of `arm` for every seed in `seeds`."""
+    ratios = set(grid.ratios)
+    out: list[str] = []
+    for r in results:
+        if "skipped" in r:
+            continue
+        have: dict[str, set[float]] = {}
+        for rec in r.get("records", []):
+            if rec["method"] == arm and rec["protect"] == "none":
+                key = _record_identity(rec).variant_key
+                have.setdefault(key, set()).add(float(rec["keep_ratio"]))
+        if all(ratios <= have.get(Variant(stoch_seed=s).key(), set()) for s in seeds):
+            out.append(r["label"])
+    return out
+
+
+def _per_seed(
+    seed_curves: dict[int, _Curves],
+    arm: str,
+    seeds: tuple[int, ...],
+    labels: list[str],
+    rate: float,
+    metric: str,
+    ref: list[dict[str, Any]] | None = None,
+) -> tuple[list[float], int] | None:
+    """Per seed, the token-weighted mean of `metric` (minus `ref`'s, when given) at `rate`, over
+    the transcripts of `labels` where every seed's curve and `ref`'s reach the rate. The set is
+    the same for every seed, so the seeds differ only by their draw."""
+    by_seed = {s: {c["label"]: c for c in seed_curves[s].get((arm, "none"), [])} for s in seeds}
+    ref_by = None if ref is None else {c["label"]: c for c in ref}
+    rows: list[tuple[list[float], float, float]] = []
+    for lab in labels:
+        vals = [_interp_at(by_seed[s].get(lab), rate, metric) for s in seeds]
+        present = [v for v in vals if v is not None]
+        if len(present) < len(seeds):
+            continue
+        offset = 0.0
+        if ref_by is not None:
+            rv = _interp_at(ref_by.get(lab), rate, metric)
+            if rv is None:
+                continue
+            offset = rv
+        rows.append((present, offset, float(by_seed[seeds[0]][lab]["weight"])))
+    if not rows:
+        return None
+    weights = [w for _, _, w in rows]
+    per = [_weighted_mean([v[i] - off for v, off, _ in rows], weights) for i in range(len(seeds))]
+    return per, len(rows)
+
+
+def _mark(n: int, total: int) -> str:
+    return "" if n == total else f"*{n}/{total}"
+
+
+def _verdict(lo: float, hi: float, ref_name: str) -> str:
+    if lo <= 0.0 <= hi:
+        return "inside noise"
+    return "stochastic better" if lo > 0.0 else f"{ref_name} better"
+
+
+def _seed_section(merged: list[dict[str, Any]], grid: Grid) -> list[str]:
+    all_seeds = sorted({s for seeds in _STOCHASTIC_SEEDS.values() for s in seeds})
+    seed_curves = {
+        s: _curves_by_method(_only_variant(merged, Variant(stoch_seed=s).key())) for s in all_seeds
+    }
+    labels = {
+        arm: _all_seed_labels(merged, arm, seeds, grid) for arm, seeds in _STOCHASTIC_SEEDS.items()
+    }
+    out = [
+        "",
+        "== Stochastic greedy across seeds ==",
+        f"zlib arms: seeds 0-{ZLIB_SEEDS - 1} on every transcript. lzma arms: seeds "
+        f"0-{LZMA_SEEDS - 1}, the extra seeds only on transcripts <= {LZMA_SEED_MAX_TOKENS:,}",
+        "tokens. Each arm is read only over transcripts holding all its seeds (n); each seed is",
+        "aggregated token-weighted over the same transcripts, then summarised as mean [min, max]",
+        "across seeds. *u/n = only u of those n reach the rate for every seed; missing = no",
+        "transcript holds every seed.",
+        "",
+        "-- per-seed aggregate at matched achieved rate --",
+    ]
+    head = f"{'arm':<28}{'rate':>5}{'n':>4}{'recall_f':>26}{'coverage':>26}"
+    out += [head, "-" * len(head)]
+    for arm, seeds in _STOCHASTIC_SEEDS.items():
+        labs = labels[arm]
+        for rate in AGGRESSIVE_RATES:
+            cells: list[str] = []
+            for metric in _DELTA_METRICS:
+                if not labs:
+                    cells.append("missing")
+                    continue
+                got = _per_seed(seed_curves, arm, seeds, labs, rate, metric)
+                if got is None:
+                    cells.append("n/a")
+                    continue
+                per, used = got
+                cells.append(
+                    f"{float(np.mean(per)):.3f} [{min(per):.3f}, {max(per):.3f}]"
+                    f"{_mark(used, len(labs))}"
+                )
+            out.append(
+                f"{arm:<28}{_rate_label(rate):>5}{len(labs):>4}"
+                + "".join(c.rjust(26) for c in cells)
+            )
+
+    out += [
+        "",
+        "-- stochastic minus lazy / exact, same transcripts --",
+        "Per seed: token-weighted mean of (stochastic - reference) at matched achieved rate;",
+        "shown as mean [min, max] across seeds. The verdict is 'inside noise' when that range",
+        "contains 0. The reference is the seed-free base record of the same codec and stacking.",
+    ]
+    head = f"{'pair':<48}{'rate':>5}" + "".join(
+        f"{'d ' + _SHORT[m]:>28}{'verdict':>19}" for m in _DELTA_METRICS
+    )
+    out += [head, "-" * len(head)]
+    for arm, ref_arm, ref_name in _SEED_PAIRS:
+        seeds = _STOCHASTIC_SEEDS[arm]
+        labs = labels[arm]
+        ref = seed_curves[0].get((ref_arm, "none"), [])
+        for rate in AGGRESSIVE_RATES:
+            cells = []
+            for metric in _DELTA_METRICS:
+                got = (
+                    _per_seed(seed_curves, arm, seeds, labs, rate, metric, ref)
+                    if labs and ref
+                    else None
+                )
+                if got is None:
+                    cells += ["missing" if not labs or not ref else "n/a", ""]
+                    continue
+                per, used = got
+                lo, hi = min(per), max(per)
+                cells += [
+                    f"{float(np.mean(per)):+.3f} [{lo:+.3f}, {hi:+.3f}]{_mark(used, len(labs))}",
+                    _verdict(lo, hi, ref_name),
+                ]
+            row = "".join(c.rjust(28) if i % 2 == 0 else c.rjust(19) for i, c in enumerate(cells))
+            out.append(f"{arm + ' - ' + ref_arm:<48}{_rate_label(rate):>5}{row}")
+
+    out += [
+        "",
+        "-- one-draw noise: seed spread of recall_final --",
+        "Per transcript, max - min across seeds of recall_final at matched achieved rate; the",
+        "median over transcripts that reach the rate for every seed. n as above.",
+    ]
+    head = f"{'arm':<28}{'n':>4}" + "".join(f"{'@' + _rate_label(r):>12}" for r in AGGRESSIVE_RATES)
+    out += [head, "-" * len(head)]
+    for arm, seeds in _STOCHASTIC_SEEDS.items():
+        labs = labels[arm]
+        cells = []
+        for rate in AGGRESSIVE_RATES:
+            spreads: list[float] = []
+            for lab in labs:
+                vals = [
+                    _interp_at(
+                        next(
+                            (c for c in seed_curves[s].get((arm, "none"), []) if c["label"] == lab),
+                            None,
+                        ),
+                        rate,
+                        "recall_final",
+                    )
+                    for s in seeds
+                ]
+                present = [v for v in vals if v is not None]
+                if len(present) == len(seeds):
+                    spreads.append(max(present) - min(present))
+            if not labs:
+                cells.append("missing")
+            elif not spreads:
+                cells.append("n/a")
+            else:
+                cells.append(f"{float(np.median(spreads)):.3f}{_mark(len(spreads), len(labs))}")
+        out.append(f"{arm:<28}{len(labs):>4}" + "".join(c.rjust(12) for c in cells))
+    return out
+
+
 def write_summary_with(
     results: list[dict[str, Any]], out: Path, *, reference_dir: Path, grid: Grid
 ) -> str:
     merged, excluded = _load_references(results, reference_dir)
-    curves = _curves_by_method(merged)
+    base = _base_only(merged)
+    curves = _curves_by_method(base)
     total = _n_transcripts(results)
     arms = list(grid.methods)
     everything = arms + list(REFERENCES)
@@ -414,10 +661,10 @@ def write_summary_with(
     lines += _delta_table(
         "== approximation cost of stochastic greedy: stochastic minus exact ==",
         [
-            f"One fixed draw (epsilon {STOCHASTIC_EPSILON}, seed {STOCHASTIC_SEED}); calibration",
-            "found seed-to-seed spread wider than the stochastic-vs-lazy gap, so read small",
-            "deltas as noise. lzma-stochastic was checked against exact lzma greedy only on the",
-            "small transcripts where exact finished; beyond them it is unvalidated.",
+            f"Seed 0 alone (epsilon {STOCHASTIC_EPSILON}); one draw is not representative, so the",
+            "seed section below is the one to read for stochastic vs lazy/exact. lzma-stochastic",
+            "was checked against exact lzma greedy only on the small transcripts where exact",
+            "finished; beyond them it is unvalidated.",
         ],
         [
             ("zlib-stochastic", "zlib-greedy"),
@@ -434,7 +681,8 @@ def write_summary_with(
         total,
     )
     lines += _knee_table(curves, everything)
-    lines += _cost_table(merged, everything)
+    lines += _cost_table(base, everything)
+    lines += _seed_section(merged, grid)
     text = "\n".join(lines)
     (out / "summary.txt").write_text(text + "\n", encoding="utf-8")
     return text
@@ -448,8 +696,9 @@ EXP_F = Grid(
     name="exp_f",
     out=OUT,
     methods=METHODS,
-    variants=(BASE_VARIANT,),
+    variants=(BASE_VARIANT, *SEED_VARIANTS),
     protect_code_only=(),
     write_summary=_write_summary,
     plots=False,
+    job_filter=_job_filter,
 )

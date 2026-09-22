@@ -15,10 +15,13 @@ from experiments.exp_d_curves import (  # noqa: E402
     BASE_VARIANT,
     EXP_D,
     KEEP_RATIOS,
+    VARIANTS,
     Job,
     RunContext,
+    Variant,
     _record_identity,
     analyse,
+    plan_for_transcript,
     plan_jobs,
 )
 from experiments.exp_f_compress import EXP_F  # noqa: E402
@@ -32,6 +35,7 @@ from loosy_goose.tokens import count_tokens  # noqa: E402
 from loosy_goose.transcript import Block, Transcript, Turn  # noqa: E402
 
 ONEPASS = [m for m in exp_f.METHODS if m.endswith("onepass")]
+BASE_ONLY = ["base"]
 
 
 def _seg(i: int, text: str) -> Segment:
@@ -109,7 +113,7 @@ def test_the_supersede_arms_have_a_smaller_pool_to_choose_from() -> None:
 
 
 def test_the_exp_f_grid_is_168_protect_none_base_jobs_per_transcript() -> None:
-    jobs = plan_jobs(grid=EXP_F)
+    jobs = plan_jobs(variants=["base"], grid=EXP_F)
     assert len(jobs) == len(exp_f.METHODS) * len(KEEP_RATIOS) == 14 * 12 == 168
     assert {j.protect for j in jobs} == {"none"}
     assert {j.variant for j in jobs} == {BASE_VARIANT}
@@ -128,7 +132,10 @@ def test_exp_f_stamps_select_version_and_leaves_exp_d_at_zero() -> None:
 
 
 def _run(
-    tmp_path: Path, prior: dict[str, Any] | None = None, seen: list[str] | None = None
+    tmp_path: Path,
+    prior: dict[str, Any] | None = None,
+    seen: list[str] | None = None,
+    variants: list[str] | None = BASE_ONLY,
 ) -> dict[str, Any]:
     return analyse(
         "t",
@@ -136,6 +143,7 @@ def _run(
         _transcript(),
         tmp_path / "cache",
         prior=prior,
+        variants=variants,
         progress=None if seen is None else seen.append,
         grid=EXP_F,
     )
@@ -148,7 +156,9 @@ def test_analyse_runs_every_arm_with_its_stamps_and_scores_each_pool_once(
     assert result["failures"] == []
     records = result["records"]
     assert len(records) == 168
-    assert {_record_identity(r) for r in records} == {j.identity() for j in plan_jobs(grid=EXP_F)}
+    assert {_record_identity(r) for r in records} == {
+        j.identity() for j in plan_jobs(variants=BASE_ONLY, grid=EXP_F)
+    }
     for rec in records:
         assert rec["select_version"] == SELECT_VERSION
         sup = SUPERSEDE_VERSION if rec["method"].startswith("supersede+") else 0
@@ -220,7 +230,11 @@ def test_summary_excludes_mismatched_references_and_reports_unrun_arms_as_missin
             "total_tokens": 100_000,
             "segments_digest": f"digest-{label}",
             "records": [
-                _fake_record(m, r, 1.0 + i / 10) for i, m in enumerate(ran) for r in KEEP_RATIOS
+                _seed_record(
+                    j.method, j.ratio, 1.0 + ran.index(j.method) / 10, j.variant.stoch_seed
+                )
+                for j in plan_for_transcript(100_000, grid=EXP_F)
+                if j.method in ran
             ],
             "failures": [],
         }
@@ -279,3 +293,215 @@ def test_summary_excludes_mismatched_references_and_reports_unrun_arms_as_missin
     )
     # 2.0 s cold scoring + 0.01 s median selection, on 100k tokens.
     assert cost.split()[1] == "2.01"
+
+
+# The 18 transcript sizes of the grid, as exp_d measured them; 13 are <= 100k.
+GRID_SIZES = (
+    2_356, 8_423, 8_916, 9_100, 9_543, 14_936, 19_779, 37_079, 52_853,
+    65_382, 69_740, 70_240, 98_917, 151_611, 185_129, 195_810, 205_768, 298_173,
+)  # fmt: skip
+
+
+def _seed_jobs(jobs: list[Job], methods: tuple[str, ...]) -> list[Job]:
+    return [j for j in jobs if j.method in methods and j.variant.stoch_seed != 0]
+
+
+def test_seed_is_in_the_variant_key_only_when_nonzero() -> None:
+    assert Variant().key() == "base"
+    assert Variant(stoch_seed=0).key() == BASE_VARIANT.key()
+    assert Variant(stoch_seed=3).key() == "seed=3"
+    assert Variant(drop_top=1, stoch_seed=2).key() == "drop_top=1+seed=2"
+    assert [v.key() for v in EXP_F.variants] == ["base", *(f"seed={s}" for s in range(1, 10))]
+
+
+def test_exp_d_variant_keys_are_unchanged() -> None:
+    assert [v.key() for v in VARIANTS] == [
+        "base",
+        "drop_top=1",
+        "drop_top=2",
+        "drop_top=4",
+        "paths=score_only",
+        "paths=table_only",
+        "paths=table_only+mm=1",
+        "paths=full",
+        "paths=full+mm=1",
+        "tool_depth=flat0.5",
+        "tool_depth=flat0.25",
+        "tool_depth=half",
+    ]
+    assert {v.stoch_seed for v in VARIANTS} == {0}
+    assert EXP_D.job_filter is None
+    assert plan_for_transcript(10**9) == plan_jobs()
+
+
+def test_seed_accounting_is_8160_over_the_grid() -> None:
+    small = plan_for_transcript(70_240, grid=EXP_F)
+    big = plan_for_transcript(298_173, grid=EXP_F)
+    assert len(small) == 168 + 216 + 96 == 480
+    assert len(big) == 168 + 216 == 384
+    assert len(_seed_jobs(small, exp_f.LZMA_STOCHASTIC)) == 4 * 2 * 12
+    assert _seed_jobs(big, exp_f.LZMA_STOCHASTIC) == []
+    assert len(_seed_jobs(big, exp_f.ZLIB_STOCHASTIC)) == 9 * 2 * 12
+    assert {j.variant.stoch_seed for j in _seed_jobs(small, exp_f.LZMA_STOCHASTIC)} == {1, 2, 3, 4}
+    assert sum(t <= exp_f.LZMA_SEED_MAX_TOKENS for t in GRID_SIZES) == 13
+    assert sum(len(plan_for_transcript(t, grid=EXP_F)) for t in GRID_SIZES) == 8_160
+    # The cap is inclusive.
+    assert len(plan_for_transcript(100_000, grid=EXP_F)) == 480
+    assert len(plan_for_transcript(100_001, grid=EXP_F)) == 384
+
+
+def test_the_job_filter_drops_lzma_seeds_above_the_cap_only() -> None:
+    lzma_seed = Job("lzma-stochastic", "none", 0.5, Variant(stoch_seed=2))
+    zlib_seed = Job("zlib-stochastic", "none", 0.5, Variant(stoch_seed=9))
+    lzma_base = Job("supersede+lzma-stochastic", "none", 0.5, BASE_VARIANT)
+    assert exp_f._job_filter(lzma_seed, 100_000)
+    assert not exp_f._job_filter(lzma_seed, 100_001)
+    assert exp_f._job_filter(zlib_seed, 10**6)
+    assert exp_f._job_filter(lzma_base, 10**6)
+
+
+def test_analyse_plans_and_evicts_by_the_per_transcript_plan(
+    tmp_path: Path,
+    stub_embed: None,
+    cold_scores: list[Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arms = ["lzma-stochastic", "zlib-stochastic"]
+
+    def run(prior: dict[str, Any] | None, seen: list[str]) -> dict[str, Any]:
+        return analyse(
+            "t",
+            True,
+            _transcript(),
+            tmp_path / "cache",
+            prior=prior,
+            methods=arms,
+            progress=seen.append,
+            grid=EXP_F,
+        )
+
+    # Over the cap: lzma plans seed 0 only, zlib all ten seeds.
+    monkeypatch.setattr(exp_f, "LZMA_SEED_MAX_TOKENS", 10)
+    seen: list[str] = []
+    over = run(None, seen)
+    assert "0 records reused, 132 to run" in seen
+    keys = {(r["method"], r["variant_key"]) for r in over["records"]}
+    assert {k for m, k in keys if m == "lzma-stochastic"} == {"base"}
+    assert len({k for m, k in keys if m == "zlib-stochastic"}) == 10
+    assert {r["variant"]["stoch_seed"] for r in over["records"]} == set(range(10))
+    seen.clear()
+    run(over, seen)
+    assert seen == ["132 records reused, 0 to run"]
+
+    # Under the cap the lzma seeds are planned; only the stale record is evicted.
+    monkeypatch.setattr(exp_f, "LZMA_SEED_MAX_TOKENS", 100_000)
+    stale = {**over["records"][0], "select_version": SELECT_VERSION + 1}
+    seen.clear()
+    under = run({**over, "records": [*over["records"], stale]}, seen)
+    assert seen[:2] == ["1 stale records evicted", "132 records reused, 48 to run"]
+    lzma_seeds = {r["variant_key"] for r in under["records"] if r["method"] == "lzma-stochastic"}
+    assert lzma_seeds == {"base", "seed=1", "seed=2", "seed=3", "seed=4"}
+    seen.clear()
+    run(under, seen)
+    assert seen == ["180 records reused, 0 to run"]
+
+
+def _many_segments() -> list[Segment]:
+    return [
+        _seg(i, f"Step {i}: module_{i % 7} calls helper_{i * 11 % 17} returning {i * 29 % 97}.")
+        for i in range(40)
+    ]
+
+
+def test_the_stochastic_arm_takes_its_seed_from_the_variant(tmp_path: Path) -> None:
+    segs = _many_segments()
+    table = build_table(segs)
+    fn = exp_f.METHODS["zlib-stochastic"]
+    picks = [
+        tuple(
+            s.id for s in fn(segs, 0.5, "none", RunContext(tmp_path, Variant(stoch_seed=k), table))
+        )
+        for k in range(5)
+    ]
+    assert len(set(picks)) > 1
+    before = compress_select.stochastic_select(
+        segs, token_budget(segs, 0.5), "zlib", epsilon=0.03, seed=0, protect="none"
+    )
+    assert picks[0] == tuple(s.id for s in before)
+
+
+def _seed_record(method: str, ratio: float, quality: float, seed: int = 0) -> dict[str, Any]:
+    rec = _fake_record(method, ratio, quality)
+    ident = Job(method, "none", ratio, Variant(stoch_seed=seed)).identity()
+    return {**rec, "variant_key": ident.variant_key}
+
+
+def test_summary_seed_section_verdicts_and_lzma_restriction(tmp_path: Path) -> None:
+    sizes = {"t1": 50_000, "t2": 80_000, "t3": 150_000}
+    results = []
+    for label, tokens in sizes.items():
+        recs: list[dict[str, Any]] = []
+        for r in KEEP_RATIOS:
+            recs.append(_seed_record("zlib-lazy", r, 1.0))
+            recs.append(_seed_record("zlib-greedy", r, 1.2))
+            recs.append(_seed_record("lzma-lazy", r, 1.0))
+            # Seeds straddle lazy, all sit below exact.
+            recs += [
+                _seed_record("zlib-stochastic", r, 1.0 + (s - 4.5) / 100, s) for s in range(10)
+            ]
+            lzma_seeds = range(5) if tokens <= 100_000 else range(1)
+            # Every seed above lazy; t3's lone seed 0 would drag the mean if it were counted.
+            recs += [
+                _seed_record("lzma-stochastic", r, 1.1 + s / 100 if tokens <= 100_000 else 0.1, s)
+                for s in lzma_seeds
+            ]
+        results.append(
+            {
+                "label": label,
+                "total_tokens": tokens,
+                "segments_digest": f"d-{label}",
+                "records": recs,
+                "failures": [],
+            }
+        )
+    out = tmp_path / "exp_f"
+    out.mkdir()
+    text = exp_f.write_summary_with(results, out, reference_dir=tmp_path / "none", grid=EXP_F)
+    lines = text.splitlines()
+
+    assert "every table below reads seed 0 (the base variant)" in text
+    row = next(ln for ln in lines if ln.startswith("lzma-stochastic ") and ln.split()[1] == "132")
+    assert row.split()[1:] == ["132", "132", "0", "0"]
+    row = next(ln for ln in lines if ln.startswith("zlib-stochastic ") and ln.split()[1] == "360")
+    assert row.split()[1:] == ["360", "360", "0", "0"]
+
+    def part(title: str, end: str | None) -> list[str]:
+        start = next(i for i, ln in enumerate(lines) if title in ln)
+        stop = next(i for i, ln in enumerate(lines) if end in ln) if end else len(lines)
+        return lines[start:stop]
+
+    agg = part("per-seed aggregate", "stochastic minus lazy")
+    delta = part("stochastic minus lazy", "one-draw noise")
+    spread = part("one-draw noise", None)
+
+    def rows(section: list[str], prefix: str) -> list[str]:
+        return [ln for ln in section if ln.startswith(prefix)]
+
+    agg_lzma = rows(agg, "lzma-stochastic ")
+    assert [ln.split()[1:3] for ln in agg_lzma] == [["2x", "2"], ["3x", "2"], ["4x", "2"]]
+    assert all("*" not in ln for ln in agg_lzma)
+    assert rows(agg, "zlib-stochastic ")[0].split()[2] == "3"
+    assert rows(agg, "supersede+zlib-stochastic ")[0].split()[2:] == ["0", "missing", "missing"]
+    for ln in rows(delta, "zlib-stochastic - zlib-lazy "):
+        assert ln.count("inside noise") == 2, ln
+    for ln in rows(delta, "zlib-stochastic - zlib-greedy "):
+        assert ln.count("exact better") == 2, ln
+    for ln in rows(delta, "lzma-stochastic - lzma-lazy "):
+        assert ln.count("stochastic better") == 2, ln
+    # No records at all for the supersede+ arms: reported as missing, never averaged.
+    for ln in rows(delta, "supersede+zlib-stochastic - supersede+zlib-lazy "):
+        assert ln.split()[4:] == ["missing", "missing"], ln
+    zlib_spread = rows(spread, "zlib-stochastic ")[0]
+    # recall_final = keep*q + 0.1 and q spans 0.09 across seeds: at 2x that is 0.045.
+    assert zlib_spread.split()[1:3] == ["3", "0.045"]
+    assert rows(spread, "lzma-stochastic ")[0].split()[1] == "2"

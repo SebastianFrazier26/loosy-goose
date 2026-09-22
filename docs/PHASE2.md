@@ -566,6 +566,8 @@ Three caveats that carry into any reading of the grid:
   a median 47%, worst 88%, because picked segments are cheaper than average. That only enlarges
   samples; epsilon was calibrated end to end with this estimator, so the numbers above include it.
 
+**Seeds.** Because one draw is not representative, the stochastic arms run as seed variants (`Variant.stoch_seed`; seed 0 is the base variant, so no earlier record moved): zlib seeds 0-9 on all 18 transcripts (a zlib pair costs ~3 s per 53k tokens, so ~15 min in all), lzma seeds 0-4 but seeds 1-4 only on the 13 transcripts of at most 100,000 tokens (sizes jump from 98,917 to 151,611 there; an extra lzma seed costs ~1.8 h on those 13 against ~5.9 h on all 18). The cap is a grid-level job filter that every planner uses, the runner's eviction and the watcher included. 8,160 jobs in all. The summary keeps its tables on seed 0 and adds a seed section: seed mean with min-max for each stochastic arm against lazy and exact greedy on the same transcripts, marked `inside noise` when the range of the difference includes zero. On a 20-segment transcript every seed is identical, correctly: the sample covers every remaining candidate, which is exact greedy. On `trace-commons_ba1b4916` (320 segments) seeds 0, 1 and 2 differ by 11 to 44 kept segments.
+
 **Smokes.** `swe-gym_row214` (70k tokens) and `trace-commons_ba1b4916` (53k), 288 jobs, 0
 failures, every arm distinct and moving with the ratio. `swe-gym_row214` saturates: supersession
 caps it at 0.297, so the supersede+ arms coincide at keep 0.3 and above. Projected full grid,
