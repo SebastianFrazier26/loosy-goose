@@ -505,6 +505,10 @@ failures). Experiment E was not re-run: it reads base records only and nothing b
   not evict the other arms. The one-transcript smoke that caught it is now the rule before any
   grid: prove the arm moves with its knob on one transcript first.
 
+## Decided 2026-09-24
+
+- **Budget selection decides what stays; no positional cuts.** Scoring units and filling the token budget by score is the one mechanism that chooses what survives. Fixed "keep the start" rules are out: `TRANSFORMS_VERSION` 4 removes the leading-sentences cut on prose-shaped tool arguments, the leading-stages cut on shell commands, and the dead prose/thinking branch of `quantize_segment`. AST-depth banding stays: it keeps a code body's outline (definitions, imports, returns) rather than a position, and is the only in-segment transform left, behind `--band`. The one measured positional cut, `prose_shrink`, lost 0.012 to 0.019 coverage for no recall. The removed cuts were 30.4% of the tool_use channel's shrinkage at quality 0.5 (0.685 to 0.781 of raw) and 21.6% at 0.3 (0.549 to 0.647); the code channel is unchanged. Pending: re-run `supersede+band+leverage` on the partial main grid (216 jobs) after Experiment F finishes, to check that the 1.3 to 1.8 recall points `--band` bought at 3x/4x survive. The smoke transcript (`swe-gym_row214`) could not show it: none of its 50 tool_use segments renders differently under version 3 and 4.
+
 ## Experiment F: selection by compressed novelty (set up 2026-09-22)
 
 Delétang et al., *Language Modeling Is Compression* (ICLR 2024), push the prediction–compression

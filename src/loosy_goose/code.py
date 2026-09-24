@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import math
 import re
-import sys
 from collections.abc import Iterator
 from dataclasses import replace
 from functools import lru_cache
@@ -23,8 +22,6 @@ from loosy_goose.segment import (
     Segment,
     extract_atoms,
     looks_like_code_dump,
-    split_prose,
-    split_sentences,
     strip_line_numbers,
 )
 from loosy_goose.tokens import count_tokens
@@ -51,7 +48,12 @@ ELISION = "… ({n} lines elided)"
 #    90th) and compared that against a running total of 600-char chunks, so the first chunk
 #    alone exceeded the budget at every quality below 0.9: one chunk kept, rest elided, knob
 #    dead. The 2026-09-21 partial grid measured it as a null for exactly that reason.
-TRANSFORMS_VERSION = 3
+# 4 (2026-09-24): prose-shaped and shell-shaped tool arguments are no longer cut; they pass
+#    through verbatim, and `shrink_prose` and the shell stage cut are gone. The owner's rule is
+#    that budget selection, not a positional trim, decides what survives, and the one positional
+#    cut that was measured (prose_shrink, 2026-09-21) lost 0.012-0.019 coverage with no recall
+#    gain. Code-shaped arguments are still banded, and the call rendering is unchanged.
+TRANSFORMS_VERSION = 4
 
 _FENCE_ALIASES: dict[str, str] = {
     "py": "python",
@@ -455,92 +457,9 @@ def quantize_code(text: str, lang: str | None, quality: float) -> str:
 _STALE_KEYS = ("old_string", "old_str")
 _PATH_KEYS = ("file_path", "path", "notebook_path")
 
-# Tools whose `command` argument is a shell command line, so its separators can be read as
-# statement boundaries. Gated on the tool rather than on the value, because a `|` is a pipe here
-# and an alternation in a Grep `pattern` — the same characters mean different things, and only
-# the caller knows which. This is why `Segment.tool_name` is carried.
-_SHELL_TOOLS = frozenset({"Bash", "PowerShell", "Shell", "run_command", "execute_bash"})
-SHELL_ELISION = "… ({n} stages elided)"
 # Bounds the walk over nested arguments. One level covers the `edits` list this replaces; the
 # cap stops a pathological payload from recursing without end.
 _MAX_ARG_DEPTH = 3
-
-
-def split_shell(text: str) -> list[int]:
-    """Start offsets of each top-level stage in a one-line shell command.
-
-    Shell marks its own statement boundaries, so cutting a long one-liner needs no length
-    threshold: `a | b | c` is three stages and `git commit -m "a | b"` is one. Quotes are tracked
-    so a separator inside an argument does not split it.
-    """
-    starts = [0]
-    quote: str | None = None
-    i = 0
-    while i < len(text):
-        ch = text[i]
-        if quote is not None:
-            if ch == "\\" and i + 1 < len(text):
-                i += 2
-                continue
-            if ch == quote:
-                quote = None
-            i += 1
-            continue
-        if ch in "\"'":
-            quote = ch
-            i += 1
-            continue
-        width = 2 if text[i : i + 2] in ("&&", "||") else (1 if ch in "|;" else 0)
-        if width:
-            i += width
-            while i < len(text) and text[i] == " ":
-                i += 1
-            if i < len(text):
-                starts.append(i)
-            continue
-        i += 1
-    return starts
-
-
-# Token lengths of single-stage shell commands across the corpus, by decile — commands that
-# needed no pipeline and so are one complete unit of meaning by construction. Measured
-# 2026-09-10 over n=136, which is small; widen the corpus before treating the tail as precise.
-# This is what makes the cut point non-arbitrary: `quality` names how long a command we are
-# still willing to keep, as a percentile of commands people actually wrote.
-SHELL_COMMAND_TOKENS: tuple[int, ...] = (6, 11, 15, 17, 18, 20, 21, 26, 37, 62, 161)
-
-
-def shell_budget(quality: float) -> int:
-    """The token length `quality` says a command line is allowed to reach."""
-    return _percentile_budget(SHELL_COMMAND_TOKENS, quality)
-
-
-def _shrink_shell(text: str, quality: float) -> str:
-    """Keep whole leading stages of a pipeline while the command line stays within the length a
-    real command reaches at this quality, then elide the rest.
-
-    Stages are the unit because shell marks its own boundaries, and the budget is the unit of
-    meaning because a command that needed no pipeline is exactly one of those — so neither the
-    split point nor the cut length is a number anyone picked. Stage 0 always survives, the same
-    way band 0 does in the code channel.
-
-    Known weakness, recorded rather than hidden: in `cat x | grep y` the filter is arguably the
-    point, and this keeps `cat x`.
-    """
-    starts = split_shell(text)
-    if len(starts) <= 1:
-        return text
-    budget = shell_budget(quality)
-    keep = 1
-    while keep < len(starts) and count_tokens(text[: starts[keep]].rstrip()) <= budget:
-        keep += 1
-    if keep >= len(starts):
-        return text
-    marker = SHELL_ELISION.format(n=len(starts) - keep)
-    # Same guard as _elide: a marker costing what it replaces is pure loss.
-    if count_tokens(text[starts[keep] :]) <= count_tokens(marker):
-        return text
-    return f"{text[: starts[keep]].rstrip()} {marker}"
 
 
 def _payload_language(payload: dict[str, Any]) -> str | None:
@@ -551,135 +470,27 @@ def _payload_language(payload: dict[str, Any]) -> str | None:
     return None
 
 
-# Rejected on method, not on results: keeping the sentences that contain atoms and dropping the
-# rest. That scores well on atom recall by construction — the shrinker would be optimising the
-# metric that grades it, the same self-grading the select/score model split exists to prevent.
-PROSE_ELISION = "… ({n} passages elided)"
+def _shrink_string(text: str, lang: str | None, quality: float) -> str:
+    """Band a code-shaped string argument; pass anything else through verbatim.
 
-
-def _percentile_budget(table: tuple[int, ...], quality: float) -> int:
-    if quality >= 1.0:
-        return table[-1]
-    position = max(quality, 0.0) * (len(table) - 1)
-    low = int(position)
-    lower, upper = table[low], table[min(low + 1, len(table) - 1)]
-    return int(round(lower + (upper - lower) * (position - low)))
-
-
-def _prose_units(text: str) -> list[str]:
-    # Whole paragraphs from split_prose (it already drops punctuation-only ones), then sentences
-    # within each, so the unit is the sentence and no paragraph is ever hard-split mid-sentence.
-    return [s for para in split_prose(text, sys.maxsize) for s in split_sentences(para)]
-
-
-def _match_at(text: str, chunk: str, start: int) -> int | None:
-    """End offset in `text` if `chunk` matches at `start` up to whitespace runs, else None."""
-    i, j, end = start, 0, start
-    while j < len(chunk):
-        if chunk[j].isspace():
-            j += 1
-            continue
-        while i < len(text) and text[i].isspace():
-            i += 1
-        if i >= len(text) or text[i] != chunk[j]:
-            return None
-        i, j = i + 1, j + 1
-        end = i
-    return end
-
-
-def _chunk_end(text: str, chunks: list[str], keep: int) -> int | None:
-    """Offset in `text` where the `keep`-th chunk of `split_prose(text)` ends.
-
-    `split_prose` normalises what it returns — it strips each chunk, rejoins sentences with a
-    single space and drops punctuation-only paragraphs — so a kept prefix rebuilt from its output
-    is not a substring of the input, which is the one property this project promises. Only
-    whitespace ever differs, so the chunks are re-located in the original by a whitespace-tolerant
-    walk and the original is sliced instead. The walk is strictly left-to-right: a chunk repeated
-    verbatim later in the text cannot be matched against the wrong copy.
+    Shape, not key name: a code body is banded wherever it sits. Prose and shell arguments are
+    not cut at all (TRANSFORMS_VERSION 4) — every cut tried for them kept the start and dropped
+    the rest, and what survives is budget selection's decision, not a positional one.
     """
-    cursor = 0
-    for chunk in chunks[:keep]:
-        first = next((ch for ch in chunk if not ch.isspace()), "")
-        if not first:
-            return None
-        at = text.find(first, cursor)
-        while at != -1:
-            end = _match_at(text, chunk, at)
-            if end is not None:
-                cursor = end
-                break
-            at = text.find(first, at + 1)
-        else:
-            return None
-    return cursor
-
-
-def shrink_prose(text: str, quality: float) -> str:
-    """Keep leading whole sentences while they fit within `quality` of the passage's own tokens
-    (the first sentence always), then elide the rest.
-
-    Leading rather than best-scoring: picking the best would need the embedding machinery inside
-    a per-segment shrinker, which is a different cost profile entirely, and picking by atom
-    content would grade itself. First-sentence-first is the prose analogue of band 0.
-
-    The budget is a fraction of this passage, not a corpus percentile: a fixed table cannot
-    serve both a two-sentence reply and a forty-sentence plan, and the one it replaced ended up
-    keeping exactly one chunk at every quality (see TRANSFORMS_VERSION 3).
-    """
-    if quality >= 1.0 or not text.strip():
-        return text
-    units = _prose_units(text)
-    if len(units) <= 1:
-        return text
-    sizes = [count_tokens(u) for u in units]
-    budget = quality * sum(sizes)
-    keep, used = 0, 0
-    # Nearest sentence boundary, not floor: with two-sentence passages the common case, flooring
-    # would drop the second sentence at quality 0.8, which is not what 0.8 means.
-    while keep < len(units):
-        used += sizes[keep]
-        if keep and used - budget > sizes[keep] / 2:
-            break
-        keep += 1
-    if keep >= len(units):
-        return text
-    cut = _chunk_end(text, units, keep)
-    if cut is None:
-        return text
-    marker = PROSE_ELISION.format(n=len(units) - keep)
-    # Same guard as _elide: a marker costing what it replaces is pure loss.
-    if count_tokens(text[cut:]) <= count_tokens(marker):
-        return text
-    return f"{text[:cut]}\n{marker}"
-
-
-def _shrink_string(text: str, lang: str | None, quality: float, *, shell: bool) -> str:
-    """Route one string argument to the shrinker its shape calls for.
-
-    Shape, not key name. The previous rule shrank four named keys and passed everything else
-    through verbatim, which left 34.1% of the corpus's `tool_use` tokens untouched — `command`
-    alone was 24.5% of the channel.
-    """
-    if shell:
-        return _shrink_shell(text, quality)
     if looks_like_code_dump(text):
         return quantize_code(text, lang, quality)
-    # Everything else is prose: a prompt, a description, a message. Short labels survive this
-    # untouched, because a value below the budget is returned as-is and the elision guard
-    # refuses to trade a marker for text no longer than the marker.
-    return shrink_prose(text, quality)
+    return text
 
 
-def _shrink_arg(value: Any, lang: str | None, quality: float, *, shell: bool, depth: int) -> Any:
+def _shrink_arg(value: Any, lang: str | None, quality: float, *, depth: int) -> Any:
     if isinstance(value, str):
-        return _shrink_string(value, lang, quality, shell=shell)
+        return _shrink_string(value, lang, quality)
     if depth >= _MAX_ARG_DEPTH:
         return value
     if isinstance(value, list):
-        return [_shrink_arg(v, lang, quality, shell=shell, depth=depth + 1) for v in value]
+        return [_shrink_arg(v, lang, quality, depth=depth + 1) for v in value]
     if isinstance(value, dict):
-        return _quantize_payload(value, lang, quality, shell=shell, depth=depth + 1)
+        return _quantize_payload(value, lang, quality, depth=depth + 1)
     return value
 
 
@@ -688,7 +499,6 @@ def _quantize_payload(
     lang: str | None,
     quality: float,
     *,
-    shell: bool = False,
     depth: int = 0,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {}
@@ -701,9 +511,7 @@ def _quantize_payload(
             # The target is the identifying fact and supersession's key: never shrunk.
             out[key] = value
         else:
-            out[key] = _shrink_arg(
-                value, lang, quality, shell=shell and key == "command", depth=depth
-            )
+            out[key] = _shrink_arg(value, lang, quality, depth=depth)
     return out
 
 
@@ -770,18 +578,13 @@ def render_call(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def quantize_tool_use(text: str, quality: float, tool_name: str | None = None) -> str:
+def quantize_tool_use(text: str, quality: float) -> str:
     if quality >= 1.0:
         return text
     payload = parse_tool_payload(text)
     if payload is None:
         return quantize_code(text, guess_language(text), quality)
-    reduced = _quantize_payload(
-        payload,
-        _payload_language(payload),
-        quality,
-        shell=tool_name in _SHELL_TOOLS,
-    )
+    reduced = _quantize_payload(payload, _payload_language(payload), quality)
     rendered = (
         _format_xml_payload(reduced) if text.lstrip().startswith("<") else render_call(reduced)
     )
@@ -816,9 +619,11 @@ def quantize_segment(
     """
     if segment.kind == "tool_use":
         depth = quality if tool_quality is None else tool_quality
-        text = quantize_tool_use(segment.text, depth, segment.tool_name)
-    elif segment.kind in ("prose", "thinking"):
-        text = shrink_prose(segment.text, quality)
-    else:
+        text = quantize_tool_use(segment.text, depth)
+    elif segment.kind == "code":
         text = quantize_code(segment.text, detect_language(segment, hint=lang), quality)
+    else:
+        # Only code and tool_use are banded. Prose has no structural cut to make, and the
+        # positional one it had was removed in TRANSFORMS_VERSION 4; returned as-is.
+        return segment
     return replace(segment, text=text, protected=False, atoms=extract_atoms(text))
