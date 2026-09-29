@@ -7,7 +7,7 @@ docs/PHASE1.md, "Honest overall read").
 
 Usage: uv run python experiments/exp_d_curves.py [--public-sample 8] [--swe-gym-sample 5]
                                                   [--only NAME_SUBSTR] [--limit N] [--force]
-                                                  [--grid exp_d|exp_f] [--methods A,B]
+                                                  [--grid exp_d|exp_f|exp_g] [--methods A,B]
                                                   [--variants K]
 Per transcript writes experiments/output/exp_d/<label>.json (checkpoint, skipped on rerun unless
 --force) and <label>.png, plus experiments/output/exp_d/summary.txt aggregated across whatever
@@ -34,7 +34,7 @@ import matplotlib
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-from loosy_goose import compress_select, embed, metrics
+from loosy_goose import compress_select, embed, metrics, novelty_select
 from loosy_goose.budget import ProtectPolicy, select_with_budget, token_budget
 from loosy_goose.code import TRANSFORMS_VERSION, quantize_segment
 from loosy_goose.paths import PATHS_VERSION, PathTable, build_table, substitute
@@ -107,11 +107,18 @@ TRANSFORMING_METHODS = ("band+leverage", "supersede+band+leverage")
 # one; a test pins the two lists together.
 COMPRESS_SCORERS = ("zlib-lazy", "lzma-lazy")
 COMPRESS_SELECT_METHODS = COMPRESS_SCORERS + tuple(f"supersede+{n}" for n in COMPRESS_SCORERS)
+# Experiment G's leverage + word-novelty selector (experiments/exp_g_novelty.py), one method name
+# per alpha rather than a Variant field: a method name leaves Variant keys, the record's `variant`
+# fields and the base-variant reference matching exactly as they are. Named here for the same
+# reason as COMPRESS_SCORERS.
+NOVELTY_ALPHAS = (0.5, 1.0, 2.0)
+NOVELTY_METHODS = tuple(f"supersede+leverage+novelty@{a:g}" for a in NOVELTY_ALPHAS)
 SUPERSEDING_METHODS = (
     "supersede+tfidf",
     "supersede+leverage",
     "supersede+band+leverage",
     *(f"supersede+{n}" for n in COMPRESS_SCORERS),
+    *NOVELTY_METHODS,
 )
 # Version of the runner's own transform: `_band` hands quantize_segment the sweep's keep
 # ratio as its fidelity knob, so trimming depth follows the global ratio. That mapping lives
@@ -576,11 +583,17 @@ def supersede_stamp(method: str) -> int:
 
 
 def select_stamp(method: str) -> int:
-    """The compress_select version a method's results depend on; 0 for every other method.
+    """The version of the selector module a method's results depend on, compress_select's or
+    novelty_select's; 0 for every other method. The two share one identity field because no
+    method uses both, which leaves RecordIdentity, and so every exp_d identity, unchanged.
 
     Read off the module at call time rather than bound at import, so the constant a bump edits
     is the one identity sees."""
-    return compress_select.SELECT_VERSION if method in COMPRESS_SELECT_METHODS else 0
+    if method in COMPRESS_SELECT_METHODS:
+        return compress_select.SELECT_VERSION
+    if method in NOVELTY_METHODS:
+        return novelty_select.NOVELTY_VERSION
+    return 0
 
 
 class RecordIdentity(NamedTuple):
@@ -1639,8 +1652,10 @@ def grids() -> dict[str, Grid]:
     """GRIDS with the grids other modules define registered into it. Those modules import this
     one, so they are resolved on call; importing them at module level would be a cycle."""
     from experiments.exp_f_compress import EXP_F
+    from experiments.exp_g_novelty import EXP_G
 
     GRIDS.setdefault(EXP_F.name, EXP_F)
+    GRIDS.setdefault(EXP_G.name, EXP_G)
     return GRIDS
 
 

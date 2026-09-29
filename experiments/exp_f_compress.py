@@ -77,7 +77,9 @@ METHODS: dict[str, MethodFn] = {**_arms(False), **_arms(True)}
 
 
 def _load_references(
-    results: list[dict[str, Any]], reference_dir: Path
+    results: list[dict[str, Any]],
+    reference_dir: Path,
+    references: tuple[str, ...] = REFERENCES,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """`results` with each transcript's exp_d reference records merged in, plus one line per
     transcript left without references.
@@ -106,7 +108,7 @@ def _load_references(
                 for rec in ref.get("records", []):
                     ident = _record_identity(rec)
                     if (
-                        ident.method in REFERENCES
+                        ident.method in references
                         and ident.protect == "none"
                         and ident.variant_key == BASE_VARIANT.key()
                         and ident in exp_d_plan
@@ -124,7 +126,14 @@ def _n_transcripts(results: list[dict[str, Any]]) -> int:
     return sum(1 for r in results if "skipped" not in r)
 
 
-def _header(results: list[dict[str, Any]], excluded: list[str], grid: Grid) -> list[str]:
+def _header(
+    results: list[dict[str, Any]],
+    excluded: list[str],
+    grid: Grid,
+    title: str = "exp_f: compression-based selectors",
+    references: tuple[str, ...] = REFERENCES,
+    name_w: int = 26,
+) -> list[str]:
     n = _n_transcripts(results)
     plan = {j.identity() for j in plan_jobs(grid=grid)}
     rows: list[str] = []
@@ -143,17 +152,17 @@ def _header(results: list[dict[str, Any]], excluded: list[str], grid: Grid) -> l
             not_run.append(method)
         elif present < want or failed:
             incomplete.append(method)
-        rows.append(f"{method:<26}{want:>9}{present:>9}{failed:>9}{want - present:>9}")
+        rows.append(f"{method:<{name_w}}{want:>9}{present:>9}{failed:>9}{want - present:>9}")
     out = [
-        f"exp_f: compression-based selectors. {n} transcripts checkpointed, "
-        f"{n - len(excluded)} with exp_d references ({', '.join(REFERENCES)}).",
+        f"{title}. {n} transcripts checkpointed, "
+        f"{n - len(excluded)} with exp_d references ({', '.join(references)}).",
     ]
     if excluded:
         out += ["Transcripts excluded from every reference comparison:", *excluded]
     out += [
         "",
-        f"{'method':<26}{'planned':>9}{'present':>9}{'failed':>9}{'missing':>9}",
-        "-" * 62,
+        f"{'method':<{name_w}}{'planned':>9}{'present':>9}{'failed':>9}{'missing':>9}",
+        "-" * (name_w + 36),
         *rows,
     ]
     if not_run:
@@ -223,8 +232,10 @@ def _rate_label(rate: float) -> str:
     return f"{1 / rate:.0f}x"
 
 
-def _distortion_table(curves: _Curves, methods: list[str], total: int) -> list[str]:
-    header = f"{'method':<26}" + "".join(
+def _distortion_table(
+    curves: _Curves, methods: list[str], total: int, name_w: int = 26
+) -> list[str]:
+    header = f"{'method':<{name_w}}" + "".join(
         f"{_SHORT[m] + '@' + str(r):>{_W}}" for r in AGGRESSIVE_RATES for m in METRICS
     )
     out = [
@@ -237,14 +248,19 @@ def _distortion_table(curves: _Curves, methods: list[str], total: int) -> list[s
     for method in methods:
         cs = curves.get((method, "none"), [])
         cells = [_value_cell(cs, r, m, total) for r in AGGRESSIVE_RATES for m in METRICS]
-        out.append(f"{method:<26}" + "".join(c.rjust(_W) for c in cells))
+        out.append(f"{method:<{name_w}}" + "".join(c.rjust(_W) for c in cells))
     return out
 
 
 def _delta_table(
-    title: str, notes: list[str], pairs: list[tuple[str, str]], curves: _Curves, total: int
+    title: str,
+    notes: list[str],
+    pairs: list[tuple[str, str]],
+    curves: _Curves,
+    total: int,
+    pair_w: int = 46,
 ) -> list[str]:
-    header = f"{'pair':<46}" + "".join(
+    header = f"{'pair':<{pair_w}}" + "".join(
         f"{'d ' + _SHORT[m] + '@' + _rate_label(r):>{_W}}"
         for r in AGGRESSIVE_RATES
         for m in _DELTA_METRICS
@@ -254,23 +270,23 @@ def _delta_table(
         ca = curves.get((a, "none"), [])
         cb = curves.get((b, "none"), [])
         cells = [_delta_cell(ca, cb, r, m, total) for r in AGGRESSIVE_RATES for m in _DELTA_METRICS]
-        out.append(f"{a + ' - ' + b:<46}" + "".join(c.rjust(_W) for c in cells))
+        out.append(f"{a + ' - ' + b:<{pair_w}}" + "".join(c.rjust(_W) for c in cells))
     return out
 
 
-def _knee_table(curves: _Curves, methods: list[str]) -> list[str]:
+def _knee_table(curves: _Curves, methods: list[str], name_w: int = 26) -> list[str]:
     out = [
         "",
         f"== knee: lowest achieved rate still at atom_recall_final >= {KNEE_FLOOR} ==",
         "Token-weighted mean over transcripts that reach the floor; lower is better. n = those",
         "transcripts / transcripts with the method.",
-        f"{'method':<26}{'knee':>8}{'n':>8}",
-        "-" * 42,
+        f"{'method':<{name_w}}{'knee':>8}{'n':>8}",
+        "-" * (name_w + 16),
     ]
     for method in methods:
         cs = curves.get((method, "none"), [])
         if not cs:
-            out.append(f"{method:<26}{'missing':>8}{'0/0':>8}")
+            out.append(f"{method:<{name_w}}{'missing':>8}{'0/0':>8}")
             continue
         knees = [(k, c["weight"]) for c in cs if (k := _knee(c)) is not None]
         cell = (
@@ -278,18 +294,18 @@ def _knee_table(curves: _Curves, methods: list[str]) -> list[str]:
             if knees
             else "never"
         )
-        out.append(f"{method:<26}{cell:>8}{f'{len(knees)}/{len(cs)}':>8}")
+        out.append(f"{method:<{name_w}}{cell:>8}{f'{len(knees)}/{len(cs)}':>8}")
     return out
 
 
-def _cost_table(merged: list[dict[str, Any]], methods: list[str]) -> list[str]:
+def _cost_table(merged: list[dict[str, Any]], methods: list[str], name_w: int = 26) -> list[str]:
     out = [
         "",
         "== cost: median seconds per 100k tokens ==",
         "Per transcript: median elapsed_seconds over its ratios; then the median over",
         "transcripts. References are exp_d's own timings.",
-        f"{'method':<26}{'s/100k':>10}{'n':>5}",
-        "-" * 41,
+        f"{'method':<{name_w}}{'s/100k':>10}{'n':>5}",
+        "-" * (name_w + 15),
     ]
     for method in methods:
         per: list[float] = []
@@ -302,7 +318,7 @@ def _cost_table(merged: list[dict[str, Any]], methods: list[str]) -> list[str]:
             seconds = float(np.median([float(rec["elapsed_seconds"]) for rec in recs]))
             per.append(seconds / (float(r["total_tokens"]) / 100_000))
         cell = f"{float(np.median(per)):.2f}" if per else "missing"
-        out.append(f"{method:<26}{cell:>10}{len(per):>5}")
+        out.append(f"{method:<{name_w}}{cell:>10}{len(per):>5}")
     return out
 
 
