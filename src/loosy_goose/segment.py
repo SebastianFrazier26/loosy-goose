@@ -27,7 +27,9 @@ SegmentKind = Literal["prose", "code", "tool_result", "tool_use", "thinking"]
 # 6: no extractor change — prose and thinking blocks are segmented as whole paragraphs (bound 600
 #    to 12,000 characters; tool_result keeps 600). That moves segment texts, hence
 #    `segments_digest`, so every stored record has to go.
-ATOMS_VERSION = 6
+# 7: neither path pattern may start right after `-` (the drive branch excepted). Removes a
+#    quadratic re-scan, and drops fragment atoms such as the `set.js` tail of a hyphenated name.
+ATOMS_VERSION = 7
 
 # File extensions the bare-filename pattern recognises, shared verbatim with `paths.py` so the
 # path table and the recall metric agree on what a filename is. An allowlist rather than a general
@@ -68,9 +70,16 @@ _ATOM_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"https?://[^\s)\]>\"']+"),
     # Two branches, not one optional drive prefix: the single-branch form required a word
     # character before its first separator, so `C:\repo\src\budget.py` matched only from `repo`
-    # onward and every Windows path lost its drive.
-    re.compile(r"(?<![\w.])(?:[A-Za-z]:[\\/](?:[\w.-]+[\\/])*[\w.-]+|(?:[\w.-]+[\\/])+[\w.-]+)"),
-    re.compile(r"(?<![\w./\\])[\w-]+\.(?:" + _FILE_EXTENSIONS + r")\b"),
+    # onward and every Windows path lost its drive. The relative branch also refuses to start
+    # after `-`: otherwise every position inside a run like `a.-a.-…` is a fresh start that
+    # re-scans the rest of the run, quadratic in its length. The drive branch keeps the old
+    # lookbehind so `-C:\x` still yields `C:\x`.
+    re.compile(
+        r"(?<![\w.])[A-Za-z]:[\\/](?:[\w.-]+[\\/])*[\w.-]+|(?<![\w.-])(?:[\w.-]+[\\/])+[\w.-]+"
+    ),
+    # `-` in the lookbehind for the same quadratic re-scan (`a-a-…`); it also stops a hyphenated
+    # name after a slash or dot yielding its tail as a fragment atom.
+    re.compile(r"(?<![\w./\\-])[\w-]+\.(?:" + _FILE_EXTENSIONS + r")\b"),
     re.compile(r"\b[a-z0-9]+(?:_[a-z0-9]+)+\b"),
     # CONSTANT_CASE. The snake pattern above accepts lowercase only, so env vars, config keys and
     # constants — TRAIN_RATIO, API_CHANGES — were invisible to the metric entirely.

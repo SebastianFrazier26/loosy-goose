@@ -168,8 +168,8 @@ def test_a_last_component_with_inner_dots_is_untouched() -> None:
     assert substitute_text("unpack a/b.tar.gz.", {"a/b.tar.gz": "[P0]"}) == "unpack [P0]."
 
 
-def test_paths_version_is_3() -> None:
-    assert PATHS_VERSION == 3
+def test_paths_version_is_4() -> None:
+    assert PATHS_VERSION == 4
 
 
 @pytest.mark.parametrize(
@@ -206,3 +206,8 @@ def test_substitution_round_trips_when_a_near_miss_path_shares_a_prefix() -> Non
     assert any(out.text != original.text for original, out in zip(segs, done, strict=True))
     for original, out in zip(segs, done, strict=True):
         assert expand(out.text, table) == original.text
+
+
+def test_the_tail_of_a_hyphenated_name_is_not_tabulated_as_a_path() -> None:
+    assert find_paths("call run.foo-set.js") == []
+    assert find_paths(r"run -C:\x\y now") == [r"C:\x\y"]

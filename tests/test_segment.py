@@ -123,7 +123,7 @@ def test_strip_line_numbers_requires_a_numbered_majority() -> None:
 
 
 def test_atoms_version() -> None:
-    assert ATOMS_VERSION == 6
+    assert ATOMS_VERSION == 7
 
 
 def test_extract_atoms_examples() -> None:
@@ -402,3 +402,29 @@ def test_a_backticked_english_phrase_contributes_only_its_first_word() -> None:
     atoms = extract_atoms("The button says `save the file` in the UI.")
     assert "the" not in atoms
     assert "file" not in atoms
+
+
+def test_hyphen_runs_do_not_make_the_path_patterns_quadratic() -> None:
+    # Before ATOMS_VERSION 7 each of these took seconds (1.3 s and 4.4 s): every position after a
+    # `-` was a fresh match start that re-scanned the rest of the run. Now they take milliseconds,
+    # so the bound is two orders of magnitude of slack, not a benchmark.
+    import time
+
+    for text in ("a.-" * 12000, "a-" * 18000):
+        start = time.perf_counter()
+        extract_atoms(text)
+        assert time.perf_counter() - start < 0.5
+
+
+def test_a_drive_path_after_a_hyphen_keeps_its_drive() -> None:
+    assert extract_atoms(r"run -C:\x\y now") == [r"C:\x\y"]
+
+
+def test_a_hyphenated_directory_path_is_one_atom() -> None:
+    assert extract_atoms("see foo-bar/baz.py here") == ["foo-bar/baz.py"]
+
+
+def test_a_hyphenated_filename_after_a_separator_yields_no_fragment_atom() -> None:
+    assert extract_atoms("open src/foo-set.js now") == ["src/foo-set.js"]
+    assert "set.js" not in extract_atoms("call run.foo-set.js")
+    assert extract_atoms("edit my-file.py ok") == ["my-file.py"]

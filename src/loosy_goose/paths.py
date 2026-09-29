@@ -41,16 +41,19 @@ DEFAULT_MARKER = "[P"
 # leave stored arm records looking valid while describing behaviour that no longer exists.
 # 3 (2026-09-16): a sentence-final path no longer keeps its full stop, so it is keyed as the
 # extractor keys it and substitutes.
-PATHS_VERSION = 3
+# 4 (2026-09-29): the path patterns no longer start after `-` (segment.ATOMS_VERSION 7), so the
+# tail of a hyphenated name after a slash or dot is no longer tabulated as its own path.
+PATHS_VERSION = 4
 
 # The two path-shaped patterns from segment._ATOM_PATTERNS, sharing that module's extension list
 # rather than restating it. They must stay identical: the table guarantees whatever it names, and
 # the recall metric only credits what the extractor recognises, so any divergence would let the
 # table claim atoms the metric never counts.
+# The `-` in each lookbehind stops a quadratic re-scan of hyphen runs; see segment.py.
 _PATH_SLASH = re.compile(
-    r"(?<![\w.])(?:[A-Za-z]:[\\/](?:[\w.-]+[\\/])*[\w.-]+|(?:[\w.-]+[\\/])+[\w.-]+)"
+    r"(?<![\w.])[A-Za-z]:[\\/](?:[\w.-]+[\\/])*[\w.-]+|(?<![\w.-])(?:[\w.-]+[\\/])+[\w.-]+"
 )
-_PATH_BARE = re.compile(r"(?<![\w./\\])[\w-]+\.(?:" + _FILE_EXTENSIONS + r")\b")
+_PATH_BARE = re.compile(r"(?<![\w./\\-])[\w-]+\.(?:" + _FILE_EXTENSIONS + r")\b")
 # The same trailing punctuation `extract_atoms` strips from every candidate. The slash pattern
 # accepts `.` inside a component, so in `edit src/alpha.py.` it swallows the full stop; the
 # extractor then strips it and the metric counts `src/alpha.py`, so the table must key on that
