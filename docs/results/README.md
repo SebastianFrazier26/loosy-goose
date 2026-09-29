@@ -12,6 +12,7 @@ is Phase 2, re-baselined 2026-09-16/18. Interpretation lives in [../PHASE1.md](.
 | `exp_b_summary.txt` | `experiments/exp_b_embed.py` — embedding-SVD spectrum and leverage selection |
 | `exp_c_summary.txt` | `experiments/exp_c_code.py` — C1 banding, C2 supersession, C3 embedder comparison |
 | `exp_d_summary.txt` | `experiments/exp_d_curves.py` — Phase 2 rate-distortion grid at matched budgets, re-baselined 2026-09-16/18 under `ATOMS_VERSION` 5 (672-job grid; `topics` rows omitted) |
+| `exp_f_summary.txt` | `experiments/exp_d_curves.py --grid exp_f` — Experiment F, compression-based selectors (14 arms incl. seed variants), 2026-09-22 to 28; verbatim, since 10 of the arms were cut from the grid on 2026-09-29 |
 
 Full per-transcript JSON and plots are **not** committed; they land in the gitignored
 `experiments/output/` when the scripts run.

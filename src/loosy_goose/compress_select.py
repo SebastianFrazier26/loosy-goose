@@ -2,13 +2,8 @@ from __future__ import annotations
 
 import heapq
 import lzma
-import math
-import random
 import zlib
 from typing import Literal, Protocol
-
-import numpy as np
-import numpy.typing as npt
 
 from loosy_goose.budget import ProtectPolicy, forced_mask
 from loosy_goose.segment import Segment
@@ -93,16 +88,6 @@ def _context(data: list[bytes], codec: Codec) -> _Context:
     raise ValueError(f"unknown codec: {codec!r}")
 
 
-def onepass_scores(segments: list[Segment], codec: Codec) -> npt.NDArray[np.float64]:
-    data = [s.text.encode("utf-8") for s in segments]
-    ctx = _context(data, codec)
-    out = np.empty(len(segments), dtype=np.float64)
-    for i, s in enumerate(segments):
-        out[i] = ctx.gain(i) / max(count_tokens(s.text), 1)
-        ctx.accept(i)
-    return out
-
-
 def greedy_select(
     segments: list[Segment],
     budget: int,
@@ -122,44 +107,6 @@ def greedy_select(
     if st.used < budget:
         run = _lazy_greedy if lazy else _exact_greedy
         run(st.ctx, st.candidates, st.costs, st.denom, st.keep, budget - st.used)
-    return [s for s, k in zip(segments, st.keep, strict=True) if k]
-
-
-def stochastic_select(
-    segments: list[Segment],
-    budget: int,
-    codec: Codec,
-    *,
-    epsilon: float,
-    seed: int,
-    protect: ProtectPolicy = "none",
-) -> list[Segment]:
-    # Stochastic greedy (Mirzasoleiman et al., "Lazier Than Lazy Greedy", AAAI 2015). Every
-    # sampled candidate is evaluated fresh, so gains that grow with context cannot mislead it the
-    # way stale bounds mislead lazy greedy; a sample covering the whole pool is exact greedy.
-    if not 0.0 < epsilon < 1.0:
-        raise ValueError("epsilon must be in (0, 1)")
-    if not segments:
-        return []
-    st = _Seeded(segments, codec, protect)
-    remaining = budget - st.used
-    if remaining > 0 and st.candidates:
-        n = len(st.candidates)
-        mean_cost = sum(st.costs[i] for i in st.candidates) / n
-        k_est = max(math.floor(remaining / mean_cost), 1) if mean_cost > 0 else n
-        size = max(math.ceil((n / k_est) * math.log(1.0 / epsilon)), 1)
-        rng = random.Random(seed)
-        pool = st.candidates
-        while True:
-            pool = [i for i in pool if st.costs[i] <= remaining]
-            if not pool:
-                break
-            sample = sorted(rng.sample(pool, min(size, len(pool))))
-            best = _best_density(st.ctx, sample, st.denom)
-            st.ctx.accept(best)
-            st.keep[best] = True
-            remaining -= st.costs[best]
-            pool = [i for i in pool if i != best]
     return [s for s, k in zip(segments, st.keep, strict=True) if k]
 
 

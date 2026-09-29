@@ -5,7 +5,7 @@ import string
 
 import pytest
 
-from loosy_goose.compress_select import Codec, greedy_select, onepass_scores, stochastic_select
+from loosy_goose.compress_select import Codec, _context, greedy_select
 from loosy_goose.segment import Segment, SegmentKind, extract_atoms
 from loosy_goose.tokens import count_tokens
 
@@ -81,27 +81,25 @@ def test_zlib_exact_and_lazy_agree_on_small_case() -> None:
     assert [s.id for s in exact] == [s.id for s in lazy]
 
 
-@pytest.mark.parametrize("codec", ["zlib", "lzma"])
-def test_onepass_repeat_scores_below_first_occurrence(codec: Codec) -> None:
-    body = _words(5, 800)
-    segs = [_seg(0, _words(1, 300)), _seg(1, body), _seg(2, _words(2, 300)), _seg(3, body)]
-    scores = onepass_scores(segs, codec)
-    assert scores.shape == (4,)
-    assert scores[3] < 0.3 * scores[1]
+def _repeat_gain_share(texts: list[str], codec: Codec) -> float:
+    """Gain of the last text given all the others kept, over its gain given nothing kept."""
+    data = [t.encode("utf-8") for t in texts]
+    cold = _context(data, codec).gain(len(data) - 1)
+    ctx = _context(data, codec)
+    for i in range(len(data) - 1):
+        ctx.accept(i)
+    return ctx.gain(len(data) - 1) / cold
 
 
-def test_onepass_window_difference_between_codecs() -> None:
+def test_window_difference_between_codecs() -> None:
     # The reason both codecs exist: a repeat beyond zlib's 32 KiB window is invisible to it,
     # while lzma's 16 MiB dictionary still finds it.
     body = _words(42, 2000)
     filler = [_words(500 + k, 1000) for k in range(45)]
     texts = [body, *filler, body]
     assert sum(len(t) for t in filler) > 40 * 1024
-    segs = [_seg(i, t) for i, t in enumerate(texts)]
-    z = onepass_scores(segs, "zlib")
-    x = onepass_scores(segs, "lzma")
-    assert x[-1] < 0.2 * x[0]
-    assert z[-1] > 0.8 * z[0]
+    assert _repeat_gain_share(texts, "lzma") < 0.2
+    assert _repeat_gain_share(texts, "zlib") > 0.8
 
 
 def test_lzma_exact_greedy_raises() -> None:
@@ -133,11 +131,9 @@ def test_forced_segments_always_kept_and_charged(codec: Codec, lazy: bool) -> No
 @pytest.mark.parametrize(("codec", "lazy"), VARIANTS)
 def test_empty_and_whitespace_segments(codec: Codec, lazy: bool) -> None:
     assert greedy_select([], 100, codec, lazy=lazy) == []
-    assert onepass_scores([], codec).shape == (0,)
     segs = [_seg(0, ""), _seg(1, "   \n  "), _seg(2, _words(1, 200))]
     kept = greedy_select(segs, 1000, codec, lazy=lazy)
     assert [s.id for s in kept] == [0, 1, 2]
-    assert onepass_scores(segs, codec).shape == (3,)
 
 
 @pytest.mark.parametrize(("codec", "lazy"), VARIANTS)
@@ -148,82 +144,3 @@ def test_deterministic(codec: Codec, lazy: bool) -> None:
     first = greedy_select(segs, budget, codec, lazy=lazy)
     second = greedy_select(segs, budget, codec, lazy=lazy)
     assert [s.id for s in first] == [s.id for s in second]
-    assert onepass_scores(segs, codec).tolist() == onepass_scores(segs, codec).tolist()
-
-
-CODECS: list[Codec] = ["zlib", "lzma"]
-
-
-def _mixed_pool(n: int, seed: int) -> list[Segment]:
-    rng = random.Random(seed)
-    segs = [_seg(i, _vocab_text(seed * 100 + i, rng.choice([4, 30, 300]), 400)) for i in range(n)]
-    segs[n // 2] = _seg(n // 2, segs[1].text)
-    return segs
-
-
-@pytest.mark.parametrize("codec", CODECS)
-def test_stochastic_respects_budget_and_input_order(codec: Codec) -> None:
-    segs = _mixed_pool(16, 1)
-    budget = _cost(segs) // 3
-    kept = stochastic_select(segs, budget, codec, epsilon=0.1, seed=0)
-    assert kept
-    assert _cost(kept) <= budget
-    assert [s.id for s in kept] == sorted(s.id for s in kept)
-
-
-@pytest.mark.parametrize("codec", CODECS)
-def test_stochastic_deterministic_for_fixed_seed(codec: Codec) -> None:
-    segs = _mixed_pool(20, 2)
-    budget = _cost(segs) // 2
-    first = stochastic_select(segs, budget, codec, epsilon=0.3, seed=11)
-    second = stochastic_select(segs, budget, codec, epsilon=0.3, seed=11)
-    assert [s.id for s in first] == [s.id for s in second]
-
-
-def test_stochastic_seeds_can_differ() -> None:
-    segs = _mixed_pool(40, 3)
-    budget = _cost(segs) // 2
-    outcomes = {
-        tuple(s.id for s in stochastic_select(segs, budget, "zlib", epsilon=0.5, seed=seed))
-        for seed in range(8)
-    }
-    assert len(outcomes) > 1
-
-
-@pytest.mark.parametrize("seed", [0, 1, 2])
-def test_stochastic_full_sample_is_exact_greedy(seed: int) -> None:
-    # ln(1/epsilon) dwarfs n here, so every step samples the whole pool: exact greedy by
-    # construction, whatever the seed.
-    segs = _mixed_pool(24, seed)
-    for ratio in (4, 2):
-        budget = _cost(segs) // ratio
-        exact = greedy_select(segs, budget, "zlib", lazy=False)
-        stoch = stochastic_select(segs, budget, "zlib", epsilon=1e-100, seed=seed)
-        assert [s.id for s in stoch] == [s.id for s in exact]
-
-
-@pytest.mark.parametrize("codec", CODECS)
-def test_stochastic_forced_segments(codec: Codec) -> None:
-    segs = _pool(8, 300)
-    segs[2] = _seg(2, "def f(x):\n    return x * 2\n" * 10, kind="code", protected=True)
-    segs[5] = _seg(5, segs[5].text, protected=True)
-    forced_all = [segs[2], segs[5]]
-
-    budget = _cost(forced_all) + count_tokens(segs[0].text)
-    kept = stochastic_select(segs, budget, codec, epsilon=0.1, seed=0, protect="all")
-    assert all(s in kept for s in forced_all)
-    assert _cost(kept) <= budget
-
-    tiny = _cost(forced_all) - 1
-    kept = stochastic_select(segs, tiny, codec, epsilon=0.1, seed=0, protect="all")
-    assert kept == forced_all
-
-
-@pytest.mark.parametrize("codec", CODECS)
-def test_stochastic_empty_input_and_bad_epsilon(codec: Codec) -> None:
-    assert stochastic_select([], 100, codec, epsilon=0.1, seed=0) == []
-    segs = [_seg(0, ""), _seg(1, "   \n  "), _seg(2, _words(1, 200))]
-    kept = stochastic_select(segs, 1000, codec, epsilon=0.1, seed=0)
-    assert [s.id for s in kept] == [0, 1, 2]
-    with pytest.raises(ValueError, match="epsilon"):
-        stochastic_select(segs, 1000, codec, epsilon=1.0, seed=0)

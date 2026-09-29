@@ -26,7 +26,7 @@ import time
 import traceback
 from collections import Counter, defaultdict
 from collections.abc import Callable, Collection, Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
@@ -105,15 +105,7 @@ TRANSFORMING_METHODS = ("band+leverage", "supersede+band+leverage")
 # Experiment F's compression-based selectors (experiments/exp_f_compress.py). Named here rather
 # than there because every stamp below is keyed on method name and this module cannot import that
 # one; a test pins the two lists together.
-COMPRESS_SCORERS = (
-    "zlib-greedy",
-    "zlib-lazy",
-    "zlib-onepass",
-    "lzma-lazy",
-    "lzma-onepass",
-    "zlib-stochastic",
-    "lzma-stochastic",
-)
+COMPRESS_SCORERS = ("zlib-lazy", "lzma-lazy")
 COMPRESS_SELECT_METHODS = COMPRESS_SCORERS + tuple(f"supersede+{n}" for n in COMPRESS_SCORERS)
 SUPERSEDING_METHODS = (
     "supersede+tfidf",
@@ -178,8 +170,6 @@ class Variant:
     paths: PathArm = "off"
     path_min_mentions: int = PATH_MIN_MENTIONS
     tool_depth: ToolDepth = "follow"
-    # The draw a randomised selector takes; 0 is the base draw, so it stays out of the key.
-    stoch_seed: int = 0
     # Methods this variant is meaningful for; None means every method in the grid. A scoring knob
     # applied to `random` would just duplicate the baseline record at twice the cost.
     applies_to: tuple[str, ...] | None = None
@@ -193,7 +183,6 @@ class Variant:
             f"paths={self.paths}" if self.paths != "off" else "",
             f"mm={self.path_min_mentions}" if mentions else "",
             f"tool_depth={self.tool_depth}" if self.tool_depth != "follow" else "",
-            f"seed={self.stoch_seed}" if self.stoch_seed else "",
         ]
         return "+".join(p for p in parts if p) or "base"
 
@@ -261,9 +250,6 @@ class RunContext:
     cache_dir: Path
     variant: Variant
     table: PathTable
-    # Fields a method adds to its own record. Empty for every exp_d method, so their records keep
-    # exactly the fields they always had.
-    extras: dict[str, Any] = field(default_factory=dict)
 
 
 MethodFn = Callable[[list[Segment], float, ProtectPolicy, RunContext], list[Segment]]
@@ -466,10 +452,6 @@ class Grid:
     write_summary: Callable[[list[dict[str, Any]], Path], None]
     plots: bool
     ratios: tuple[float, ...] = KEEP_RATIOS
-    # (job, transcript total_tokens) -> whether that transcript plans the job. None plans every
-    # job everywhere. Read only through plan_for_transcript, so eviction, the todo list and every
-    # report agree on what a given transcript owes.
-    job_filter: Callable[[Job, int], bool] | None = None
 
 
 # Bump only when a record's FIELDS change shape or meaning — that is the one thing a checkpoint
@@ -565,23 +547,6 @@ def plan_jobs(
             if variant.covers(name):
                 jobs += [Job(name, "code_only", r, variant) for r in g.ratios]
     return jobs
-
-
-def plan_for_transcript(
-    total_tokens: int | None,
-    methods: Collection[str] | None = None,
-    variants: Collection[str] | None = None,
-    *,
-    grid: Grid | None = None,
-) -> list[Job]:
-    """plan_jobs narrowed by the grid's job_filter for a transcript of `total_tokens`. An unknown
-    size (None) leaves the filter unapplied, so a count over it errs towards planning more."""
-    g = EXP_D if grid is None else grid
-    jobs = plan_jobs(methods, variants, grid=g)
-    if g.job_filter is None or total_tokens is None:
-        return jobs
-    keep = g.job_filter
-    return [j for j in jobs if keep(j, total_tokens)]
 
 
 def transforms_stamp(method: str) -> int:
@@ -735,7 +700,6 @@ def _record(
             "paths": variant.paths,
             "path_min_mentions": variant.path_min_mentions,
             "tool_depth": variant.tool_depth,
-            "stoch_seed": variant.stoch_seed,
         },
         "compression_ratio": ev["compression_ratio"],
         "atom_recall": ev["atom_recall"],
@@ -829,15 +793,11 @@ def analyse(
     # a bumped TRANSFORMS_VERSION re-runs the job, but without this the stale record stayed in
     # the checkpoint beside the fresh one and every table averaged both.
     g = EXP_D if grid is None else grid
-    planned = {j.identity() for j in plan_for_transcript(total_tokens, grid=g)}
+    planned = {j.identity() for j in plan_jobs(grid=g)}
     prior_records = list(prior.get("records", [])) if prior else []
     kept_records = [r for r in prior_records if _record_identity(r) in planned]
     have = {_record_identity(r) for r in kept_records}
-    todo = [
-        j
-        for j in plan_for_transcript(total_tokens, methods, variants, grid=g)
-        if j.identity() not in have
-    ]
+    todo = [j for j in plan_jobs(methods, variants, grid=g) if j.identity() not in have]
     if progress is not None:
         if len(kept_records) < len(prior_records):
             progress(f"{len(prior_records) - len(kept_records)} stale records evicted")
@@ -891,19 +851,20 @@ def analyse(
         t0 = time.perf_counter()
         try:
             kept = fn(segs, job.ratio, job.protect, ctx)
-            rec = _record(
-                job.method,
-                job.protect,
-                job.ratio,
-                ctx,
-                budget,
-                segs,
-                kept,
-                original_vectors,
-                final_atoms,
-                time.perf_counter() - t0,
+            fresh.append(
+                _record(
+                    job.method,
+                    job.protect,
+                    job.ratio,
+                    ctx,
+                    budget,
+                    segs,
+                    kept,
+                    original_vectors,
+                    final_atoms,
+                    time.perf_counter() - t0,
+                )
             )
-            fresh.append({**rec, **ctx.extras})
         except Exception as exc:
             # One job must not take a multi-hour grid down with it, and must not be mistaken for
             # a job that ran badly either. The failure is kept out of "records" entirely, and its
@@ -1600,6 +1561,7 @@ def failure_report(results: list[dict[str, Any]], grid: Grid | None = None) -> l
     cells exist, so a silent hole reads as a normal curve measured on fewer points — which is why
     this is loud and at the top rather than a footnote.
     """
+    planned = {j.identity() for j in plan_jobs(grid=grid)}
     rows: list[str] = []
     errors: Counter[tuple[str, str, str]] = Counter()
     total_failed = 0
@@ -1608,7 +1570,6 @@ def failure_report(results: list[dict[str, Any]], grid: Grid | None = None) -> l
         if "skipped" in r:
             continue
         failures = list(r.get("failures", []))
-        planned = {j.identity() for j in plan_for_transcript(r.get("total_tokens"), grid=grid)}
         missing = len(planned - {_record_identity(rec) for rec in r.get("records", [])})
         total_failed += len(failures)
         total_missing += missing

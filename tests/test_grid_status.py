@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from experiments import grid_status as gs  # noqa: E402
-from experiments.exp_d_curves import BASE_VARIANT, Grid, Job  # noqa: E402
+from experiments.exp_d_curves import BASE_VARIANT, Grid  # noqa: E402
 from experiments.exp_f_compress import EXP_F  # noqa: E402
 
 RATIOS = (0.1, 0.5)
@@ -199,24 +199,7 @@ def test_render_is_ascii_and_fits_for_fourteen_methods(tmp_path: Path) -> None:
     assert "ETA (rough)" in text
 
 
-def test_planned_counts_follow_the_job_filter(tmp_path: Path) -> None:
-    def small_only_b(job: Job, total_tokens: int) -> bool:
-        return job.method != "b" or total_tokens <= 1000
-
-    grid = dataclasses.replace(_grid(tmp_path), job_filter=small_only_b)
-    union = gs.planned_by_method(grid, None, None)
-    assert len(gs.planned_by_method(grid, None, None, 5000)["a"]) == 2
-    assert "b" not in gs.planned_by_method(grid, None, None, 5000)
-    by_label = {
-        lab: gs.planned_by_method(grid, None, None, tok) for lab, tok in (("s", 500), ("L", 5000))
-    }
-    cells = gs.collect(["s", "L"], union, {}, by_label)
-    assert cells[("s", "b")] == gs.Cell(2, 0, 0)
-    assert cells[("L", "b")] == gs.Cell(0, 0, 0)
-    assert cells[("L", "b")].text() == "-"
-
-
-def test_once_mode_counts_each_transcript_by_its_own_plan(tmp_path: Path) -> None:
+def test_once_mode_plans_the_real_exp_f_grid(tmp_path: Path) -> None:
     out = tmp_path / "grid"
     out.mkdir()
     ref = tmp_path / "ref"
@@ -233,7 +216,7 @@ def test_once_mode_counts_each_transcript_by_its_own_plan(tmp_path: Path) -> Non
             reference=ref,
             probe=lambda name: None,
         )
-    assert "done 0/864 jobs" in buf.getvalue()
+    assert "done 0/96 jobs" in buf.getvalue()
 
 
 def test_once_mode_smoke(tmp_path: Path) -> None:

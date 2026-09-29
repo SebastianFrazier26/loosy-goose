@@ -39,7 +39,7 @@ Experiment A (topic basis):
 Experiment B (selection):
 
 - `select.py` — embedding-matrix SVD, leverage / ridge-leverage / CUR-residual scores, direction labelling
-- `compress_select.py` — compression-based selection: one-pass novelty scores and conditional greedy (exact/lazy) over the compressed bytes a segment adds, zlib or lzma
+- `compress_select.py` — compression-based selection: conditional greedy (lazy; exact kept as a test anchor) over the compressed bytes a segment adds, zlib or lzma
 
 Experiment C (code channel):
 
