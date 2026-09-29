@@ -12,6 +12,7 @@ is Phase 2, re-baselined 2026-09-16/18. Interpretation lives in [../PHASE1.md](.
 | `exp_b_summary.txt` | `experiments/exp_b_embed.py` — embedding-SVD spectrum and leverage selection |
 | `exp_c_summary.txt` | `experiments/exp_c_code.py` — C1 banding, C2 supersession, C3 embedder comparison |
 | `exp_d_summary.txt` | `experiments/exp_d_curves.py` — Phase 2 rate-distortion grid at matched budgets, re-baselined 2026-09-16/18 under `ATOMS_VERSION` 5 (672-job grid; `topics` rows omitted) |
+| `exp_d_band_recheck_summary.txt` | `experiments/exp_d_curves.py` — the same grid's summary, regenerated 2026-09-29 after re-running `supersede+band+leverage` at `TRANSFORMS_VERSION` 4; a partial grid, four methods on the base variant, see below |
 | `exp_f_summary.txt` | `experiments/exp_d_curves.py --grid exp_f` — Experiment F, compression-based selectors (14 arms incl. seed variants), 2026-09-22 to 28; verbatim, since 10 of the arms were cut from the grid on 2026-09-29 |
 | `exp_g_summary.txt` | `experiments/exp_d_curves.py --grid exp_g` — Experiment G, leverage x word novelty at alpha 0.5 / 1 / 2 (648 jobs, 0 failures), regenerated 2026-09-29 from the checkpoints; the `novelty-per-token@0.5` rows read `missing` on purpose, see below |
 
@@ -45,6 +46,21 @@ Experiment E analysis over the same checkpoints is `experiments/output/exp_e_v5.
 timing row for `supersede+band+leverage` is contaminated by cross-run cache hits — see
 `docs/PHASE2.md`, "Decided 2026-09-18". Regenerate with `uv run python experiments/exp_d_curves.py
 --force`, which takes 6–24 hours depending on what else the machine is doing.
+Two later changes make it stale (noted 2026-09-29): its `supersede+band+leverage` and
+`band+leverage` rows predate `TRANSFORMS_VERSION` 4, which removed the prose and shell tail cuts,
+and all its numbers predate `ATOMS_VERSION` 6 (whole-paragraph prose segments). For the band rows
+at version 4, read `exp_d_band_recheck_summary.txt`.
+
+**`exp_d_band_recheck_summary.txt` — a partial grid, 2026-09-29.** A verbatim copy of
+`experiments/output/exp_d/summary.txt`, regenerated after re-running `supersede+band+leverage` on
+the base variant at `TRANSFORMS_VERSION` 4 (204 jobs on 17 transcripts, 0 failures;
+`swe-gym_row214`'s 12 records were reused from the 2026-09-24 smoke; the run log is the gitignored
+`experiments/output/exp_d_band_run.log`). It covers four methods only: `tfidf`, `leverage` and
+`supersede+leverage` from the 2026-09-21 `ATOMS_VERSION` 6 partial grids, plus the re-run band
+method. The header's "10584 planned cell(s) are not in the checkpoints" (588 per transcript) means
+methods and variants that were never run under `ATOMS_VERSION` 6, **not failures**. Those rows
+print as `n/a(ceil0.00)`, `nan` or `never` and are not averaged as zero. For them, read
+`exp_d_summary.txt` above.
 
 **`exp_g_summary.txt` — the per-token arm is empty by design.** The exp_g plan carries four arms,
 and `supersede+leverage+novelty-per-token@0.5` has 0 of its 216 records: it was smoked on two

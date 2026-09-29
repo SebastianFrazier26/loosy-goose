@@ -480,7 +480,10 @@ failures). Experiment E was not re-run: it reads base records only and nothing b
   into paragraphs (12k-char safety cap) instead of ~600-char sentence runs. Every base cell at
   2x/3x/4x moved by at most 0.006 against the version-5 numbers (`supersede+leverage`
   final-state recall 0.840 to 0.836 at 2x, 0.562 to 0.566 at 4x). Kept, because the code is
-  simpler and the unit is the one a reader would name.
+  simpler and the unit is the one a reader would name. (Corrected 2026-09-29: "at most 0.006" holds
+  for `leverage` and `supersede+leverage`, whose cells moved by at most 0.003 and 0.005. `tfidf`
+  coverage moved more: 0.955 to 0.961, 0.903 to 0.914 and 0.868 to 0.879 at 2x/3x/4x; its knee
+  went 0.793 to 0.806. Compare `exp_d_summary.txt` with `exp_d_band_recheck_summary.txt`.)
 - **Shrinking prose segments is a null, twice, and the arm is out of the grid.** First run
   (2026-09-18 to 21): final-state recall within ±0.005 of base at 2x/3x/4x, coverage +0.005 to
   +0.011. That run was measuring a dead knob — `PROSE_UNIT_TOKENS` was a decile table of ~600-char
@@ -507,7 +510,7 @@ failures). Experiment E was not re-run: it reads base records only and nothing b
 
 ## Decided 2026-09-24
 
-- **Budget selection decides what stays; no positional cuts.** Scoring units and filling the token budget by score is the one mechanism that chooses what survives. Fixed "keep the start" rules are out: `TRANSFORMS_VERSION` 4 removes the leading-sentences cut on prose-shaped tool arguments, the leading-stages cut on shell commands, and the dead prose/thinking branch of `quantize_segment`. AST-depth banding stays: it keeps a code body's outline (definitions, imports, returns) rather than a position, and is the only in-segment transform left, behind `--band`. The one measured positional cut, `prose_shrink`, lost 0.012 to 0.019 coverage for no recall. The removed cuts were 30.4% of the tool_use channel's shrinkage at quality 0.5 (0.685 to 0.781 of raw) and 21.6% at 0.3 (0.549 to 0.647); the code channel is unchanged. Pending: re-run `supersede+band+leverage` on the partial main grid (216 jobs) after Experiment F finishes, to check that the 1.3 to 1.8 recall points `--band` bought at 3x/4x survive. The smoke transcript (`swe-gym_row214`) could not show it: none of its 50 tool_use segments renders differently under version 3 and 4.
+- **Budget selection decides what stays; no positional cuts.** Scoring units and filling the token budget by score is the one mechanism that chooses what survives. Fixed "keep the start" rules are out: `TRANSFORMS_VERSION` 4 removes the leading-sentences cut on prose-shaped tool arguments, the leading-stages cut on shell commands, and the dead prose/thinking branch of `quantize_segment`. AST-depth banding stays: it keeps a code body's outline (definitions, imports, returns) rather than a position, and is the only in-segment transform left, behind `--band`. The one measured positional cut, `prose_shrink`, lost 0.012 to 0.019 coverage for no recall. The removed cuts were 30.4% of the tool_use channel's shrinkage at quality 0.5 (0.685 to 0.781 of raw) and 21.6% at 0.3 (0.549 to 0.647); the code channel is unchanged. Pending: re-run `supersede+band+leverage` on the partial main grid (216 jobs) after Experiment F finishes, to check that the 1.3 to 1.8 recall points `--band` bought at 3x/4x survive. (Corrected 2026-09-29: the Sep 18 table, `docs/results/exp_d_summary.txt`, gives +1.2 / +1.4 points of final-state recall at 3x/4x, 0.665 against 0.653 and 0.576 against 0.562, and +1.0 / +1.4 of all-history recall.) The smoke transcript (`swe-gym_row214`) could not show it: none of its 50 tool_use segments renders differently under version 3 and 4.
 
 ## Experiment F: selection by compressed novelty (set up 2026-09-22)
 
@@ -583,8 +586,9 @@ the linear estimate, so ~11 h is the likelier figure.
 
 Read from the full Experiment F grid (`docs/results/exp_f_summary.txt`, 8,160 jobs, 0 failures,
 run 2026-09-22 to 28) and the Experiment G grid (`docs/results/exp_g_summary.txt`, 648 jobs, 0
-failures). Both compare at matched achieved rate against exp_d's reference records. Three of the
-items below (the junk-bytes check, the new-facts tests, the per-token smoke) come from scratch
+failures). Both compare at matched achieved rate against exp_d's reference records. The band
+re-check at the end reads from `docs/results/exp_d_band_recheck_summary.txt`. Four of the items below (the
+junk-bytes check, the new-facts tests, the per-token smoke, the band smoke) rest partly on scratch
 analyses that are not committed scripts, and say so where they appear.
 
 - **Experiment F is cut to four lazy arms.** `zlib-lazy`, `lzma-lazy`, `supersede+zlib-lazy` and
@@ -644,6 +648,25 @@ analyses that are not committed scripts, and say so where they appear.
   move. `novelty_select` (raw and `per_token`) stays in the repo as a measured, unshipped option.
   Rejected: shipping novelty at alpha 0.5 for its recall gain, which is the same values argument
   that kept path substitution opt-in (see [Decided 2026-09-16](#decided-2026-09-16)).
+- **Band re-check: without the tail cuts, `--band` is a wash.** Banding trims a code body to its
+  outline by AST nesting depth: definition headers, imports and returns are kept, deeper body
+  lines are elided, and the keep ratio sets how deep it keeps. This closes the item left pending
+  in [Decided 2026-09-24](#decided-2026-09-24): `supersede+band+leverage` was re-run on the base
+  variant after `TRANSFORMS_VERSION` 4 removed the prose and shell tail cuts (204 jobs, 0
+  failures; `docs/results/exp_d_band_recheck_summary.txt`, 2026-09-29). Measured, from that file's
+  aggressive-rate and knee blocks, against `supersede+leverage` on 18 transcripts at 2x / 3x /
+  4x: final-state recall 0.823 / 0.663 / 0.571 against 0.836 / 0.654 / 0.566, coverage
+  0.887 / 0.830 / 0.805 against 0.895 / 0.821 / 0.796. Every gap is 0.013 or less, so a wash.
+  The knee is worse, 0.612 against 0.598. The Sep 18 table (`docs/results/exp_d_summary.txt`) had band's knee at 0.580
+  and its final-state recall edge at +0.012 / +0.014 at 3x / 4x; now it is +0.009 / +0.005.
+  Inferred, not measured directly: band's earlier edge came mostly from the tail cuts. Caveat:
+  that old table predates `ATOMS_VERSION` 6, so old against new is not perfectly clean; the two
+  unbanded rows moved by at most 0.005 across that change. A smoke on two public transcripts,
+  `trace-commons_ba1b4916` and `trace-commons_11ef2190`, showed banding's token savings identical
+  at keep 0.33, 0.3 and 0.25: the depth knob saturates below about 1/3. The smoke output is not a
+  committed file. Inferred from `quantize_code`: the cutoff is `floor(keep * (max_band + 1))`, so
+  whenever `max_band` is 5 or less, those three keep ratios give the same cutoff.
+  Decision: `--band` stays an opt-in CLI flag, off by default. No code change.
 
 ## Spectral versus TF-IDF: two statistics, not one verdict
 
