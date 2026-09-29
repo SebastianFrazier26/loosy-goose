@@ -44,6 +44,7 @@ Experiment B (selection):
 - `select.py` — embedding-matrix SVD, leverage / ridge-leverage / CUR-residual scores, direction labelling
 - `compress_select.py` — compression-based selection: conditional greedy (lazy; exact kept as a test anchor) over the compressed bytes a segment adds, zlib or lzma
 - `novelty_select.py` — leverage x word novelty: each candidate's score discounted by (share of its plain words the kept set lacks) ** alpha, lazy greedy; alpha=0 is the plain budget fill; `per_token=True` ranks by that gain per token
+- `kind_select.py` — per-kind scoring on the supersession pool: leverage in each kind's own space, shared leverage rank- or z-normalised within kind, or the budget split into per-kind slices by pool-token share with one global spill pass
 
 Experiment C (code channel):
 
@@ -60,13 +61,14 @@ Supporting:
   - `corpus_stats.py` — per-transcript segment/token/per-kind/atom table
   - `baselines.py` — random drop, recency, TF-IDF
   - `exp_a_ppmi.py`, `exp_b_embed.py`, `exp_c_code.py` — the three Phase 1 tracks
-  - `exp_d_curves.py` — the Phase 2 rate-distortion runner and the grid registry (`--grid exp_d|exp_f|exp_g`, partial runs via `--methods` / `--variants`)
+  - `exp_d_curves.py` — the Phase 2 rate-distortion runner and the grid registry (`--grid exp_d|exp_f|exp_g|exp_h`, partial runs via `--methods` / `--variants`)
   - `exp_e_analysis.py` — Experiment E, elasticity / per-kind / predictors / cost over the exp_d checkpoints; no argparse, so any invocation runs it and rewrites its output
   - `exp_f_compress.py` — Experiment F grid (`exp_d_curves.py --grid exp_f`): the `compress_select` arms, compared against exp_d's reference checkpoints
   - `exp_g_novelty.py` — Experiment G grid (`exp_d_curves.py --grid exp_g`): `novelty_select` on the supersession pool at alpha 0.5 / 1 / 2, plus a per-token arm at 0.5, compared against exp_d's leverage and supersede+leverage
+  - `exp_h_kinds.py` — Experiment H grid (`exp_d_curves.py --grid exp_h`): the four `kind_select` arms on the supersession pool, compared against exp_d's leverage and supersede+leverage, plus a kept-token share per kind table
   - `grid_status.py` — read-only progress watcher for a running grid (`--grid NAME [--methods A,B] [--variants base] [--log PATH] [--watch [--interval 10]]`): done/planned per transcript and method, rough ETA, NOT RUNNING / stall warnings
-  - `survey_paths.py` — path mass and substitution-table cost; still carries the v1 path patterns (PHASE2 queue item 13)
-  - `survey_tool_output.py` — shapes inside `tool_result` blocks and their token share
+  - `survey_paths.py` — path mass and substitution-table cost, counted with `paths.find_paths`; public corpora only
+  - `survey_tool_output.py` — shapes inside `tool_result` blocks and their token share; public corpora only
 - `docs/` — design spec, Phase 1 and Phase 2 write-ups, committed result tables
 - `data/local/` — user's own session logs, gitignored, **never committed**
 - `data/public/` — public dataset downloads, gitignored; regenerate with `fetch_public.py`
@@ -90,8 +92,8 @@ Supporting:
   it does not touch: `code.TRANSFORMS_VERSION` (banding methods), `paths.PATHS_VERSION` (path
   variants), `exp_d_curves.BAND_QUALITY_VERSION` (the runner's own decision to hand
   `quantize_segment` the sweep's keep ratio as its fidelity knob), `SUPERSEDE_VERSION` (methods
-  that supersede), and `select_version` (`compress_select.SELECT_VERSION` or
-  `novelty_select.NOVELTY_VERSION`, via `select_stamp`). `BAND_QUALITY_VERSION` is the one that
+  that supersede), and `select_version` (`compress_select.SELECT_VERSION`,
+  `novelty_select.NOVELTY_VERSION` or `kind_select.KIND_SELECT_VERSION`, via `select_stamp`). `BAND_QUALITY_VERSION` is the one that
   shows the rule is about transforms, not modules — it lives in the runner because that mapping
   does. Any new transform needs its own. See
   [docs/PHASE2.md](docs/PHASE2.md#a-silent-staleness-trap-found-by-walking-into-it).

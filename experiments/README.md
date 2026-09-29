@@ -45,6 +45,7 @@ an earlier one wrote. It also holds the grid registry:
 uv run python experiments/exp_d_curves.py                         # Experiment D, the main grid
 uv run python experiments/exp_d_curves.py --grid exp_f            # Experiment F
 uv run python experiments/exp_d_curves.py --grid exp_g            # Experiment G
+uv run python experiments/exp_d_curves.py --grid exp_h            # Experiment H
 uv run python experiments/exp_d_curves.py --methods supersede+band+leverage --variants base
 ```
 
@@ -65,9 +66,18 @@ greedy with zlib or lzma, each with and without supersession). Run through
 checkpoints rather than re-running them.
 
 **`exp_g_novelty.py`** — Experiment G: leverage times word novelty (`novelty_select`) on the
-supersession pool at alpha 0.5 / 1 / 2, plus a per-token arm at 0.5 that is planned but was
-deliberately never run on the grid. Run through `exp_d_curves.py --grid exp_g`; reads `leverage`
-and `supersede+leverage` from exp_d.
+supersession pool at alpha 0.5 / 1 / 2, plus a per-token arm at 0.5 (ranked by gain per token).
+The per-token arm was first left off the grid deliberately; since 2026-09-29 it is part of the
+final grid. Run through `exp_d_curves.py --grid exp_g`; reads `leverage` and `supersede+leverage`
+from exp_d.
+
+**`exp_h_kinds.py`** — Experiment H: per-kind scoring on the supersession pool (`kind_select`),
+four arms that each take segment kind out of the shared-space competition: leverage in each
+kind's own space (`kind-space`), shared leverage rank-percentiled or z-scored within kind
+(`kind-norm-rank`, `kind-norm-z`), and the budget split into per-kind slices by pool-token share
+with one global spill pass (`kind-budget`). Run through `exp_d_curves.py --grid exp_h`; reads
+`leverage` and `supersede+leverage` from exp_d, and adds a kept-token share per kind table beside
+the pool's own shares.
 
 **`grid_status.py`** — a read-only progress view for a second terminal beside a running grid. It
 reads the checkpoints (and the runner's log with `--log`), never the transcripts, and writes
@@ -80,13 +90,13 @@ uv run python experiments/grid_status.py --grid exp_d --methods A,B --variants b
 ## Surveys
 
 **`survey_paths.py`** — how much of a transcript is file paths, and what a substitution table
-would cost. Writes `experiments/output/survey/path_mass.txt`. It still carries its own copies of
-the v1 path patterns, so today it re-measures the old rules, not the live ones; re-pointing it is
-queue item 13 in `docs/PHASE2.md`. It reads local sessions as well as public ones (counts only).
+would cost. Writes `experiments/output/survey/path_mass.txt`. Paths are counted with
+`paths.find_paths` over decoded text, exactly as `paths.build_table` counts them.
 
 **`survey_tool_output.py`** — what shapes sit inside `tool_result` blocks and how many tokens
 each accounts for, surveyed per block rather than per segment. Writes
 `experiments/output/survey/tool_output_shapes.txt`.
 
-Both take `--public-sample` and `--swe-gym-sample`. Sample lines are printed for public
-transcripts only; local sessions contribute counts and never content.
+Both take `--public-sample` and `--swe-gym-sample` and read the public corpora only (since
+2026-09-29, queue item 13), so their output is regenerable from `fetch_public.py` alone. Figures
+in `docs/PHASE2.md` dated earlier also counted local sessions.

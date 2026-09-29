@@ -7,7 +7,7 @@ docs/PHASE1.md, "Honest overall read").
 
 Usage: uv run python experiments/exp_d_curves.py [--public-sample 8] [--swe-gym-sample 5]
                                                   [--only NAME_SUBSTR] [--limit N] [--force]
-                                                  [--grid exp_d|exp_f|exp_g] [--methods A,B]
+                                                  [--grid exp_d|exp_f|exp_g|exp_h] [--methods A,B]
                                                   [--variants K]
 Per transcript writes experiments/output/exp_d/<label>.json (checkpoint, skipped on rerun unless
 --force) and <label>.png, plus experiments/output/exp_d/summary.txt aggregated across whatever
@@ -34,7 +34,7 @@ import matplotlib
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-from loosy_goose import compress_select, embed, metrics, novelty_select
+from loosy_goose import compress_select, embed, kind_select, metrics, novelty_select
 from loosy_goose.budget import ProtectPolicy, select_with_budget, token_budget
 from loosy_goose.code import TRANSFORMS_VERSION, quantize_segment
 from loosy_goose.paths import PATHS_VERSION, PathTable, build_table, substitute
@@ -115,6 +115,14 @@ NOVELTY_PER_TOKEN_ALPHAS = (0.5,)
 NOVELTY_PER_TOKEN_METHODS = tuple(
     f"supersede+leverage+novelty-per-token@{a:g}" for a in NOVELTY_PER_TOKEN_ALPHAS
 )
+# Experiment H's per-kind scoring arms (experiments/exp_h_kinds.py, `loosy_goose.kind_select`).
+# Named here for the same reason as COMPRESS_SCORERS.
+KIND_METHODS = (
+    "supersede+leverage+kind-space",
+    "supersede+leverage+kind-norm-rank",
+    "supersede+leverage+kind-norm-z",
+    "supersede+leverage+kind-budget",
+)
 # Methods that run `supersede.apply_supersession` on their candidate pool, so their records
 # carry SUPERSEDE_VERSION the way the shrinking methods carry TRANSFORMS_VERSION. Hand-written
 # like that list and guarded the same way, by `test_superseding_methods_lists_every_method_
@@ -126,6 +134,7 @@ SUPERSEDING_METHODS = (
     *(f"supersede+{n}" for n in COMPRESS_SCORERS),
     *NOVELTY_METHODS,
     *NOVELTY_PER_TOKEN_METHODS,
+    *KIND_METHODS,
 )
 # Version of the runner's own transform: `_band` hands quantize_segment the sweep's keep
 # ratio as its fidelity knob, so trimming depth follows the global ratio. That mapping lives
@@ -591,9 +600,10 @@ def supersede_stamp(method: str) -> int:
 
 
 def select_stamp(method: str) -> int:
-    """The version of the selector module a method's results depend on, compress_select's or
-    novelty_select's; 0 for every other method. The two share one identity field because no
-    method uses both, which leaves RecordIdentity, and so every exp_d identity, unchanged.
+    """The version of the selector module a method's results depend on, compress_select's,
+    novelty_select's or kind_select's; 0 for every other method. They share one identity field
+    because no method uses more than one, which leaves RecordIdentity, and so every exp_d
+    identity, unchanged.
 
     Read off the module at call time rather than bound at import, so the constant a bump edits
     is the one identity sees."""
@@ -601,6 +611,8 @@ def select_stamp(method: str) -> int:
         return compress_select.SELECT_VERSION
     if method in NOVELTY_METHODS or method in NOVELTY_PER_TOKEN_METHODS:
         return novelty_select.NOVELTY_VERSION
+    if method in KIND_METHODS:
+        return kind_select.KIND_SELECT_VERSION
     return 0
 
 
@@ -696,6 +708,9 @@ def _record(
         extra_tokens=table_tokens,
     )
     kept_tokens = sum(count_tokens(s.text) for s in kept)
+    kept_by_kind: Counter[str] = Counter()
+    for s in kept:
+        kept_by_kind[s.kind] += count_tokens(s.text)
     return {
         "method": method,
         "protect": protect,
@@ -703,6 +718,9 @@ def _record(
         "budget_tokens": budget,
         "kept_segments": len(kept),
         "kept_tokens": kept_tokens,
+        # Additive, so no SCHEMA_VERSION bump: records written before it simply lack the key, and
+        # readers treat that as "not measured" (exp_h's per-kind share table).
+        "kept_tokens_by_kind": dict(kept_by_kind),
         "table_tokens": table_tokens,
         # A stacked method's candidate pool (post-supersession and/or post-banding) can be
         # smaller than the requested budget, so the greedy selector keeps everything it has and
@@ -765,9 +783,7 @@ def analyse(
 
     `prior` is a checkpoint whose segments_digest already matched, so its records were scored
     against the same segmenter output this run produces. Records it holds for jobs still in the
-    plan are reused verbatim; records for jobs no longer planned are kept too, since a variant
-    that has been commented out of VARIANTS is cheaper to leave on disk than to re-measure if it
-    comes back.
+    grid's full plan are reused verbatim; records for jobs no longer planned are dropped.
 
     `checkpoint` is called with the partially-filled result every FLUSH_EVERY jobs and after every
     failure, so a kill mid-transcript costs seconds rather than everything this transcript has
@@ -826,6 +842,8 @@ def analyse(
     if not todo:
         result["records"] = kept_records
         result["supersede_ceiling"] = prior.get("supersede_ceiling", 1.0) if prior else 1.0
+        if prior and "pool_tokens_by_kind" in prior:
+            result["pool_tokens_by_kind"] = prior["pool_tokens_by_kind"]
         return result
     if not kept_records:
         # The embedding cache outlives the run, and a text-transforming method whose pool happens
@@ -843,6 +861,10 @@ def analyse(
     superseded = apply_supersession(segs)
     superseded_tokens = sum(count_tokens(s.text) for s in superseded)
     result["supersede_ceiling"] = superseded_tokens / total_tokens if total_tokens else 1.0
+    pool_by_kind: Counter[str] = Counter()
+    for s in superseded:
+        pool_by_kind[s.kind] += count_tokens(s.text)
+    result["pool_tokens_by_kind"] = dict(pool_by_kind)
     # Computed once from the ORIGINAL segments (not from whatever a given method kept), so every
     # method/ratio is scored against the identical final-state atom set — see metrics.py.
     final_atoms = {a for s in superseded for a in s.atoms}
@@ -1661,9 +1683,11 @@ def grids() -> dict[str, Grid]:
     one, so they are resolved on call; importing them at module level would be a cycle."""
     from experiments.exp_f_compress import EXP_F
     from experiments.exp_g_novelty import EXP_G
+    from experiments.exp_h_kinds import EXP_H
 
     GRIDS.setdefault(EXP_F.name, EXP_F)
     GRIDS.setdefault(EXP_G.name, EXP_G)
+    GRIDS.setdefault(EXP_H.name, EXP_H)
     return GRIDS
 
 

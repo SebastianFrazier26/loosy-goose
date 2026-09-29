@@ -25,6 +25,11 @@ These files are kept verbatim, as the record of what a given run said. They are 
 current, and one of them is now well behind the code. Nothing here is edited to match; the
 banners below are the correction.
 
+**2026-09-29: every file here now predates the code.** `ATOMS_VERSION` 7 and `PATHS_VERSION` 4
+invalidate every stored record, and one final grid regenerates them all (see
+[PHASE2.md](../PHASE2.md), "Decided 2026-09-29, final grid"). That grid also runs the exp_g
+per-token arm this directory's exp_g table never had.
+
 **`corpus_stats.txt` — three versions behind, and its `atoms` column is a third convention.**
 Produced 2026-09-08 under `ATOMS_VERSION` 1. Three extractor changes have landed since (2 decoded
 `json.dumps` payloads, 3 widened the file-extension list, 4 narrowed it again and added the

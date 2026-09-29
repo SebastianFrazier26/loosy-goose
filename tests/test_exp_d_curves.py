@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from experiments import exp_d_curves as exp_d  # noqa: E402
 from experiments import exp_f_compress as exp_f  # noqa: E402
 from experiments import exp_g_novelty as exp_g  # noqa: E402
+from experiments import exp_h_kinds as exp_h  # noqa: E402
 from experiments.baselines import tfidf as baseline_tfidf  # noqa: E402
 from experiments.exp_d_curves import (  # noqa: E402
     BAND_QUALITY_VERSION,
@@ -782,19 +783,23 @@ def _every_grids_methods() -> dict[str, Any]:
 def _patch_everywhere(monkeypatch: pytest.MonkeyPatch, name: str, value: object) -> None:
     # Each grid module binds the helper under its own name, so patching one module alone would
     # let the other grid's calls slip past the watcher.
-    for module in (exp_d, exp_f, exp_g):
+    for module in (exp_d, exp_f, exp_g, exp_h):
         if hasattr(module, name):
             monkeypatch.setattr(module, name, value)
 
 
-def test_every_grid_is_registered_and_the_stamp_lists_cover_exp_f_and_exp_g() -> None:
+def test_every_grid_is_registered_and_the_stamp_lists_cover_exp_f_exp_g_and_exp_h() -> None:
     registry = exp_d.grids()
     assert registry["exp_d"] is EXP_D
     assert registry["exp_f"] is exp_f.EXP_F
     assert registry["exp_g"] is exp_g.EXP_G
+    assert registry["exp_h"] is exp_h.EXP_H
     assert tuple(exp_f.METHODS) == exp_d.COMPRESS_SELECT_METHODS
     assert tuple(exp_g.METHODS) == exp_d.NOVELTY_METHODS + exp_d.NOVELTY_PER_TOKEN_METHODS
-    assert set(_every_grids_methods()) == set(METHODS) | set(exp_f.METHODS) | set(exp_g.METHODS)
+    assert tuple(exp_h.METHODS) == exp_d.KIND_METHODS
+    assert set(_every_grids_methods()) == (
+        set(METHODS) | set(exp_f.METHODS) | set(exp_g.METHODS) | set(exp_h.METHODS)
+    )
 
 
 def test_transforming_methods_lists_every_method_that_shrinks(

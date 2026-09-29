@@ -10,9 +10,12 @@ characters and reclassifies code-looking results as `code`, both of which destro
 a format recognizer needs — a diff split across five chunks is not recognizable as a diff. What
 a shrinker would have to see is the whole block, which is what this measures.
 
+Public corpora only (trace-commons, SWE-Gym), so anyone can regenerate the output after
+`fetch_public.py`. Figures in docs/PHASE2.md dated before 2026-09-29 also counted local sessions;
+this script does not reproduce them.
+
 Usage: uv run python experiments/survey_tool_output.py [--public-sample 8] [--swe-gym-sample 5]
-Writes experiments/output/survey/tool_output_shapes.txt. Sample lines are printed for PUBLIC
-transcripts only; local sessions contribute counts and never content.
+Writes experiments/output/survey/tool_output_shapes.txt.
 """
 
 from __future__ import annotations
@@ -21,19 +24,21 @@ import argparse
 import re
 import sys
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from experiments.exp_d_curves import _iter_sources  # noqa: E402
+from experiments.exp_d_curves import iter_swe_gym, iter_trace_commons  # noqa: E402
+from loosy_goose.segment import _NUMBERED_LINE  # noqa: E402
 from loosy_goose.tokens import count_tokens  # noqa: E402
+from loosy_goose.transcript import Transcript  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "experiments" / "output" / "survey"
 
 # Ordered: the first matching rule wins, so the specific shapes are tested before the generic
 # ones. Each rule is (name, predicate over the block's lines and text).
-_NUMBERED = re.compile(r"^\s*\d+(→|\t)")
 _DIFF_HUNK = re.compile(r"^@@ .* @@|^diff --git |^(---|\+\+\+) ")
 _DIFF_ADD = re.compile(r"^\+[^+]")
 _DIFF_DEL = re.compile(r"^-[^-]")
@@ -46,6 +51,13 @@ _TEST_SUMMARY = re.compile(
 )
 _TRACEBACK = re.compile(r"^Traceback \(most recent call last\)|^\s+File \".*\", line \d+")
 _ERROR_MARK = re.compile(r"\b(error|exception|fatal|cannot|not found|no such file)\b", re.I)
+
+
+def _iter_public(public_sample: int, swe_gym_sample: int) -> Iterator[tuple[str, Transcript]]:
+    for label, _, t in iter_trace_commons(public_sample):
+        yield label, t
+    for label, _, t in iter_swe_gym(swe_gym_sample):
+        yield label, t
 
 
 def _nonblank(lines: list[str]) -> list[str]:
@@ -67,7 +79,7 @@ def classify(text: str) -> str:
         return "empty"
     if len(stripped) < 200 and len(live) <= 2:
         return "short"
-    if _fraction(lines, _NUMBERED) >= 0.6:
+    if _fraction(lines, _NUMBERED_LINE) >= 0.6:
         return "numbered_file"
     # A hunk header is decisive. Without one, require BOTH added and removed lines: the earlier
     # "30% of lines start with + or -" rule matched PowerShell directory listings, whose every
@@ -111,7 +123,7 @@ def survey(public_sample: int, swe_gym_sample: int) -> dict[str, Any]:
     samples: dict[str, str] = {}
     total_blocks = 0
     total_tokens = 0
-    for label, public, t in _iter_sources(public_sample, swe_gym_sample):
+    for label, t in _iter_public(public_sample, swe_gym_sample):
         for turn in t.turns:
             for block in turn.blocks:
                 if block.kind != "tool_result":
@@ -127,9 +139,7 @@ def survey(public_sample: int, swe_gym_sample: int) -> dict[str, Any]:
                 sizes.append(tokens)
                 total_blocks += 1
                 total_tokens += tokens
-                # Content leaves the process only for public corpora; local sessions contribute
-                # counts alone, matching the withholding rule in PHASE1.md.
-                if public and shape not in samples and tokens > 40:
+                if shape not in samples and tokens > 40:
                     first = next((ln for ln in lines if ln.strip()), "")
                     samples[shape] = f"[{label}] {first[:110]}"
     return {
@@ -189,7 +199,7 @@ def report(data: dict[str, Any]) -> list[str]:
         f"{sum(big) / max(total_tokens, 1):.1%} of tokens)"
     )
 
-    out += ["", "== first line of one public example per shape =="]
+    out += ["", "== first line of one example per shape =="]
     for shape, line in sorted(data["samples"].items()):
         out.append(f"{shape:<16}{line}")
     return out
