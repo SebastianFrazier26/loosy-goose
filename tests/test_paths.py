@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from loosy_goose.code import quantize_segment
 from loosy_goose.paths import (
     PATHS_VERSION,
     PathTable,
@@ -11,7 +12,7 @@ from loosy_goose.paths import (
     substitute,
     substitute_text,
 )
-from loosy_goose.segment import Segment, SegmentKind, extract_atoms
+from loosy_goose.segment import Segment, SegmentKind, atoms_in_decoded, extract_atoms
 
 
 def _seg(i: int, text: str, kind: SegmentKind = "prose") -> Segment:
@@ -168,8 +169,8 @@ def test_a_last_component_with_inner_dots_is_untouched() -> None:
     assert substitute_text("unpack a/b.tar.gz.", {"a/b.tar.gz": "[P0]"}) == "unpack [P0]."
 
 
-def test_paths_version_is_4() -> None:
-    assert PATHS_VERSION == 4
+def test_paths_version_is_6() -> None:
+    assert PATHS_VERSION == 6
 
 
 @pytest.mark.parametrize(
@@ -206,6 +207,80 @@ def test_substitution_round_trips_when_a_near_miss_path_shares_a_prefix() -> Non
     assert any(out.text != original.text for original, out in zip(segs, done, strict=True))
     for original, out in zip(segs, done, strict=True):
         assert expand(out.text, table) == original.text
+
+
+def test_the_mask_blanks_exactly_the_placeholders_the_table_emits() -> None:
+    table = PathTable(("src/a.py",) * 12, marker="[PP")
+    for i in (0, 11):
+        assert table.mask(f"x{table.placeholder(i)}y") == "x y"
+    assert table.mask("[P0] [PP] PP0]") == "[P0] [PP] PP0]"
+
+
+def test_substitution_never_adds_an_atom() -> None:
+    # The substituted path must not come back, and nothing the marker sits next to may appear.
+    segs = [_seg(0, "open src/alpha.py then 10"), _seg(1, "src/alpha.py again")]
+    table = build_table(segs)
+    for original, out in zip(segs, substitute(segs, table), strict=True):
+        assert set(out.atoms) <= set(original.atoms)
+        assert "src/alpha.py" not in out.atoms
+
+
+def test_substitution_chains_after_banding_without_restoring_key_names() -> None:
+    payload = {"file_path": "src/alpha.py", "new_string": "run_job(1)\n" * 40, "replace_all": True}
+    text = json.dumps(payload)
+    call = Segment(0, 0, "assistant", "tool_use", text, False, extract_atoms(text), "Edit")
+    banded = quantize_segment(call, 0.0)
+    assert "new_string: " in banded.text
+    segs = [banded, _seg(1, "src/alpha.py again")]
+    table = build_table(segs)
+    done = substitute(segs, table)
+    assert done[0].text != banded.text, "fixture no longer substitutes the call"
+    assert set(done[0].atoms) <= set(banded.atoms) <= set(call.atoms)
+    assert not {"new_string", "replace_all"} & set(done[0].atoms)
+    assert "run_job" in done[0].atoms
+
+
+def _banded_edit(new_string: str) -> Segment:
+    payload = {"file_path": "new_string/a.py", "new_string": new_string, "replace_all": True}
+    text = json.dumps(payload)
+    call = Segment(0, 0, "assistant", "tool_use", text, False, extract_atoms(text), "Edit")
+    return quantize_segment(call, 0.0)
+
+
+def _substitute_after(banded: Segment) -> Segment:
+    segs = [banded, _seg(1, "see new_string/a.py again")]
+    done = substitute(segs, build_table(segs))
+    assert done[0].text.startswith("[P0]"), "fixture no longer substitutes the target"
+    return done[0]
+
+
+def test_a_key_name_only_inside_a_substituted_path_is_not_credited() -> None:
+    # The rendered text still says `new_string: `; only the path held the name as content.
+    banded = _banded_edit("x = 1")
+    assert "new_string" in banded.atoms
+    done = _substitute_after(banded)
+    assert "new_string: " in done.text
+    assert "new_string" not in done.atoms
+
+
+def test_a_key_name_also_present_outside_the_path_stays_credited() -> None:
+    done = _substitute_after(_banded_edit("rename new_string now"))
+    assert "new_string" in done.atoms
+
+
+def test_every_rewrite_leaves_atoms_readable_from_its_atom_source() -> None:
+    # A stale `atom_source` would silently decide the next rewrite's atoms, so each rewrite must
+    # leave it describing exactly the atoms it recorded.
+    banded = _banded_edit("run_job(1)\n" * 40)
+    done = _substitute_after(banded)
+    for before, after in ((None, banded), (banded, done)):
+        assert after.atom_source is not None
+        found = set(atoms_in_decoded(after.atom_source))
+        if before is not None:
+            found &= set(before.atoms)
+        assert set(after.atoms) <= found
+    assert set(done.atoms) == set(atoms_in_decoded(done.atom_source or "")) & set(banded.atoms)
+    assert _seg(0, "untouched prose").atom_source is None
 
 
 def test_the_tail_of_a_hyphenated_name_is_not_tabulated_as_a_path() -> None:

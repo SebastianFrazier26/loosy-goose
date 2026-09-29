@@ -29,7 +29,11 @@ SegmentKind = Literal["prose", "code", "tool_result", "tool_use", "thinking"]
 #    `segments_digest`, so every stored record has to go.
 # 7: neither path pattern may start right after `-` (the drive branch excepted). Removes a
 #    quadratic re-scan, and drops fragment atoms such as the `set.js` tail of a hyphenated name.
-ATOMS_VERSION = 7
+# 8 (2026-09-29): no extractor change — a rewritten segment's atoms are now a subset of its
+#    original's, with the rewrite's own scaffolding masked first (code.TRANSFORMS_VERSION 5,
+#    paths.PATHS_VERSION 5, then 6). Those two stamps protect the affected records; this bump is
+#    the safe extra, free because nothing has been recorded at 7.
+ATOMS_VERSION = 8
 
 # File extensions the bare-filename pattern recognises, shared verbatim with `paths.py` so the
 # path table and the recall metric agree on what a filename is. An allowlist rather than a general
@@ -130,6 +134,11 @@ class Segment:
     # known shape. Deliberately not part of `text`, so it changes no segment's content and no
     # experiment checkpoint's `segments_digest`.
     tool_name: str | None = None
+    # Set by a transform that rewrites `text` with scaffolding of its own (banded call key
+    # prefixes, elision markers, path markers): the decoded content of the new text with that
+    # scaffolding masked, which is what a later rewrite has to read atoms from. None means `text`
+    # is its own atom source. Kept out of `text`, `segments_digest` and every emitted output.
+    atom_source: str | None = None
 
 
 def _json_values(node: Any, out: list[str]) -> None:
@@ -197,8 +206,16 @@ def _backtick_atoms(scan: str) -> Iterator[str]:
 
 
 def extract_atoms(text: str) -> list[str]:
+    return atoms_in_decoded(scannable(text))
+
+
+def atoms_in_decoded(scan: str) -> list[str]:
+    """`extract_atoms` minus the JSON decode, for text that is already a payload's decoded values.
+
+    Running `scannable` over such text again is not a no-op: a lone value that happens to be a
+    JSON object would be decoded a second time and lose its own keys' atoms.
+    """
     seen: dict[str, None] = {}
-    scan = scannable(text)
     # No pattern in _ATOM_PATTERNS captures a group; backticks are handled separately because
     # what they need is tokenisation, not a match.
     candidates = chain(

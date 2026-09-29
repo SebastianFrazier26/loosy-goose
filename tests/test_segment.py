@@ -123,7 +123,7 @@ def test_strip_line_numbers_requires_a_numbered_majority() -> None:
 
 
 def test_atoms_version() -> None:
-    assert ATOMS_VERSION == 7
+    assert ATOMS_VERSION == 8
 
 
 def test_extract_atoms_examples() -> None:

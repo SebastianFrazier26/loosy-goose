@@ -335,6 +335,13 @@ def test_segments_digest_tracks_text_and_kind_but_not_ordering_of_unrelated_runs
     assert segments_digest(a) != segments_digest([_seg(0, "alpha", kind="code"), _seg(1, "beta")])
 
 
+def test_segments_digest_ignores_the_atom_source() -> None:
+    # A transform's bookkeeping, not segmenter output: in the digest it would evict variants.
+    plain = [_seg(0, "alpha")]
+    tagged = [Segment(0, 0, "assistant", "prose", "alpha", False, [], atom_source="beta")]
+    assert segments_digest(plain) == segments_digest(tagged)
+
+
 def test_segments_digest_covers_the_atom_extractor_version() -> None:
     # Atoms are the recall metric's denominator, so a changed extractor invalidates stored
     # records exactly as a changed segmenter does, even though no segment text moves.

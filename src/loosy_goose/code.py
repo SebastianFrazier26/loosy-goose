@@ -20,13 +20,26 @@ from tree_sitter import Node, Parser, Tree
 
 from loosy_goose.segment import (
     Segment,
-    extract_atoms,
+    _json_values,
+    atoms_in_decoded,
     looks_like_code_dump,
+    scannable,
     strip_line_numbers,
 )
 from loosy_goose.tokens import count_tokens
 
 ELISION = "… ({n} lines elided)"
+_ELISION_MARK = re.compile(re.escape(ELISION).replace(re.escape("{n}"), r"\d+"))
+
+
+def mask_elisions(text: str) -> str:
+    """`text` without the elision markers `_elide` inserted.
+
+    The marker's count is a number atom, and the original may hold the same number inside the
+    very lines the marker replaced; intersecting with the original's atoms alone would credit it.
+    """
+    return _ELISION_MARK.sub("", text)
+
 
 # Bump whenever this module's OUTPUT changes for the same input and quality — a new routing rule,
 # a changed budget table, a different call rendering. Experiment records are keyed on it, so a
@@ -53,7 +66,11 @@ ELISION = "… ({n} lines elided)"
 #    that budget selection, not a positional trim, decides what survives, and the one positional
 #    cut that was measured (prose_shrink, 2026-09-21) lost 0.012-0.019 coverage with no recall
 #    gain. Code-shaped arguments are still banded, and the call rendering is unchanged.
-TRANSFORMS_VERSION = 4
+# 5 (2026-09-29): text unchanged; a shrunk segment's atoms are now only atoms its original had,
+#    extracted after masking what the shrinker inserted (call key prefixes, nested keys,
+#    elision markers). Argument key names, JSON-escape fragments and elision counts no longer
+#    enter the atom set.
+TRANSFORMS_VERSION = 5
 
 _FENCE_ALIASES: dict[str, str] = {
     "py": "python",
@@ -557,16 +574,28 @@ def render_call(payload: dict[str, Any]) -> str:
     rejected alternatives were redefining it as a pointer, and keeping it silently.
 
     Key names are kept even though they are the tool's schema rather than session facts, because
-    dropping them makes a Bash call's command and description indistinguishable. They cost tokens
-    but cannot improve recall either: it intersects against atoms from the ORIGINAL segments,
-    where `scannable` strips keys already, so a key name appearing here is never counted. The
-    difference from the tool name is that a key is a substring of the payload being rendered, and
-    that it disambiguates values that would otherwise be unreadable.
+    dropping them makes a Bash call's command and description indistinguishable. They are kept
+    out of the atom set instead (decided 2026-09-29): `render_content` is this rendering with
+    every key masked, and atoms come from that.
     """
+    return "\n".join(_render_lines(payload, keys=True))
+
+
+def render_content(payload: dict[str, Any]) -> str:
+    """`render_call` with the scaffolding it adds masked: no key prefixes, and nested containers
+    reduced to their decoded leaf values the way `scannable` reads the original payload."""
+    return "\n".join(_render_lines(payload, keys=False))
+
+
+def _render_lines(payload: dict[str, Any], *, keys: bool) -> list[str]:
+    # One body for both renderings, so the mask cannot drift from the format it masks.
     target = next((payload[k] for k in _PATH_KEYS if isinstance(payload.get(k), str)), None)
     lines: list[str] = [target] if target else []
     for key, value in payload.items():
         if key in _PATH_KEYS and value == target:
+            continue
+        if not keys:
+            _json_values(value, lines)
             continue
         # Known limitation: a non-string value is re-serialised here, so the braces, quoting and
         # escaping that this rendering exists to remove come back for every nested container —
@@ -575,19 +604,24 @@ def render_call(payload: dict[str, Any]) -> str:
         # than input; recovering the saving needs a non-JSON rendering for containers.
         text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
         lines.append(f"{key}: {text}")
-    return "\n".join(lines)
+    return lines
 
 
 def quantize_tool_use(text: str, quality: float) -> str:
+    return _shrink_tool_use(text, quality)[0]
+
+
+def _shrink_tool_use(text: str, quality: float) -> tuple[str, str]:
+    """(shrunk text, its decoded content with the inserted scaffolding masked)."""
     if quality >= 1.0:
-        return text
+        return text, scannable(text)
     payload = parse_tool_payload(text)
     if payload is None:
-        return quantize_code(text, guess_language(text), quality)
+        out = quantize_code(text, guess_language(text), quality)
+        return out, scannable(mask_elisions(out))
     reduced = _quantize_payload(payload, _payload_language(payload), quality)
-    rendered = (
-        _format_xml_payload(reduced) if text.lstrip().startswith("<") else render_call(reduced)
-    )
+    xml = text.lstrip().startswith("<")
+    rendered = _format_xml_payload(reduced) if xml else render_call(reduced)
     # A shrinker that returns nothing, or that does not strictly shrink, has failed at its one
     # job. Both are reachable: every key can be dropped or empty (`{}` renders to ""), and a
     # payload of nested containers pays back more scaffolding in `render_call` than `_band_arg`
@@ -599,8 +633,12 @@ def quantize_tool_use(text: str, quality: float) -> str:
     # the JSON scaffolding saved; with the name gone those calls shrink strictly and the weaker
     # sign has nothing left to protect.
     if not rendered.strip() or count_tokens(rendered) >= count_tokens(text):
-        return text
-    return rendered
+        return text, scannable(text)
+    if xml:
+        # The XML form reproduces the original's own `<parameter=NAME>` tags, whose names the
+        # original's atoms already hold; only the elision markers are inserted.
+        return rendered, mask_elisions(rendered)
+    return rendered, mask_elisions(render_content(reduced))
 
 
 def quantize_segment(
@@ -616,14 +654,23 @@ def quantize_segment(
     weaken as the rate knob relaxes, so tying its depth to the global rate leaves the cheapest
     tokens in the transcript untouched at exactly the rates where fidelity is cheap elsewhere.
     Defaults to `quality`, so every prior number reproduces until a caller asks otherwise.
+
+    The shrunk segment's atoms are those of its surviving content, restricted to atoms the
+    incoming segment had: recall intersects against the ORIGINAL atoms, so anything a rewrite
+    adds is spent where no recall can return it. The restriction alone is not enough, since
+    inserted scaffolding can coincide with a real original atom; it is masked before extraction.
+    The masked content is kept as `atom_source` for `paths.substitute` to read after this.
     """
     if segment.kind == "tool_use":
         depth = quality if tool_quality is None else tool_quality
-        text = quantize_tool_use(segment.text, depth)
+        text, source = _shrink_tool_use(segment.text, depth)
     elif segment.kind == "code":
         text = quantize_code(segment.text, detect_language(segment, hint=lang), quality)
+        source = scannable(mask_elisions(text))
     else:
         # Only code and tool_use are banded. Prose has no structural cut to make, and the
         # positional one it had was removed in TRANSFORMS_VERSION 4; returned as-is.
         return segment
-    return replace(segment, text=text, protected=False, atoms=extract_atoms(text))
+    had = set(segment.atoms)
+    atoms = [a for a in atoms_in_decoded(source) if a in had]
+    return replace(segment, text=text, protected=False, atoms=atoms, atom_source=source)

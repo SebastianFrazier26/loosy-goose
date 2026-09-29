@@ -7,13 +7,16 @@ from loosy_goose.code import (
     ELISION,
     band_lines,
     detect_language,
+    mask_elisions,
     normalize_language,
     parse_tool_payload,
     quantize_code,
     quantize_segment,
     quantize_tool_use,
+    render_call,
+    render_content,
 )
-from loosy_goose.segment import Segment, extract_atoms
+from loosy_goose.segment import Segment, SegmentKind, extract_atoms
 from loosy_goose.tokens import count_tokens
 
 PY = '''import os
@@ -181,8 +184,9 @@ def test_render_call_spends_nothing_on_json_scaffolding() -> None:
 def test_rendered_atoms_are_a_subset_of_the_original_atoms() -> None:
     # Recall intersects against the atoms of the ORIGINAL text, so anything the rendering adds —
     # the tool name it once prepended matched the identifier pattern — is spent where no recall
-    # can return it. The keys here are single words on purpose: `file_path` and `new_string` are
-    # atoms too, and they are the separate, argued exception (they disambiguate values).
+    # can return it. This checks the rendered text itself, so the keys are single words on purpose:
+    # `new_string` in the text would be an atom here. The segment's recorded atoms mask keys
+    # (test_a_rendered_call_keeps_value_atoms_but_not_key_names).
     text = json.dumps({"content": BODY, "description": "rewrites module_a.py"})
     original = set(extract_atoms(text))
     rendered = set(extract_atoms(quantize_tool_use(text, 0.0)))
@@ -393,3 +397,85 @@ def test_quantize_segment_never_grows_a_tool_use_segment() -> None:
     for text in PAYLOAD_SHAPES:
         seg = Segment(0, 0, "assistant", "tool_use", text, True, [], "TodoWrite")
         assert count_tokens(quantize_segment(seg, 0.0).text) <= count_tokens(text)
+
+
+def _with_atoms(text: str, kind: SegmentKind = "tool_use") -> Segment:
+    return Segment(0, 0, "assistant", kind, text, True, extract_atoms(text), "Edit")
+
+
+# Twelve body lines, one of them holding the literal 12: at quality 0 they collapse into a marker
+# that also says 12.
+ELIDED_TWELVE = (
+    "def f(a):\n"
+    + "".join(f"    v{i} = a + {12 if i == 3 else i}\n" for i in range(12))
+    + "    return v11\n"
+)
+
+
+def test_the_elision_mask_matches_the_marker_it_masks() -> None:
+    for n in (2, 12, 1234):
+        assert mask_elisions("    " + ELISION.format(n=n)).strip() == ""
+    assert mask_elisions("12 lines elided") == "12 lines elided"
+
+
+def test_an_elision_count_is_not_credited_from_lines_it_replaced() -> None:
+    seg = _with_atoms(ELIDED_TWELVE, "code")
+    out = quantize_segment(seg, 0.0)
+    assert ELISION.format(n=12) in out.text, "fixture no longer elides twelve lines"
+    assert "12" in seg.atoms
+    assert "12" not in out.atoms
+
+
+def test_an_elision_count_equal_to_a_kept_number_is_still_credited() -> None:
+    out = quantize_segment(_with_atoms("LIMIT = 12\n\n\n" + ELIDED_TWELVE, "code"), 0.0)
+    assert "LIMIT = 12" in out.text and ELISION.format(n=12) in out.text
+    assert "12" in out.atoms
+
+
+def test_render_content_is_render_call_without_its_key_prefixes() -> None:
+    payload = {"command": "ls src/a.py", "description": "list it"}
+    assert render_call(payload) == "command: ls src/a.py\ndescription: list it"
+    assert render_content(payload) == "ls src/a.py\nlist it"
+
+
+def test_a_rendered_call_keeps_value_atoms_but_not_key_names() -> None:
+    payload = {"file_path": "src/a.py", "new_string": "run_job(TRAIN_RATIO)", "replace_all": True}
+    out = quantize_segment(_with_atoms(json.dumps(payload)), 0.0)
+    assert "new_string: " in out.text and "replace_all: " in out.text
+    assert {"src/a.py", "run_job", "TRAIN_RATIO"} <= set(out.atoms)
+    assert not {"new_string", "replace_all", "file_path"} & set(out.atoms)
+
+
+def test_a_key_name_that_is_also_a_value_atom_stays_credited() -> None:
+    payload = {"command": "grep -n new_string src/a.py", "new_string": "y = 1"}
+    out = quantize_segment(_with_atoms(json.dumps(payload)), 0.0)
+    assert "new_string" in out.atoms
+
+
+def test_nested_keys_and_escape_fragments_do_not_become_atoms() -> None:
+    todos = [{"content": "Step one\nStep two", "status": "pending", "activeForm": "Stepping"}]
+    out = quantize_segment(_with_atoms(json.dumps({"todos": todos, "note": "x" * 400})), 0.0)
+    assert "activeForm" in out.text, "the rendering itself must keep the nested keys"
+    assert "activeForm" not in out.atoms
+    assert not any("\\" in a for a in out.atoms)
+
+
+SUBSET_FIXTURES = [
+    BODY,
+    PY,
+    ELIDED_TWELVE,
+    json.dumps({"file_path": "src/a.py", "old_string": "x_y = 12", "new_string": BODY}),
+    json.dumps({"command": LONG_COMMAND, "description": "runs the_steps"}),
+    json.dumps({"edits": [{"old_string": "a_b", "new_string": ELIDED_TWELVE}]}),
+    "<parameter=command>str_replace</parameter>\n<parameter=path>/w/a.py</parameter>\n"
+    + f"<parameter=new_str>{ELIDED_TWELVE}</parameter>",
+]
+
+
+@pytest.mark.parametrize("quality", [0.0, 0.3, 0.7, 1.0])
+@pytest.mark.parametrize("text", SUBSET_FIXTURES)
+def test_shrunk_atoms_are_a_subset_of_the_original_atoms(text: str, quality: float) -> None:
+    kind: SegmentKind = "tool_use" if text.startswith(("{", "<")) else "code"
+    seg = _with_atoms(text, kind)
+    out = quantize_segment(seg, quality)
+    assert set(out.atoms) <= set(seg.atoms)
