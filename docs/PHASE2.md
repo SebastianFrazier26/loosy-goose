@@ -579,6 +579,72 @@ scaling the mid transcript's 1,381 s by tokens (18 transcripts = 28.5× it): ~11
 grows with tokens squared the lzma arms alone could reach ~19 h, but `swe-gym_row214` ran below
 the linear estimate, so ~11 h is the likelier figure.
 
+## Decided 2026-09-29
+
+Read from the full Experiment F grid (`docs/results/exp_f_summary.txt`, 8,160 jobs, 0 failures,
+run 2026-09-22 to 28) and the Experiment G grid (`docs/results/exp_g_summary.txt`, 648 jobs, 0
+failures). Both compare at matched achieved rate against exp_d's reference records. Three of the
+items below (the junk-bytes check, the new-facts tests, the per-token smoke) come from scratch
+analyses that are not committed scripts, and say so where they appear.
+
+- **Experiment F is cut to four lazy arms.** `zlib-lazy`, `lzma-lazy`, `supersede+zlib-lazy` and
+  `supersede+lzma-lazy` stay in the grid; the other ten arms (exact, one-pass and stochastic
+  greedy) are out. The full 14-arm summary is kept verbatim in `exp_f_summary.txt`, because a
+  later run evicts the cut arms' records. The headline, measured, from that file's "each arm minus
+  leverage and minus supersede+leverage" block: compression-based selection trades atom recall
+  for coverage. The best of them, `supersede+lzma-lazy`, against the shipped
+  `supersede+leverage` is −0.007 / −0.026 / −0.023 on final-state recall and +0.028 / +0.041 /
+  +0.044 on coverage at 2x / 3x / 4x. It also costs 39.82 s per 100k tokens against 0.16 s (the
+  cost block), about 250x. No compression arm beats `supersede+leverage` on recall at any of the
+  three rates.
+- **The junk-bytes check is inconclusive.** The question was whether exact greedy's lower recall
+  comes from keeping junk: segments that compress badly because they are noise. The segments only
+  exact greedy picked were less compressible than the ones both selectors picked, but they were
+  not junkier. The check does not show junk is the cause, and does not rule it out. Scratch
+  analysis, not a committed script.
+- **The new-facts hypothesis is supported on the raw pool and weaker after supersession.** The
+  hypothesis: exact greedy's lower recall is explained by chasing byte novelty rather than new
+  facts. Three tests, all in scratch analyses, not committed scripts:
+  - T1 was tautological and is not evidence. Recall counts atoms in kept segments, so "segments
+    that add new atoms raise recall" restates the metric.
+  - T2 supports it on the raw pool (76.8%) and more weakly after supersession (65.1%, one stratum
+    over).
+  - T3: zlib's novelty does not track fact novelty (median Spearman rho −0.085). Leverage's raw
+    score tracks it, weakly (+0.194).
+- **Experiment G: leverage times word novelty moves along the frontier; it does not beat it.**
+  The selector (`novelty_select.py`) scores a candidate as its leverage times (the share of its
+  plain words the kept set does not hold yet) to the power alpha, and fills the budget by lazy
+  greedy. Plain words are lowercase letter runs of three or more characters, minus any word found
+  in more than half the pool's segments. Alpha 0 is `supersede+leverage` exactly, so it is read
+  from exp_d rather than run. Arms at alpha 0.5, 1 and 2, 648 jobs, 0 failures. Measured, from
+  `exp_g_summary.txt`, against `supersede+leverage` at 2x / 3x / 4x across the three alphas:
+  final-state recall +0.011 to +0.013 / +0.039 / +0.029 to +0.040, coverage −0.021 to −0.028 /
+  −0.044 to −0.046 / −0.053 to −0.061. Alpha barely matters. The knee does not move: 0.601 at
+  alpha 0.5 and 1 (17 of 18 transcripts reach the 0.9 floor) against 0.598 (16 of 18). Alpha 2
+  reads 0.617, but it reaches the floor on 18 of 18, so it averages over a transcript the others
+  do not reach and is not comparable. Cost is the same (0.15 to 0.17 s per 100k tokens against
+  0.16). The smoke on `trace-commons_ba1b4916` showed final-state recall rising 0.471 to 0.806 at
+  keep 0.3 (+0.33); that transcript was an outlier the 18-transcript average did not repeat.
+  Inferred, not measured directly: this is a move along the facts-versus-meaning frontier at
+  about the same exchange rate as leverage against TF-IDF, not a better point on it. At 3x,
+  leverage against `tfidf` is +0.091 recall for −0.094 coverage (0.636 against 0.545, 0.820
+  against 0.914; `exp_f_summary.txt` distortion block); novelty is +0.039 for −0.044 to −0.046.
+- **The per-token variant was smoked and deliberately not run on the grid.** It ranks by the
+  novelty-discounted gain divided by the segment's tokens, at alpha 0.5. It is in the exp_g plan
+  as `supersede+leverage+novelty-per-token@0.5`, with 0 of 216 records, and the summary prints it
+  as `missing`. The smoke ran on two public transcripts, `trace-commons_ba1b4916` and
+  `trace-commons_11ef2190`. It swings hard toward coverage and away from recall: on
+  `trace-commons_ba1b4916` at keep 0.33, final-state recall 0.817 to 0.386 and coverage 0.829 to
+  0.931, against raw-gain novelty at 0.5. A per-token control at alpha 0 lands near per-token at
+  0.5, so it is dividing by tokens (density), not novelty, that drives the swing. The evidence is
+  two transcripts; the smoke output is not a committed file.
+- **Decision: `supersede+leverage` stays the shipped default.** Neither compression-based
+  selection nor word novelty improves both metrics at once; each buys one with the other. No
+  downstream task evaluation exists to price the two in one currency, so the default does not
+  move. `novelty_select` (raw and `per_token`) stays in the repo as a measured, unshipped option.
+  Rejected: shipping novelty at alpha 0.5 for its recall gain, which is the same values argument
+  that kept path substitution opt-in (see [Decided 2026-09-16](#decided-2026-09-16)).
+
 ## Spectral versus TF-IDF: two statistics, not one verdict
 
 Phase 1 closed on "no spectral method has yet been shown to beat budget-shaped TF-IDF", and

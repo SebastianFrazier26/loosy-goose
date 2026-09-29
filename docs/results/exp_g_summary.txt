@@ -1,0 +1,66 @@
+exp_g: leverage x word novelty. 18 transcripts checkpointed, 18 with exp_d references (leverage, supersede+leverage).
+
+method                                      planned  present   failed  missing
+------------------------------------------------------------------------------
+supersede+leverage+novelty@0.5                  216      216        0        0
+supersede+leverage+novelty@1                    216      216        0        0
+supersede+leverage+novelty@2                    216      216        0        0
+supersede+leverage+novelty-per-token@0.5        216        0        0      216
+
+Not run yet: supersede+leverage+novelty-per-token@0.5. No records by design (left out of a --methods
+run); their cells below read 'missing' and are never averaged as zero.
+
+
+== distortion at achieved rate 0.5 / 0.33 / 0.25 ==
+*n/N = only n of N transcripts reached that rate; n/a = none did.
+method                                          recall@0.5    recall_f@0.5    coverage@0.5     recall@0.33   recall_f@0.33   coverage@0.33     recall@0.25   recall_f@0.25   coverage@0.25
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+leverage                                       0.782*17/18     0.794*17/18     0.882*17/18           0.613           0.636           0.820           0.527           0.552           0.781
+supersede+leverage                             0.759*16/18     0.836*16/18     0.895*16/18     0.591*17/18     0.654*17/18     0.821*17/18           0.516           0.566           0.796
+supersede+leverage+novelty@0.5                 0.771*16/18     0.849*16/18     0.874*16/18     0.629*17/18     0.694*17/18     0.777*17/18           0.544           0.595           0.743
+supersede+leverage+novelty@1                   0.771*16/18     0.849*16/18     0.871*16/18     0.628*17/18     0.693*17/18     0.775*17/18           0.549           0.600           0.741
+supersede+leverage+novelty@2                   0.767*17/18     0.844*17/18     0.868*17/18     0.628*17/18     0.693*17/18     0.775*17/18           0.554           0.606           0.735
+supersede+leverage+novelty-per-token@0.5           missing         missing         missing         missing         missing         missing         missing         missing         missing
+
+== each alpha minus supersede+leverage (alpha=0, shipped default) and minus leverage, matched achieved rate ==
+Positive = the arm keeps more. *n/N = transcripts where both curves reach the rate.
+pair                                                                           d recall_f@2x   d coverage@2x   d recall_f@3x   d coverage@3x   d recall_f@4x   d coverage@4x
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+supersede+leverage+novelty@0.5 - supersede+leverage                             +0.013*16/18    -0.021*16/18    +0.039*17/18    -0.044*17/18          +0.029          -0.053
+supersede+leverage+novelty@1 - supersede+leverage                               +0.013*16/18    -0.024*16/18    +0.039*17/18    -0.046*17/18          +0.034          -0.055
+supersede+leverage+novelty@2 - supersede+leverage                               +0.011*16/18    -0.028*16/18    +0.039*17/18    -0.046*17/18          +0.040          -0.061
+supersede+leverage+novelty-per-token@0.5 - supersede+leverage                        missing         missing         missing         missing         missing         missing
+supersede+leverage+novelty@0.5 - leverage                                       +0.065*16/18    -0.004*16/18    +0.076*17/18    -0.036*17/18          +0.043          -0.037
+supersede+leverage+novelty@1 - leverage                                         +0.065*16/18    -0.007*16/18    +0.075*17/18    -0.038*17/18          +0.049          -0.040
+supersede+leverage+novelty@2 - leverage                                         +0.063*16/18    -0.011*16/18    +0.076*17/18    -0.038*17/18          +0.055          -0.046
+supersede+leverage+novelty-per-token@0.5 - leverage                                  missing         missing         missing         missing         missing         missing
+
+== per-token minus raw-gain ranking, same alpha ==
+Positive = ranking by gain per token keeps more than ranking by raw gain.
+pair                                                                           d recall_f@2x   d coverage@2x   d recall_f@3x   d coverage@3x   d recall_f@4x   d coverage@4x
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+supersede+leverage+novelty-per-token@0.5 - supersede+leverage+novelty@0.5            missing         missing         missing         missing         missing         missing
+
+== knee: lowest achieved rate still at atom_recall_final >= 0.9 ==
+Token-weighted mean over transcripts that reach the floor; lower is better. n = those
+transcripts / transcripts with the method.
+method                                        knee       n
+----------------------------------------------------------
+leverage                                     0.680   16/18
+supersede+leverage                           0.598   16/18
+supersede+leverage+novelty@0.5               0.601   17/18
+supersede+leverage+novelty@1                 0.601   17/18
+supersede+leverage+novelty@2                 0.617   18/18
+supersede+leverage+novelty-per-token@0.5   missing     0/0
+
+== cost: median seconds per 100k tokens ==
+Per transcript: median elapsed_seconds over its ratios; then the median over
+transcripts. References are exp_d's own timings.
+method                                        s/100k    n
+---------------------------------------------------------
+leverage                                        0.17   18
+supersede+leverage                              0.16   18
+supersede+leverage+novelty@0.5                  0.17   18
+supersede+leverage+novelty@1                    0.15   18
+supersede+leverage+novelty@2                    0.15   18
+supersede+leverage+novelty-per-token@0.5     missing    0

@@ -13,6 +13,7 @@ is Phase 2, re-baselined 2026-09-16/18. Interpretation lives in [../PHASE1.md](.
 | `exp_c_summary.txt` | `experiments/exp_c_code.py` — C1 banding, C2 supersession, C3 embedder comparison |
 | `exp_d_summary.txt` | `experiments/exp_d_curves.py` — Phase 2 rate-distortion grid at matched budgets, re-baselined 2026-09-16/18 under `ATOMS_VERSION` 5 (672-job grid; `topics` rows omitted) |
 | `exp_f_summary.txt` | `experiments/exp_d_curves.py --grid exp_f` — Experiment F, compression-based selectors (14 arms incl. seed variants), 2026-09-22 to 28; verbatim, since 10 of the arms were cut from the grid on 2026-09-29 |
+| `exp_g_summary.txt` | `experiments/exp_d_curves.py --grid exp_g` — Experiment G, leverage x word novelty at alpha 0.5 / 1 / 2 (648 jobs, 0 failures), regenerated 2026-09-29 from the checkpoints; the `novelty-per-token@0.5` rows read `missing` on purpose, see below |
 
 Full per-transcript JSON and plots are **not** committed; they land in the gitignored
 `experiments/output/` when the scripts run.
@@ -44,6 +45,15 @@ Experiment E analysis over the same checkpoints is `experiments/output/exp_e_v5.
 timing row for `supersede+band+leverage` is contaminated by cross-run cache hits — see
 `docs/PHASE2.md`, "Decided 2026-09-18". Regenerate with `uv run python experiments/exp_d_curves.py
 --force`, which takes 6–24 hours depending on what else the machine is doing.
+
+**`exp_g_summary.txt` — the per-token arm is empty by design.** The exp_g plan carries four arms,
+and `supersede+leverage+novelty-per-token@0.5` has 0 of its 216 records: it was smoked on two
+public transcripts and deliberately never run on the grid (see `docs/PHASE2.md`, "Decided
+2026-09-29"). The summary prints its cells as `missing`; they are never averaged as zero, and the
+other three arms' numbers do not depend on it. The file was regenerated without running any job,
+by calling `experiments/exp_g_novelty.py`'s `write_summary_with` over the stored checkpoints (the
+runner has no analysis-only flag); the three raw-gain arms' numbers are identical to the run's own
+summary, which predates the per-token arm and so did not list it.
 
 `exp_a_summary.txt`, `exp_b_summary.txt` and `exp_c_summary.txt` report Phase 1 results whose
 conclusions are relative — stability against a pre-registered threshold, methods against each
