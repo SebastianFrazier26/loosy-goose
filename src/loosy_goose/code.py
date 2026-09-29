@@ -470,7 +470,7 @@ def _payload_language(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def _shrink_string(text: str, lang: str | None, quality: float) -> str:
+def _band_string(text: str, lang: str | None, quality: float) -> str:
     """Band a code-shaped string argument; pass anything else through verbatim.
 
     Shape, not key name: a code body is banded wherever it sits. Prose and shell arguments are
@@ -482,13 +482,13 @@ def _shrink_string(text: str, lang: str | None, quality: float) -> str:
     return text
 
 
-def _shrink_arg(value: Any, lang: str | None, quality: float, *, depth: int) -> Any:
+def _band_arg(value: Any, lang: str | None, quality: float, *, depth: int) -> Any:
     if isinstance(value, str):
-        return _shrink_string(value, lang, quality)
+        return _band_string(value, lang, quality)
     if depth >= _MAX_ARG_DEPTH:
         return value
     if isinstance(value, list):
-        return [_shrink_arg(v, lang, quality, depth=depth + 1) for v in value]
+        return [_band_arg(v, lang, quality, depth=depth + 1) for v in value]
     if isinstance(value, dict):
         return _quantize_payload(value, lang, quality, depth=depth + 1)
     return value
@@ -511,7 +511,7 @@ def _quantize_payload(
             # The target is the identifying fact and supersession's key: never shrunk.
             out[key] = value
         else:
-            out[key] = _shrink_arg(value, lang, quality, depth=depth)
+            out[key] = _band_arg(value, lang, quality, depth=depth)
     return out
 
 
@@ -570,7 +570,7 @@ def render_call(payload: dict[str, Any]) -> str:
             continue
         # Known limitation: a non-string value is re-serialised here, so the braces, quoting and
         # escaping that this rendering exists to remove come back for every nested container —
-        # `_shrink_arg` shrank its string leaves, but the scaffolding around them is repaid in
+        # `_band_arg` banded its string leaves, but the scaffolding around them is repaid in
         # full. The `quantize_tool_use` size guard is what stops that from making output larger
         # than input; recovering the saving needs a non-JSON rendering for containers.
         text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
@@ -590,7 +590,7 @@ def quantize_tool_use(text: str, quality: float) -> str:
     )
     # A shrinker that returns nothing, or that does not strictly shrink, has failed at its one
     # job. Both are reachable: every key can be dropped or empty (`{}` renders to ""), and a
-    # payload of nested containers pays back more scaffolding in `render_call` than `_shrink_arg`
+    # payload of nested containers pays back more scaffolding in `render_call` than `_band_arg`
     # saved. An empty segment is the worse of the two — it still reaches `embed_texts` in the
     # coverage metric and contributes a degenerate vector to it.
     # A tie falls back too: a rendering that costs exactly what the JSON cost has bought nothing,

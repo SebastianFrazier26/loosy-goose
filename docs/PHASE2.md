@@ -1,7 +1,8 @@
 # Phase 2 — plan, decisions, and what is still open
 
-Status as of 2026-09-10: in progress. Phase 1's results are in [PHASE1.md](PHASE1.md); the
-algorithm specification is in [DESIGN.md](DESIGN.md). This document is the working plan — what
+Status as of 2026-09-29: in progress. The shipped pipeline is settled; the items under
+[Still open](#still-open--do-not-treat-as-settled) and in the [Queue](#queue) are not. Phase 1's
+results are in [PHASE1.md](PHASE1.md); the algorithm specification is in [DESIGN.md](DESIGN.md). This document is the working plan — what
 Phase 2 is trying to settle, which decisions are already locked and why, and which are not.
 
 Phase 1 ended on an uncomfortable note: the one unambiguous win (supersession) was not
@@ -9,6 +10,173 @@ spectral, and no spectral method had been shown to beat budget-shaped TF-IDF at 
 budget. Phase 2 set out to settle that, and to find compression outside `code`, which is a small
 share of a real agentic transcript. The first half turned out to be the wrong question — see
 [Spectral versus TF-IDF](#spectral-versus-tf-idf-two-statistics-not-one-verdict).
+
+## Current state (2026-09-29)
+
+**What ships.** `loosy-goose compress` runs supersession, then leverage scoring, then selection
+into a token budget (`src/loosy_goose/pipeline.py`). Two stages are opt-in and off by default:
+`--band` (AST-depth banding of code and code-shaped tool arguments) and `--paths` (path table
+plus `[P<n>]` markers). The rate is the keep ratio, set by `--level light|medium|heavy` (0.50 /
+0.33 / 0.25, default `medium`), `--keep` (0.10–0.80) or `--target-tokens`. See queue item 14.
+
+**Headline numbers** for the default, `supersede+leverage`, on 18 transcripts at matched achieved
+rate (`docs/results/exp_d_band_recheck_summary.txt`):
+
+| | 2x | 3x | 4x |
+| --- | --- | --- | --- |
+| final-state atom recall | 0.836 | 0.654 | 0.566 |
+| semantic coverage | 0.895 | 0.821 | 0.796 |
+
+Its knee (lowest rate still holding final-state recall of 0.9) is 0.598, the best in that table.
+Supersession alone removes 25.9% of tokens losslessly ([PHASE1.md](PHASE1.md), C2).
+
+**Tried, and did not beat the default** — each one buys one metric with the other:
+
+- Experiment F, compression-based selection. The best arm, `supersede+lzma-lazy`, is −0.007 /
+  −0.026 / −0.023 on recall and +0.028 / +0.041 / +0.044 on coverage at 2x / 3x / 4x, at 39.82 s
+  per 100k tokens against 0.16 s (`docs/results/exp_f_summary.txt`).
+- Experiment G, leverage times word novelty: +0.011 to +0.040 recall, −0.021 to −0.061 coverage
+  across the three rates (`docs/results/exp_g_summary.txt`). The per-token variant swung further
+  toward coverage on a two-transcript smoke and was not run on the grid.
+- `--band`, re-checked after the tail cuts were removed: every gap at 2x/3x/4x is 0.013 or less,
+  and its knee is worse, 0.612.
+
+Details in [Decided 2026-09-29](#decided-2026-09-29),
+[Experiment F](#experiment-f-selection-by-compressed-novelty-set-up-2026-09-22) and
+[Experiment G](#experiment-g-leverage-times-word-novelty-2026-09-29).
+
+**Open.** Per-kind scoring (queue item 8), regenerable surveys (item 13, with its local-versus-
+public sub-decision), the quadratic slash-path pattern (item 15), the background prior (see
+[Still open](#still-open--do-not-treat-as-settled)), and downstream task evaluation, which is the
+only thing that could price recall and coverage in one currency.
+
+## Still open — do not treat as settled
+
+Four items that used to live here were decided on 2026-09-10 and have moved to
+[Decided](#decided-2026-09-10) below. What remains genuinely open:
+
+- **How to drive the whole per-kind quality table from a single `--quality` knob.**
+  (Superseded 2026-09-29: `--quality` is removed. The rate is set by `--keep`, `--level` or
+  `--target-tokens` — queue item 14. Driving a per-kind table from one knob stays a design idea in
+  [DESIGN.md](DESIGN.md#open-design-questions), not wired.)
+- **Segment-level versus span-level trimming for prose.** (Decided 2026-09-24: segment-level.
+  `prose_shrink` was null on recall twice — see [Decided 2026-09-24](#decided-2026-09-24) and
+  [Decided 2026-09-21](#decided-2026-09-21).)
+- **Whether the background prior should be generic, personalized, or both layered.**
+
+### Parked with an argued exception — decided not to decide yet
+
+These are known, they have a case on both sides, and none of them is being fixed before the grid
+runs. Recorded here so they are not rediscovered as surprises.
+
+- **Argument key names still enter the atom set from rendered output.** `render_call` keeps key
+  names for readability, and `old_string`, `new_string` and the rest match the snake-case
+  identifier pattern, so the *rendered* segment's atoms contain them while the *original*
+  segment's do not — `scannable` strips keys there. This is the identical objection that removed
+  the tool name (see below), and it is not being applied here for one reason the tool name could
+  not offer: a key is a substring of the payload being rendered, so it is verbatim in a way a
+  metadata field is not, and dropping it makes a Bash call's `command` and `description`
+  indistinguishable. The cost is the same in kind though smaller in size — tokens spent on atoms
+  recall can never credit. Deferred, not settled. (The target path key is not affected: the
+  target renders as a bare line, without its key.)
+- **A sentence-final path loses the disagreement.** In `edit src/alpha.py.` the slash pattern
+  swallows the trailing full stop, so `find_paths` returns `src/alpha.py.` while `extract_atoms`
+  strips it and returns `src/alpha.py`. The table is keyed on the first, the metric on the second,
+  and such a mention therefore never substitutes. Pre-existing, not introduced by any of today's
+  work. The fix has to move `segment.py` and `paths.py` in one change — they share the pattern
+  precisely so the table cannot claim atoms the metric will not count — which makes it an
+  `ATOMS_VERSION` bump and a full re-baseline for a small population. (Superseded 2026-09-29:
+  fixed as `PATHS_VERSION` 3 in the `ATOMS_VERSION` 5 batch, 2026-09-16, commit 8434893.)
+- **`google_creds.json.enc` yields no filename atom.** It yields `google_creds` from the
+  identifier pattern and nothing more, because the dotted-chain rule cannot tell it from
+  `process.env.NODE_ENV`. It is structurally the same case, and readmitting it means readmitting
+  chains. Accepted as the price of the rule; one mention in the corpus.
+- **The slash-path pattern is quadratic on pathological input.** 12,000 repetitions of `a.-`
+  takes about 1.3 seconds. Contained in practice, because segment text is bounded by `max_chars`
+  and no real transcript looks like that — but it is contained by an unrelated bound rather than
+  by the pattern, and an earlier review's claim that every atom pattern runs in under 0.003s does
+  not hold for that input. Still open: queue item 15.
+
+## Queue
+
+1. ~~Checkpointing so variants accumulate instead of invalidating the whole grid.~~ Done.
+2. ~~`drop_top` swept alone.~~ Done; null, see above.
+3. ~~Path substitution arms B/C/D wired into `experiments/exp_d_curves.py`.~~ Done, and swept at
+   both `min_mentions` settings for C and D — five path arms in all. Measured 2026-09-15 under
+   `ATOMS_VERSION` 4 and read in 2026-09-16 — see [What the arms said](#what-the-arms-said).
+4. ~~A dedicated `tool_use` shrinker.~~ Built — see [The tool_use channel](#the-tool_use-channel).
+   ~~Still to do: sweep the depth knob as its own variant.~~ Swept 2026-09-16/18, null — see
+   [Decided 2026-09-18](#decided-2026-09-18). The stale channel table under
+   [The tool_use channel](#the-tool_use-channel) still has no regenerating script; that part
+   stays open. **Closed 2026-09-29:** the table's columns no longer exist after
+   `TRANSFORMS_VERSION` 4, so it is annotated as historical in place rather than regenerated.
+5. ~~Format-aware shrinker for the prose *channel*.~~ Measured 2026-09-18 to 21 as the
+   `prose_shrink` variant and closed as a null — see [Decided 2026-09-21](#decided-2026-09-21).
+   The competing-budget argument held up exactly: shrinking bought back the atoms it dropped and
+   nothing more. `shrink_prose` stays wired into tool arguments (superseded 2026-09-29: removed
+   in `TRANSFORMS_VERSION` 4). A `thinking` shrinker still cannot be evaluated — the corpus
+   contains exactly one `thinking` segment.
+6. ~~Numbered-file routing fix, measured against path substitution before stacking. Costs a full
+   re-baseline when it lands, since it moves segment kind and text.~~ Done: landed as
+   `ATOMS_VERSION` 5, 2026-09-16 (commit 8434893; see the version note in `segment.py`).
+7. ~~Untangle code-trimming depth from compression level (`_band` currently ties quality to the
+   keep ratio).~~ Closed 2026-09-29: `--band` is a wash and the depth knob saturates below about
+   1/3 (see [Decided 2026-09-29](#decided-2026-09-29)), so there is nothing to untangle for.
+8. Three-way per-kind scoring comparison: separate space, shared normalized, separate budget.
+   **Open.**
+9. ~~Pipeline-level config object, once there are enough real knobs to justify one.~~ Done:
+   `pipeline.PipelineOptions`, 2026-09-16 (commit 79e42a1).
+10. ~~Joint and interaction runs, hypothesis-driven rather than exhaustive.~~ Closed 2026-09-29: no
+    hypothesis has been named that would need one.
+11. ~~**Whether Experiment E should ever see variants.**~~ It currently hard-excludes them, which was
+    the right fix for a defect that had been averaging them into the baseline — but "never" was
+    the safe answer under time pressure, not a considered one. Nothing is lost by waiting:
+    per-kind recall and coverage are stored on every record, so any variant analysis is
+    re-derivable from the existing checkpoints with zero recompute. **Closed 2026-09-29:** no need
+    now; the data is already stored, so the question can be reopened at no cost.
+12. ~~Unify the two sources of a tool's name (`supersede`'s positional rebuild against
+    `Segment.tool_name`), immediately after the grid — see
+    [Decided](#decided-2026-09-10) for why it waits.~~ Done: `SUPERSEDE_VERSION` 2 reads
+    `Segment.tool_name`, 2026-09-16 (commit 8434893).
+13. **Make both surveys regenerable, in one pass.** **Open** (the `survey_paths.py` half; the
+    `tool_use` table half is moot, see item 4). Two separate figures in this document cannot
+    currently be reproduced against the code that is actually running, for two different reasons,
+    and the fix is the same shape for both.
+    - The `tool_use` channel table was measured ad hoc: no committed script produces it, so it
+      cannot be re-derived at all. It is stale under `TRANSFORMS_VERSION` 2, which dropped the
+      tool name and changed `shrink_prose`'s whitespace, moving every column.
+    - `experiments/survey_paths.py` exists but carries its own hard-coded copies of the v1 path
+      patterns, deliberately, so running it today re-measures the old rules rather than the
+      current ones. Re-point it at `segment._FILE_EXTENSIONS`, the way `paths.py` already does,
+      and the numbers become regenerable by construction rather than by discipline.
+    Neither touches `src/`, so this is read-only measurement work that can land any time. Doing it
+    alongside item 4's depth sweep is the natural pairing — that sweep needs the same
+    instrumentation. (Superseded 2026-09-29: the depth sweep ran on 2026-09-16/18 without it, and
+    the `tool_use` table is now historical.)
+    **Open sub-decision, not yet made:** whether these surveys read `data/local/` (counts only and
+    never quoted, as today, which keeps continuity with the existing figures) or restrict to the
+    public corpora (so every published number is reproducible by someone without the local
+    sessions, at the cost of changing what the numbers mean).
+14. **Compression level as a bounded, user-facing control.** Expose the global keep ratio as a
+    slider bounded to the span the grid actually measured (keep 80% down to keep 10%; the 5% rate
+    is reached by fewer than half the transcripts, so it is refused rather than offered), with
+    tick marks at the operating points (2x/3x/4x) and named presets — low, medium, high, extreme —
+    mapped to fixed ratios. Blocked on the knob decision under
+    [Decided 2026-09-16](#decided-2026-09-16), which waits for the core to land. Still open
+    inside it: what each preset maps to, and whether the aggressive preset is what turns banding
+    on. Raised 2026-09-16.
+    **Decided 2026-09-29** (commit 969b495): three presets, `--level light|medium|heavy` = keep
+    0.50 / 0.33 / 0.25, default `medium`. The dial is `--keep`, in 0.01 steps over 0.10–0.80.
+    `--target-tokens N` sets the budget directly; a target implying a keep ratio outside that
+    range is clamped to it, with a warning.
+    Presets never turn on banding. `--quality` is removed.
+15. **The slash-path atom pattern is quadratic on pathological input** (`segment.py`, the second
+    pattern in `_ATOM_PATTERNS`). About 1.3 seconds on 12,000 repetitions of `a.-`, 36,000
+    characters — see [Parked](#parked-with-an-argued-exception--decided-not-to-decide-yet). **Open.**
+    Any change to the pattern is an `ATOMS_VERSION` bump and a full re-baseline, since atoms are
+    the recall metric's denominator.
+
+Resumption and downstream task evaluation are deferred by decision, not forgotten.
 
 ## The measurement problem that had to be fixed first
 
@@ -146,7 +314,9 @@ below.
   same family costs 60 more records to re-answer it. Rejected: including it for symmetry with the
   `drop_top` variants, which is a reason about the shape of the grid rather than about the
   question. If the arms move `ridge` and `leverage` in *opposite* directions, that symmetry
-  becomes worth paying for and this should be revisited.
+  becomes worth paying for and this should be revisited. (2026-09-29: the trigger never fired.
+  The other swept methods had the same shape as `supersede+leverage` — see
+  [What the arms said](#what-the-arms-said).)
 - **`protect=code_only` is swept on the base variant alone.** It exists to price the old binary
   protect flag against `protect=none`, which is a question about the baseline, and no variant
   changes the answer. Guarding only the path arms left 36 `drop_top` × `code_only` records that
@@ -295,378 +465,8 @@ along with it, so it moves `segments_digest` — which is the input fingerprint,
 version stamp is scoped around. Every checkpoint in the grid is discarded and all 600 jobs re-run,
 6–12 hours, and this is not the moment to spend that.
 
-## Still open — do not treat as settled
-
-Four items that used to live here were decided on 2026-09-10 and have moved to
-[Decided](#decided-2026-09-10) below. What remains genuinely open:
-
-- **How to drive the whole per-kind quality table from a single `--quality` knob.**
-- **Segment-level versus span-level trimming for prose.**
-- **Whether the background prior should be generic, personalized, or both layered.**
-
-### Parked with an argued exception — decided not to decide yet
-
-These are known, they have a case on both sides, and none of them is being fixed before the grid
-runs. Recorded here so they are not rediscovered as surprises.
-
-- **Argument key names still enter the atom set from rendered output.** `render_call` keeps key
-  names for readability, and `old_string`, `new_string` and the rest match the snake-case
-  identifier pattern, so the *rendered* segment's atoms contain them while the *original*
-  segment's do not — `scannable` strips keys there. This is the identical objection that removed
-  the tool name (see below), and it is not being applied here for one reason the tool name could
-  not offer: a key is a substring of the payload being rendered, so it is verbatim in a way a
-  metadata field is not, and dropping it makes a Bash call's `command` and `description`
-  indistinguishable. The cost is the same in kind though smaller in size — tokens spent on atoms
-  recall can never credit. Deferred, not settled. (The target path key is not affected: the
-  target renders as a bare line, without its key.)
-- **A sentence-final path loses the disagreement.** In `edit src/alpha.py.` the slash pattern
-  swallows the trailing full stop, so `find_paths` returns `src/alpha.py.` while `extract_atoms`
-  strips it and returns `src/alpha.py`. The table is keyed on the first, the metric on the second,
-  and such a mention therefore never substitutes. Pre-existing, not introduced by any of today's
-  work. The fix has to move `segment.py` and `paths.py` in one change — they share the pattern
-  precisely so the table cannot claim atoms the metric will not count — which makes it an
-  `ATOMS_VERSION` bump and a full re-baseline for a small population.
-- **`google_creds.json.enc` yields no filename atom.** It yields `google_creds` from the
-  identifier pattern and nothing more, because the dotted-chain rule cannot tell it from
-  `process.env.NODE_ENV`. It is structurally the same case, and readmitting it means readmitting
-  chains. Accepted as the price of the rule; one mention in the corpus.
-- **The slash-path pattern is quadratic on pathological input.** 12,000 repetitions of `a.-`
-  takes about 1.3 seconds. Contained in practice, because segment text is bounded by `max_chars`
-  and no real transcript looks like that — but it is contained by an unrelated bound rather than
-  by the pattern, and an earlier review's claim that every atom pattern runs in under 0.003s does
-  not hold for that input.
-
-## Decided 2026-09-10
-
-- **A defined pointer is admissible in retained text, so arm D may ship.** Losslessness was
-  never the goal — whole segments are discarded on purpose. The verbatim property was only ever
-  about the text that *survives*, and a marker whose definition ships in the same output has
-  reworded nothing and invented nothing. Rejected: requiring every retained span to be quotable
-  as-is, which forfeits path substitution's token saving and its recall guarantee together, and
-  rules out every future side-table mechanism on the same grounds. See
-  [DESIGN.md](DESIGN.md#pipeline).
-- **`min_mentions` is measured, not picked.** Arms C and D are each swept at both 1 and 2 (120
-  extra records between them), and the per-transcript table below prices what the extra rows cost
-  against what they guarantee. Rejected: locking either value, since the doc already recorded this
-  as a genuine tradeoff rather than a tuning constant — that is an argument for measuring it.
-  Sweeping C as well as D was added later the same day; see
-  [The path arms](#the-path-arms).
-- **The two distortion metrics are separate statistics and are never collapsed.** See below.
-- **`tool_use` tolerates the most loss of any channel.** A tool call is repetitive scaffolding;
-  what matters is that a call happened against a target, not the serialized arguments. This
-  reframes a question Phase 1 recorded as "emit `tool_use` as readable text rather than
-  `json.dumps`": the answer is not a prettier format but a far more aggressive shrinker, and
-  since shrinking is a downstream transformation like AST banding it is deliberately outside
-  `segments_digest` and costs no re-baseline. The field bander that was too conservative has since
-  been replaced — see [The tool_use channel](#the-tool_use-channel).
-- **The tool's name is not emitted in a rendered call.** `render_call` knows the name and drops
-  it. Two reasons, and the second is the decisive one. It reaches the renderer from the transcript
-  record's metadata rather than from the segment's own text, so it is neither a verbatim span of
-  the original nor a mechanically-defined pointer — the only two things the emitted text is
-  allowed to contain, per the pointer decision above. And it is strictly bad on the metric rather
-  than a trade: `MultiEdit`, `TodoWrite` and `NotebookEdit` all match the identifier pattern, so
-  they enter the rendered segment's atoms, while recall intersects against the atoms of the
-  *original* text, which never held them. The tokens cannot buy recall back and they count against
-  the ratio. Rejected: keeping it and redefining it as a mechanically-defined pointer, which fails
-  because a pointer's definition has to ship in the same output and there is nothing here to
-  point at. Also rejected: keeping it silently, on readability. A side effect worth recording —
-  the size guard in `quantize_tool_use` could tighten from "not larger" to "strictly smaller" once
-  the name was gone, because the name was exactly what a short single-argument call spent the
-  JSON-scaffolding saving on.
-- **The `tool_use` depth knob follows the global keep ratio.** The code has always done this;
-  `DESIGN.md` claimed the opposite and has been corrected. `quantize_segment` takes a
-  `tool_quality` override that defaults to `quality`, and nothing sets it. Rejected: changing the
-  code to match the doc — holding one channel's depth flat is a second knob turning inside a grid
-  whose discipline is one change at a time, and the argument for flat depth (that the case for
-  shrinking this channel does not weaken as the rate relaxes) is an argument, not a measurement.
-  Sweeping the depth as its own variant stays on the queue, and is where that argument gets
-  tested.
-- **Short ambiguous file extensions require a path context.** `c`, `h`, `a`, `o`, `cc`, `so` and
-  `mk` came out of the bare-filename allowlist because they were matching attribute access —
-  `self.c`, `obj.h`, `x.o`, `node.so` — and `env` came out because 43 of its 47 corpus mentions
-  are `process.env` or the like. They still extract inside a path, since the slash and drive
-  patterns never consult the extension list. Accepted cost, stated plainly: a bare `main.c` in
-  prose is no longer an atom, while `src/main.c` still is. Rejected: dropping the seven
-  extensions outright, which loses the path case too and the path case is the one that names a
-  real file. Also rejected: keeping them and relying on the dotted-chain rule alone, which fixes
-  `process.env.NODE_ENV` but does nothing for a bare `self.c` at the end of a sentence.
-- **The supersession pass and the shrinker can disagree about which tool a call came from, and
-  that is not being fixed before this run.** There are two independent sources for a tool's name.
-  `supersede.tool_names_from_transcript` rebuilds them positionally — it walks each turn's
-  `tool_use` blocks in order and pairs them with that turn's `tool_use` segments by a cursor —
-  while `code.quantize_tool_use` reads `Segment.tool_name`, which segmentation stored directly.
-  Anything that makes the positional walk drift (a dropped block, a segment the loader counted
-  differently) makes the two disagree, and nothing detects it. Rejected: unifying them on
-  `Segment.tool_name` now, which is the right fix and is a small one. It is refused on timing:
-  supersession's measured 25.9% lossless win is the project's clearest result, it was measured
-  under the positional rule, and changing the rule moves which calls are found superseded. Revisit
-  immediately after the grid, when a change to that number can be attributed instead of guessed
-  at.
-
-## Decided 2026-09-16
-
-- **The shipped `compress` command runs `supersede+leverage`; banding is opt-in.** On final-state
-  atom recall (`exp_e_v4.out`, E1a, the run this was decided on) the band stack is 1.8 points
-  ahead at 4x (0.578 against 0.560), 1.3 ahead at 3x (0.684 against 0.671) and 0.8 *behind* at
-  2x (0.843 against 0.851); `exp_e_v5.out` re-measured it 2026-09-18 at +1.4 (0.576 against
-  0.562), +1.2 (0.669 against 0.657) and −1.3 (0.827 against 0.840), the same shape. It costs
-  15.40 s per 100k tokens against 0.20 s (v4 E4, warm embedding cache) — 149x budget-shaped
-  TF-IDF and 77x `supersede+leverage`. The v5 E4 row for this stack (0.81 s) is not a
-  measurement: its embeddings were read back from the cache the v4 run left on disk, see
-  [Decided 2026-09-18](#decided-2026-09-18). Cheap enough to run on every compaction is
-  the property that matters for a tool that sits inside a context window; the extra recall at
-  the aggressive end stays reachable through a flag or the aggressive preset (queue item 14), on
-  the reasoning that whoever asks for the hardest compression will take the wait. Rejected:
-  shipping the band stack as the default, which makes every run pay for a gain that is marginal
-  at 4x and negative at 2x. Also rejected: leaving banding out of the product, which discards
-  the best-measured selector at 3x and beyond for no saving once it is opt-in. No product
-  pipeline exists yet — `cli.py` is a stub — so this fixes what lands, not what runs today.
-- **What the compression knob means is deferred until the core lands.** `--quality` is currently
-  a 0–1 "retained-meaning target" (`cli.py`), while the only knob the code has is `keep_ratio`
-  (`budget.token_budget`), and how one drives the other is the open question under
-  [Still open](#still-open--do-not-treat-as-settled). Two options were on the table — make the
-  flag the keep ratio outright, bounded to the measured span 0.1–0.8, or keep it abstract and
-  write the mapping now — and neither was chosen: the mapping would be invented rather than
-  measured, and renaming the flag before there is a pipeline behind it decides a user-facing
-  surface for a stub. Revisit when `compress` runs something. Item 14 carries the presets.
-- **`min_mentions` defaults to 2 and stays a flag.** At 1 the table's cost is unbounded — median
-  8.3% of the input, 48.7% on one public transcript — and the coverage cost of arm D doubles. At
-  2 it is capped under 5%. Rejected: 1 as the default. Also rejected: 1 as the aggressive preset
-  (queue item 14), since the table's share of the output is worst at exactly the rates that
-  preset targets. 1 stays reachable for recall at any price.
-- **Path substitution is off by default and opt-in.** For the default selector, arm D at
-  `min_mentions` 2 is +0.040 final-state recall at 4x, +0.031 at 3x and +0.002 at 2x, against
-  −0.040 to −0.050 coverage at every rate. That is a recall-versus-coverage split of the kind
-  this document refuses to collapse into a winner, and with no downstream task evaluation to
-  price both in one currency, the default is the configuration that does not spend coverage for
-  nothing at 2x. Rejected: on by default, on the argument that recall is the metric the project
-  exists for and the table is the only mechanism that guarantees anything — a values argument,
-  kept on record for when task evaluation exists. Also rejected: on at 3x and harder only, a
-  rate-dependent switch of the kind queue item 7 is trying to remove.
-
-## Decided 2026-09-18
-
-Read from the `ATOMS_VERSION` 5 grid (18 transcripts × 672 jobs, 0 failures, run 2026-09-16 to
-2026-09-18; `rebaseline_v5.log` and `exp_e_v5.out`).
-
-- **`topics` is out of the grid and out of Experiment E.** It lost to budget-shaped TF-IDF on
-  final-state recall at every multiplier in E1a (0.411 against 0.428 at 4x, 0.239 against 0.255
-  at 8x) and on coverage everywhere, for the second run in a row. `topics.py` stays as the Phase
-  1 labeller; the records already in the checkpoints stay too, unprinted. Grid 672 to 660.
-- **The depth sweep is null.** All three `tool_use` depth variants (`flat0.5`, `flat0.25`,
-  `half`) move final-state recall by at most 0.010 against the base mapping on either band
-  method at 2x, 3x or 4x ("variants vs the base configuration" block). The argument that the
-  channel should be shrunk hard regardless of the global rate was measured and found not to
-  matter; the knob stays on the global keep ratio. Queue item 4 is closed.
-- **The embedding cache is wiped before any transcript that reuses no records.** The cache
-  outlives runs and is keyed on the full text list, so when the routing fix left a transcript's
-  post-supersession pool byte-identical to version 4's, `supersede+band+leverage` read its
-  vectors back in ~1 s where a cold job is ~45 s (on `trace-commons_47d9fc04`, whose pool did
-  change, it was 45 s against `band+leverage`'s 62 s — the same 70% version 4 reported).
-  `exp_e_v5.out` E4 therefore reads 0.81 s per 100k tokens for that stack; it is not a
-  measurement, and the version-4 figures (15.40 s against 0.20 s) remain the cost quoted above.
-  From the next run on, every text list is cold on its first sweep point and warm after, within
-  one run only. Rejected: recording a cache-hit flag per record and filtering in E4, which fixes
-  the table but keeps the trap.
-
-## Decided 2026-09-21
-
-Read from two partial grids under `ATOMS_VERSION` 6 (18 transcripts; `tfidf`, `leverage`,
-`supersede+leverage`, `supersede+band+leverage` on the base variant plus `prose_shrink` on the
-two leverage methods; `rebaseline_v6_partial.log` and `rebaseline_v6b_partial.log`, both 0
-failures). Experiment E was not re-run: it reads base records only and nothing base changed.
-
-- **Whole-paragraph prose segments are neutral.** `ATOMS_VERSION` 6 splits prose and thinking
-  into paragraphs (12k-char safety cap) instead of ~600-char sentence runs. Every base cell at
-  2x/3x/4x moved by at most 0.006 against the version-5 numbers (`supersede+leverage`
-  final-state recall 0.840 to 0.836 at 2x, 0.562 to 0.566 at 4x). Kept, because the code is
-  simpler and the unit is the one a reader would name. (Corrected 2026-09-29: "at most 0.006" holds
-  for `leverage` and `supersede+leverage`, whose cells moved by at most 0.003 and 0.005. `tfidf`
-  coverage moved more: 0.955 to 0.961, 0.903 to 0.914 and 0.868 to 0.879 at 2x/3x/4x; its knee
-  went 0.793 to 0.806. Compare `exp_d_summary.txt` with `exp_d_band_recheck_summary.txt`.)
-- **Shrinking prose segments is a null, twice, and the arm is out of the grid.** First run
-  (2026-09-18 to 21): final-state recall within ±0.005 of base at 2x/3x/4x, coverage +0.005 to
-  +0.011. That run was measuring a dead knob — `PROSE_UNIT_TOKENS` was a decile table of ~600-char
-  units (145 tokens at the 90th) compared against a running total of 600-char chunks, so the
-  first chunk exceeded the budget at every quality below 0.9 and the same 22.5% of prose tokens
-  came off at 0.5, 0.3 and 0.1. `TRANSFORMS_VERSION` 3 replaced it with a fraction of the
-  passage's own tokens at sentence granularity (1.6% of prose removed at 0.9, 25.1% at 0.5,
-  35.8% at 0.1). Second run, with the knob live: final-state recall −0.004 / +0.003 / +0.004
-  (`leverage`) and −0.004 / −0.002 / +0.009 (`supersede+leverage`) at 2x/3x/4x; **coverage
-  −0.012 to −0.019 at every rate from 2x to 4x on both methods**; 24 s per 100k tokens against
-  0.17 s, because shrunk prose is new text and misses the embedding cache at every sweep point.
-  The mechanism reads clearly: the atoms in dropped tail sentences are bought back by the extra
-  segments the freed budget affords, so recall nets to zero, and the meaning is not. Prose is
-  13.0% of corpus tokens and most paragraphs are one to three sentences, so even a perfect
-  shrinker frees under 5% of the budget. Same rule as `topics`: loses or ties on both metrics,
-  out. `shrink_prose` stays for prose-shaped `tool_use` arguments, where the knob now works.
-  Queue item 5 is closed. Grid 684 back to 660.
-- **Stale-stamped records are evicted, not averaged.** The first `TRANSFORMS_VERSION` bump that
-  did not also move `segments_digest` showed that a re-run added fresh records beside the stale
-  ones (96 reused + 36 to run wrote 132) and every table averaged both. `analyse()` now drops
-  any prior record whose identity no job in the full plan carries; a partial run's filter does
-  not evict the other arms. The one-transcript smoke that caught it is now the rule before any
-  grid: prove the arm moves with its knob on one transcript first.
-
-## Decided 2026-09-24
-
-- **Budget selection decides what stays; no positional cuts.** Scoring units and filling the token budget by score is the one mechanism that chooses what survives. Fixed "keep the start" rules are out: `TRANSFORMS_VERSION` 4 removes the leading-sentences cut on prose-shaped tool arguments, the leading-stages cut on shell commands, and the dead prose/thinking branch of `quantize_segment`. AST-depth banding stays: it keeps a code body's outline (definitions, imports, returns) rather than a position, and is the only in-segment transform left, behind `--band`. The one measured positional cut, `prose_shrink`, lost 0.012 to 0.019 coverage for no recall. The removed cuts were 30.4% of the tool_use channel's shrinkage at quality 0.5 (0.685 to 0.781 of raw) and 21.6% at 0.3 (0.549 to 0.647); the code channel is unchanged. Pending: re-run `supersede+band+leverage` on the partial main grid (216 jobs) after Experiment F finishes, to check that the 1.3 to 1.8 recall points `--band` bought at 3x/4x survive. (Corrected 2026-09-29: the Sep 18 table, `docs/results/exp_d_summary.txt`, gives +1.2 / +1.4 points of final-state recall at 3x/4x, 0.665 against 0.653 and 0.576 against 0.562, and +1.0 / +1.4 of all-history recall.) The smoke transcript (`swe-gym_row214`) could not show it: none of its 50 tool_use segments renders differently under version 3 and 4.
-
-## Experiment F: selection by compressed novelty (set up 2026-09-22)
-
-Delétang et al., *Language Modeling Is Compression* (ICLR 2024), push the prediction–compression
-equivalence to the point where any compressor is a predictor. Our selectors score each segment
-once, statically (`budget.select_by_score`), so two near-duplicates both score high and both get
-kept; supersession patches that by hand for read/edit pairs. Scoring a segment by the compressed
-bytes it *adds* to what is already kept is conditional surprisal, and a real compressor gives it
-without a model. Experiment F measures that, on its own grid (`--grid exp_f`, checkpoints in
-`experiments/output/exp_f`) so the main grid's eviction cannot touch it, against exp_d's
-reference records for `tfidf`, `leverage` and `supersede+leverage`. It measures a selector; the
-paper's lossless arithmetic coding is out of scope (DESIGN.md: the tokenizer does the lossless
-part, and reconstruction error is never a metric).
-
-**Why two codecs.** On our corpus (32 transcripts, 11.8 MiB of segment text), lzma compresses to
-0.175 of raw against gzip's 0.243 — it finds 28.1% more redundancy, almost exactly the paper's
-enwik9 gap (32.3% against 23.0%, Table 1). The paper's own chunked row explains it: cut to 2048
-bytes, LZMA2 falls to 50.0% against gzip's 48.1%, so the whole advantage is window length.
-Supersession removes 36.3% of bytes but only closes the gap from 28.1% to 19.1%, so zlib's
-32 KiB window leaves real long-range redundancy unseen even on the stacked arms.
-
-**Why these scoring shapes.** Exact greedy re-scores every candidate against the kept set at
-every pick. `zlib.compressobj` forks (`copy()`), so a candidate costs its own bytes: 23 µs on a
-400 KiB kept buffer. `lzma` cannot fork, so a candidate costs a full recompression, 63 ms —
-exact lzma greedy measured at ~32 h per job on the largest transcript, ~287 days per grid method,
-and is not an arm. Lazy greedy (Minoux) and stochastic greedy (Mirzasoleiman et al., 2015) are
-the two affordable approximations; one-pass novelty scores against preceding text instead of
-the kept set.
-
-Arms (14; each also stacked on supersession): `zlib-greedy`, `zlib-lazy`, `zlib-onepass`,
-`zlib-stochastic`, `lzma-lazy`, `lzma-onepass`, `lzma-stochastic`. 168 jobs per transcript,
-3,024 in all.
-
-**Stochastic greedy's epsilon was calibrated, not chosen.** Against exact greedy on the
-selector's own objective — f(S), the compressed length of the kept text — never on recall or
-coverage, which would tune on the grading metric. 18 transcripts × keep 0.5/0.3/0.1, five seeds
-per cell; cells are f(stochastic)/f(exact), mean over seeds. Rule fixed in advance: the largest
-epsilon whose median is at least 0.99 with a 10th percentile at least 0.97.
-
-| epsilon | zlib median / p10 / min | seed spread (median) | Jaccard vs exact | lzma median / p10 (24 cells) |
-|---|---|---|---|---|
-| 0.3 | 0.974 / 0.931 / 0.791 | 0.032 | 0.54 | 0.959 / 0.919 |
-| 0.1 | 0.993 / 0.964 / 0.796 | 0.025 | 0.65 | 0.990 / 0.966 |
-| **0.03** | **0.998 / 0.986** / 0.839 | 0.017 | 0.71 | **0.998 / 0.976** |
-| 0.01 | 0.999 / 0.987 / 0.729 | 0.016 | 0.74 | 1.000 / 0.988 |
-
-Lazy greedy for comparison: zlib 1.002 / 0.999 / 0.990 (Jaccard 0.88), lzma 1.000 / 0.999. So
-lazy's kept sets differ from exact's (307 of ~1,100 segments on the largest transcript) while
-scoring at least as well on the objective — its gains are not monotone (compressed gain can
-grow as context grows), but the stale bounds do not cost it the objective.
-
-Three caveats that carry into any reading of the grid:
-- The lzma column covers only the 8 transcripts, all 37k tokens or smaller, where exact lzma
-  greedy finished in 10 minutes. `lzma-stochastic` is unvalidated above that.
-- **One seed is not a representative draw.** The median seed spread at 0.03 (0.017) is far
-  larger than half the stochastic-versus-lazy gap (0.0018). A stochastic-versus-lazy difference
-  in the grid is inside draw noise; one arm per codec runs one draw (seed 0). Worst cell:
-  `swe-gym_row214` at keep 0.5, seeds scoring 0.75, 0.73, 0.72, 1.01, 0.99.
-- The sample-size formula's k estimate (budget ÷ mean candidate cost) undercounts real picks by
-  a median 47%, worst 88%, because picked segments are cheaper than average. That only enlarges
-  samples; epsilon was calibrated end to end with this estimator, so the numbers above include it.
-
-**Seeds.** Because one draw is not representative, the stochastic arms run as seed variants (`Variant.stoch_seed`; seed 0 is the base variant, so no earlier record moved): zlib seeds 0-9 on all 18 transcripts (a zlib pair costs ~3 s per 53k tokens, so ~15 min in all), lzma seeds 0-4 but seeds 1-4 only on the 13 transcripts of at most 100,000 tokens (sizes jump from 98,917 to 151,611 there; an extra lzma seed costs ~1.8 h on those 13 against ~5.9 h on all 18). The cap is a grid-level job filter that every planner uses, the runner's eviction and the watcher included. 8,160 jobs in all. The summary keeps its tables on seed 0 and adds a seed section: seed mean with min-max for each stochastic arm against lazy and exact greedy on the same transcripts, marked `inside noise` when the range of the difference includes zero. On a 20-segment transcript every seed is identical, correctly: the sample covers every remaining candidate, which is exact greedy. On `trace-commons_ba1b4916` (320 segments) seeds 0, 1 and 2 differ by 11 to 44 kept segments.
-
-**Smokes.** `swe-gym_row214` (70k tokens) and `trace-commons_ba1b4916` (53k), 288 jobs, 0
-failures, every arm distinct and moving with the ratio. `swe-gym_row214` saturates: supersession
-caps it at 0.297, so the supersede+ arms coincide at keep 0.3 and above. Projected full grid,
-scaling the mid transcript's 1,381 s by tokens (18 transcripts = 28.5× it): ~11 h; if lzma cost
-grows with tokens squared the lzma arms alone could reach ~19 h, but `swe-gym_row214` ran below
-the linear estimate, so ~11 h is the likelier figure.
-
-## Decided 2026-09-29
-
-Read from the full Experiment F grid (`docs/results/exp_f_summary.txt`, 8,160 jobs, 0 failures,
-run 2026-09-22 to 28) and the Experiment G grid (`docs/results/exp_g_summary.txt`, 648 jobs, 0
-failures). Both compare at matched achieved rate against exp_d's reference records. The band
-re-check at the end reads from `docs/results/exp_d_band_recheck_summary.txt`. Four of the items below (the
-junk-bytes check, the new-facts tests, the per-token smoke, the band smoke) rest partly on scratch
-analyses that are not committed scripts, and say so where they appear.
-
-- **Experiment F is cut to four lazy arms.** `zlib-lazy`, `lzma-lazy`, `supersede+zlib-lazy` and
-  `supersede+lzma-lazy` stay in the grid; the other ten arms (exact, one-pass and stochastic
-  greedy) are out. The full 14-arm summary is kept verbatim in `exp_f_summary.txt`, because a
-  later run evicts the cut arms' records. The headline, measured, from that file's "each arm minus
-  leverage and minus supersede+leverage" block: compression-based selection trades atom recall
-  for coverage. The best of them, `supersede+lzma-lazy`, against the shipped
-  `supersede+leverage` is −0.007 / −0.026 / −0.023 on final-state recall and +0.028 / +0.041 /
-  +0.044 on coverage at 2x / 3x / 4x. It also costs 39.82 s per 100k tokens against 0.16 s (the
-  cost block), about 250x. No compression arm beats `supersede+leverage` on recall at any of the
-  three rates.
-- **The junk-bytes check is inconclusive.** The question was whether exact greedy's lower recall
-  comes from keeping junk: segments that compress badly because they are noise. The segments only
-  exact greedy picked were less compressible than the ones both selectors picked, but they were
-  not junkier. The check does not show junk is the cause, and does not rule it out. Scratch
-  analysis, not a committed script.
-- **The new-facts hypothesis is supported on the raw pool and weaker after supersession.** The
-  hypothesis: exact greedy's lower recall is explained by chasing byte novelty rather than new
-  facts. Three tests, all in scratch analyses, not committed scripts:
-  - T1 was tautological and is not evidence. Recall counts atoms in kept segments, so "segments
-    that add new atoms raise recall" restates the metric.
-  - T2 supports it on the raw pool (76.8%) and more weakly after supersession (65.1%, one stratum
-    over).
-  - T3: zlib's novelty does not track fact novelty (median Spearman rho −0.085). Leverage's raw
-    score tracks it, weakly (+0.194).
-- **Experiment G: leverage times word novelty moves along the frontier; it does not beat it.**
-  The selector (`novelty_select.py`) scores a candidate as its leverage times (the share of its
-  plain words the kept set does not hold yet) to the power alpha, and fills the budget by lazy
-  greedy. Plain words are lowercase letter runs of three or more characters, minus any word found
-  in more than half the pool's segments. Alpha 0 is `supersede+leverage` exactly, so it is read
-  from exp_d rather than run. Arms at alpha 0.5, 1 and 2, 648 jobs, 0 failures. Measured, from
-  `exp_g_summary.txt`, against `supersede+leverage` at 2x / 3x / 4x across the three alphas:
-  final-state recall +0.011 to +0.013 / +0.039 / +0.029 to +0.040, coverage −0.021 to −0.028 /
-  −0.044 to −0.046 / −0.053 to −0.061. Alpha barely matters. The knee does not move: 0.601 at
-  alpha 0.5 and 1 (17 of 18 transcripts reach the 0.9 floor) against 0.598 (16 of 18). Alpha 2
-  reads 0.617, but it reaches the floor on 18 of 18, so it averages over a transcript the others
-  do not reach and is not comparable. Cost is the same (0.15 to 0.17 s per 100k tokens against
-  0.16). The smoke on `trace-commons_ba1b4916` showed final-state recall rising 0.471 to 0.806 at
-  keep 0.3 (+0.33); that transcript was an outlier the 18-transcript average did not repeat.
-  Inferred, not measured directly: this is a move along the facts-versus-meaning frontier at
-  about the same exchange rate as leverage against TF-IDF, not a better point on it. At 3x,
-  leverage against `tfidf` is +0.091 recall for −0.094 coverage (0.636 against 0.545, 0.820
-  against 0.914; `exp_f_summary.txt` distortion block); novelty is +0.039 for −0.044 to −0.046.
-- **The per-token variant was smoked and deliberately not run on the grid.** It ranks by the
-  novelty-discounted gain divided by the segment's tokens, at alpha 0.5. It is in the exp_g plan
-  as `supersede+leverage+novelty-per-token@0.5`, with 0 of 216 records, and the summary prints it
-  as `missing`. The smoke ran on two public transcripts, `trace-commons_ba1b4916` and
-  `trace-commons_11ef2190`. It swings hard toward coverage and away from recall: on
-  `trace-commons_ba1b4916` at keep 0.33, final-state recall 0.817 to 0.386 and coverage 0.829 to
-  0.931, against raw-gain novelty at 0.5. A per-token control at alpha 0 lands near per-token at
-  0.5, so it is dividing by tokens (density), not novelty, that drives the swing. The evidence is
-  two transcripts; the smoke output is not a committed file.
-- **Decision: `supersede+leverage` stays the shipped default.** Neither compression-based
-  selection nor word novelty improves both metrics at once; each buys one with the other. No
-  downstream task evaluation exists to price the two in one currency, so the default does not
-  move. `novelty_select` (raw and `per_token`) stays in the repo as a measured, unshipped option.
-  Rejected: shipping novelty at alpha 0.5 for its recall gain, which is the same values argument
-  that kept path substitution opt-in (see [Decided 2026-09-16](#decided-2026-09-16)).
-- **Band re-check: without the tail cuts, `--band` is a wash.** Banding trims a code body to its
-  outline by AST nesting depth: definition headers, imports and returns are kept, deeper body
-  lines are elided, and the keep ratio sets how deep it keeps. This closes the item left pending
-  in [Decided 2026-09-24](#decided-2026-09-24): `supersede+band+leverage` was re-run on the base
-  variant after `TRANSFORMS_VERSION` 4 removed the prose and shell tail cuts (204 jobs, 0
-  failures; `docs/results/exp_d_band_recheck_summary.txt`, 2026-09-29). Measured, from that file's
-  aggressive-rate and knee blocks, against `supersede+leverage` on 18 transcripts at 2x / 3x /
-  4x: final-state recall 0.823 / 0.663 / 0.571 against 0.836 / 0.654 / 0.566, coverage
-  0.887 / 0.830 / 0.805 against 0.895 / 0.821 / 0.796. Every gap is 0.013 or less, so a wash.
-  The knee is worse, 0.612 against 0.598. The Sep 18 table (`docs/results/exp_d_summary.txt`) had band's knee at 0.580
-  and its final-state recall edge at +0.012 / +0.014 at 3x / 4x; now it is +0.009 / +0.005.
-  Inferred, not measured directly: band's earlier edge came mostly from the tail cuts. Caveat:
-  that old table predates `ATOMS_VERSION` 6, so old against new is not perfectly clean; the two
-  unbanded rows moved by at most 0.005 across that change. A smoke on two public transcripts,
-  `trace-commons_ba1b4916` and `trace-commons_11ef2190`, showed banding's token savings identical
-  at keep 0.33, 0.3 and 0.25: the depth knob saturates below about 1/3. The smoke output is not a
-  committed file. Inferred from `quantize_code`: the cutoff is `floor(keep * (max_band + 1))`, so
-  whenever `max_band` is 5 or less, those three keep ratios give the same cutoff.
-  Decision: `--band` stays an opt-in CLI flag, off by default. No code change.
+(Superseded 2026-09-29: the fix landed as `ATOMS_VERSION` 5 on 2026-09-16, commit 8434893, and the
+grid was re-baselined under it — see [Decided 2026-09-18](#decided-2026-09-18). Queue item 6.)
 
 ## Spectral versus TF-IDF: two statistics, not one verdict
 
@@ -753,6 +553,11 @@ The hole was `_BODY_KEYS`: it named four keys and everything else fell through. 
 was **135,136 tokens, 24.5% of the channel**. So the fix was not a bespoke shrinker but routing
 every value by **shape rather than key name**, through the shrinkers that already existed.
 
+> **Superseded 2026-09-29.** Both cuts described below — shell stage elision and prose passage
+> elision — were removed in `TRANSFORMS_VERSION` 4 (2026-09-24). Shell and prose arguments now
+> pass through verbatim; only code-shaped arguments are banded, and only under `--band`. Kept as
+> the record of what versions 1 to 3 did.
+
 **Cut points are measured, never chosen.** Both budgets are percentile tables over a population
 that is a complete unit by construction, and `quality` indexes into them — it names how much we
 still keep, as a percentile of real examples:
@@ -800,7 +605,7 @@ name came out: the name cost a short single-argument call almost exactly what dr
 scaffolding saved, so ties were real and worth keeping. With the name gone they are not, and the
 guard now matches the strictly-smaller rule the rest of the module uses.
 
-Channel compression, whole corpus:
+Channel compression, whole corpus (historical — see the note under the table):
 
 | depth | old key-allowlist | shape routing | + prose | + call rendering |
 | --- | --- | --- | --- | --- |
@@ -822,9 +627,16 @@ best row in the table rather than the row a real run lands on.
 > amount in an unknown direction). There is **no committed script that regenerates this table** —
 > it was an ad-hoc measurement, unlike the surveys — so re-measuring means writing one first. That
 > is worth doing at the same time as the depth sweep below, which needs the same instrumentation.
+>
+> **Historical as of `TRANSFORMS_VERSION` 4 (noted 2026-09-29).** The "shape routing" and
+> "+ prose" columns include the shell-stage and prose-passage cuts, which no longer exist, so
+> this table cannot be regenerated even in principle. It is kept as the record, not as a figure to quote. Queue item 4's leftover is
+> closed on that basis.
 
 Not yet swept as a variant, so these are channel-level token counts, not a rate-distortion
-result. The depth knob has to earn its place on the curve like everything else.
+result. The depth knob has to earn its place on the curve like everything else. (Superseded
+2026-09-29: the depth knob was swept 2026-09-16/18 and was null — see
+[Decided 2026-09-18](#decided-2026-09-18).)
 
 ### A silent-staleness trap, found by walking into it
 
@@ -952,6 +764,7 @@ curve, whereas a changed ratio grid silently shifts every interpolation.
 - **Shrinking prose segments before selection** (`prose_shrink`). Null on recall twice, coverage
   −0.012 to −0.019 once the knob was live, 100x the cost — see
   [Decided 2026-09-21](#decided-2026-09-21). The shrinker stays for `tool_use` arguments only.
+  (Superseded 2026-09-29: removed there too, in `TRANSFORMS_VERSION` 4.)
 
 ## The second extractor audit — `ATOMS_VERSION` 3
 
@@ -1066,65 +879,363 @@ whole span equals a table row, which also takes the cost from O(rows × text) to
 independent of table size. Nothing failed loudly while the defect was live, because `expand` still
 restored such text; what was wrong was the scored text and its re-extracted atoms.
 
-## Queue
+## Experiment F: selection by compressed novelty (set up 2026-09-22)
 
-1. ~~Checkpointing so variants accumulate instead of invalidating the whole grid.~~ Done.
-2. ~~`drop_top` swept alone.~~ Done; null, see above.
-3. ~~Path substitution arms B/C/D wired into `experiments/exp_d_curves.py`.~~ Done, and swept at
-   both `min_mentions` settings for C and D — five path arms in all. Measured 2026-09-15 under
-   `ATOMS_VERSION` 4 and read in 2026-09-16 — see [What the arms said](#what-the-arms-said).
-4. ~~A dedicated `tool_use` shrinker.~~ Built — see [The tool_use channel](#the-tool_use-channel).
-   ~~Still to do: sweep the depth knob as its own variant.~~ Swept 2026-09-16/18, null — see
-   [Decided 2026-09-18](#decided-2026-09-18). The stale channel table under
-   [The tool_use channel](#the-tool_use-channel) still has no regenerating script; that part
-   stays open.
-5. ~~Format-aware shrinker for the prose *channel*.~~ Measured 2026-09-18 to 21 as the
-   `prose_shrink` variant and closed as a null — see [Decided 2026-09-21](#decided-2026-09-21).
-   The competing-budget argument held up exactly: shrinking bought back the atoms it dropped and
-   nothing more. `shrink_prose` stays wired into tool arguments. A `thinking` shrinker still
-   cannot be evaluated — the corpus contains exactly one `thinking` segment.
-6. Numbered-file routing fix, measured against path substitution before stacking. Costs a full
-   re-baseline when it lands, since it moves segment kind and text.
-7. Untangle code-trimming depth from compression level (`_band` currently ties quality to the
-   keep ratio).
-8. Three-way per-kind scoring comparison: separate space, shared normalized, separate budget.
-9. Pipeline-level config object, once there are enough real knobs to justify one.
-10. Joint and interaction runs, hypothesis-driven rather than exhaustive.
-11. **Whether Experiment E should ever see variants.** It currently hard-excludes them, which was
-    the right fix for a defect that had been averaging them into the baseline — but "never" was
-    the safe answer under time pressure, not a considered one. Nothing is lost by waiting:
-    per-kind recall and coverage are stored on every record, so any variant analysis is
-    re-derivable from the existing checkpoints with zero recompute.
-12. Unify the two sources of a tool's name (`supersede`'s positional rebuild against
-    `Segment.tool_name`), immediately after the grid — see
-    [Decided](#decided-2026-09-10) for why it waits.
-13. **Make both surveys regenerable, in one pass.** Two separate figures in this document cannot
-    currently be reproduced against the code that is actually running, for two different reasons,
-    and the fix is the same shape for both.
-    - The `tool_use` channel table was measured ad hoc: no committed script produces it, so it
-      cannot be re-derived at all. It is stale under `TRANSFORMS_VERSION` 2, which dropped the
-      tool name and changed `shrink_prose`'s whitespace, moving every column.
-    - `experiments/survey_paths.py` exists but carries its own hard-coded copies of the v1 path
-      patterns, deliberately, so running it today re-measures the old rules rather than the
-      current ones. Re-point it at `segment._FILE_EXTENSIONS`, the way `paths.py` already does,
-      and the numbers become regenerable by construction rather than by discipline.
-    Neither touches `src/`, so this is read-only measurement work that can land any time. Doing it
-    alongside item 4's depth sweep is the natural pairing — that sweep needs the same
-    instrumentation.
-    **Open sub-decision, not yet made:** whether these surveys read `data/local/` (counts only and
-    never quoted, as today, which keeps continuity with the existing figures) or restrict to the
-    public corpora (so every published number is reproducible by someone without the local
-    sessions, at the cost of changing what the numbers mean).
-14. **Compression level as a bounded, user-facing control.** Expose the global keep ratio as a
-    slider bounded to the span the grid actually measured (keep 80% down to keep 10%; the 5% rate
-    is reached by fewer than half the transcripts, so it is refused rather than offered), with
-    tick marks at the operating points (2x/3x/4x) and named presets — low, medium, high, extreme —
-    mapped to fixed ratios. Blocked on the knob decision under
-    [Decided 2026-09-16](#decided-2026-09-16), which waits for the core to land. Still open
-    inside it: what each preset maps to, and whether the aggressive preset is what turns banding
-    on. Raised 2026-09-16.
+Delétang et al., *Language Modeling Is Compression* (ICLR 2024), push the prediction–compression
+equivalence to the point where any compressor is a predictor. Our selectors score each segment
+once, statically (`budget.select_by_score`), so two near-duplicates both score high and both get
+kept; supersession patches that by hand for read/edit pairs. Scoring a segment by the compressed
+bytes it *adds* to what is already kept is conditional surprisal, and a real compressor gives it
+without a model. Experiment F measures that, on its own grid (`--grid exp_f`, checkpoints in
+`experiments/output/exp_f`) so the main grid's eviction cannot touch it, against exp_d's
+reference records for `tfidf`, `leverage` and `supersede+leverage`. It measures a selector; the
+paper's lossless arithmetic coding is out of scope (DESIGN.md: the tokenizer does the lossless
+part, and reconstruction error is never a metric).
 
-Resumption and downstream task evaluation are deferred by decision, not forgotten.
+**Why two codecs.** On our corpus (32 transcripts, 11.8 MiB of segment text), lzma compresses to
+0.175 of raw against gzip's 0.243 — it finds 28.1% more redundancy, almost exactly the paper's
+enwik9 gap (32.3% against 23.0%, Table 1). The paper's own chunked row explains it: cut to 2048
+bytes, LZMA2 falls to 50.0% against gzip's 48.1%, so the whole advantage is window length.
+Supersession removes 36.3% of bytes but only closes the gap from 28.1% to 19.1%, so zlib's
+32 KiB window leaves real long-range redundancy unseen even on the stacked arms.
+
+**Why these scoring shapes.** Exact greedy re-scores every candidate against the kept set at
+every pick. `zlib.compressobj` forks (`copy()`), so a candidate costs its own bytes: 23 µs on a
+400 KiB kept buffer. `lzma` cannot fork, so a candidate costs a full recompression, 63 ms —
+exact lzma greedy measured at ~32 h per job on the largest transcript, ~287 days per grid method,
+and is not an arm. Lazy greedy (Minoux) and stochastic greedy (Mirzasoleiman et al., 2015) are
+the two affordable approximations; one-pass novelty scores against preceding text instead of
+the kept set.
+
+Arms (14; each also stacked on supersession): `zlib-greedy`, `zlib-lazy`, `zlib-onepass`,
+`zlib-stochastic`, `lzma-lazy`, `lzma-onepass`, `lzma-stochastic`. 168 jobs per transcript,
+3,024 in all. (Superseded 2026-09-29: after the full run the grid was cut to the four lazy arms,
+`zlib-lazy` and `lzma-lazy` with and without supersession — see
+[Decided 2026-09-29](#decided-2026-09-29). The 14-arm summary is kept in
+`docs/results/exp_f_summary.txt`.)
+
+**Stochastic greedy's epsilon was calibrated, not chosen.** Against exact greedy on the
+selector's own objective — f(S), the compressed length of the kept text — never on recall or
+coverage, which would tune on the grading metric. 18 transcripts × keep 0.5/0.3/0.1, five seeds
+per cell; cells are f(stochastic)/f(exact), mean over seeds. Rule fixed in advance: the largest
+epsilon whose median is at least 0.99 with a 10th percentile at least 0.97.
+
+| epsilon | zlib median / p10 / min | seed spread (median) | Jaccard vs exact | lzma median / p10 (24 cells) |
+|---|---|---|---|---|
+| 0.3 | 0.974 / 0.931 / 0.791 | 0.032 | 0.54 | 0.959 / 0.919 |
+| 0.1 | 0.993 / 0.964 / 0.796 | 0.025 | 0.65 | 0.990 / 0.966 |
+| **0.03** | **0.998 / 0.986** / 0.839 | 0.017 | 0.71 | **0.998 / 0.976** |
+| 0.01 | 0.999 / 0.987 / 0.729 | 0.016 | 0.74 | 1.000 / 0.988 |
+
+Lazy greedy for comparison: zlib 1.002 / 0.999 / 0.990 (Jaccard 0.88), lzma 1.000 / 0.999. So
+lazy's kept sets differ from exact's (307 of ~1,100 segments on the largest transcript) while
+scoring at least as well on the objective — its gains are not monotone (compressed gain can
+grow as context grows), but the stale bounds do not cost it the objective.
+
+Three caveats that carry into any reading of the grid:
+- The lzma column covers only the 8 transcripts, all 37k tokens or smaller, where exact lzma
+  greedy finished in 10 minutes. `lzma-stochastic` is unvalidated above that.
+- **One seed is not a representative draw.** The median seed spread at 0.03 (0.017) is far
+  larger than half the stochastic-versus-lazy gap (0.0018). A stochastic-versus-lazy difference
+  in the grid is inside draw noise; one arm per codec runs one draw (seed 0). Worst cell:
+  `swe-gym_row214` at keep 0.5, seeds scoring 0.75, 0.73, 0.72, 1.01, 0.99.
+- The sample-size formula's k estimate (budget ÷ mean candidate cost) undercounts real picks by
+  a median 47%, worst 88%, because picked segments are cheaper than average. That only enlarges
+  samples; epsilon was calibrated end to end with this estimator, so the numbers above include it.
+
+**Seeds.** Because one draw is not representative, the stochastic arms run as seed variants (`Variant.stoch_seed`; seed 0 is the base variant, so no earlier record moved): zlib seeds 0-9 on all 18 transcripts (a zlib pair costs ~3 s per 53k tokens, so ~15 min in all), lzma seeds 0-4 but seeds 1-4 only on the 13 transcripts of at most 100,000 tokens (sizes jump from 98,917 to 151,611 there; an extra lzma seed costs ~1.8 h on those 13 against ~5.9 h on all 18). The cap is a grid-level job filter that every planner uses, the runner's eviction and the watcher included. 8,160 jobs in all. The summary keeps its tables on seed 0 and adds a seed section: seed mean with min-max for each stochastic arm against lazy and exact greedy on the same transcripts, marked `inside noise` when the range of the difference includes zero. On a 20-segment transcript every seed is identical, correctly: the sample covers every remaining candidate, which is exact greedy. On `trace-commons_ba1b4916` (320 segments) seeds 0, 1 and 2 differ by 11 to 44 kept segments.
+
+**Smokes.** `swe-gym_row214` (70k tokens) and `trace-commons_ba1b4916` (53k), 288 jobs, 0
+failures, every arm distinct and moving with the ratio. `swe-gym_row214` saturates: supersession
+caps it at 0.297, so the supersede+ arms coincide at keep 0.3 and above. Projected full grid,
+scaling the mid transcript's 1,381 s by tokens (18 transcripts = 28.5× it): ~11 h; if lzma cost
+grows with tokens squared the lzma arms alone could reach ~19 h, but `swe-gym_row214` ran below
+the linear estimate, so ~11 h is the likelier figure.
+
+## Experiment G: leverage times word novelty (2026-09-29)
+
+Moved here unchanged from [Decided 2026-09-29](#decided-2026-09-29), where it was first
+recorded; the decision it feeds stays there. The grid is `exp_d_curves.py --grid exp_g`
+(`experiments/exp_g_novelty.py`), summary in `docs/results/exp_g_summary.txt`.
+
+- **Experiment G: leverage times word novelty moves along the frontier; it does not beat it.**
+  The selector (`novelty_select.py`) scores a candidate as its leverage times (the share of its
+  plain words the kept set does not hold yet) to the power alpha, and fills the budget by lazy
+  greedy. Plain words are lowercase letter runs of three or more characters, minus any word found
+  in more than half the pool's segments. Alpha 0 is `supersede+leverage` exactly, so it is read
+  from exp_d rather than run. Arms at alpha 0.5, 1 and 2, 648 jobs, 0 failures. Measured, from
+  `exp_g_summary.txt`, against `supersede+leverage` at 2x / 3x / 4x across the three alphas:
+  final-state recall +0.011 to +0.013 / +0.039 / +0.029 to +0.040, coverage −0.021 to −0.028 /
+  −0.044 to −0.046 / −0.053 to −0.061. Alpha barely matters. The knee does not move: 0.601 at
+  alpha 0.5 and 1 (17 of 18 transcripts reach the 0.9 floor) against 0.598 (16 of 18). Alpha 2
+  reads 0.617, but it reaches the floor on 18 of 18, so it averages over a transcript the others
+  do not reach and is not comparable. Cost is the same (0.15 to 0.17 s per 100k tokens against
+  0.16). The smoke on `trace-commons_ba1b4916` showed final-state recall rising 0.471 to 0.806 at
+  keep 0.3 (+0.33); that transcript was an outlier the 18-transcript average did not repeat.
+  Inferred, not measured directly: this is a move along the facts-versus-meaning frontier at
+  about the same exchange rate as leverage against TF-IDF, not a better point on it. At 3x,
+  leverage against `tfidf` is +0.091 recall for −0.094 coverage (0.636 against 0.545, 0.820
+  against 0.914; `exp_f_summary.txt` distortion block); novelty is +0.039 for −0.044 to −0.046.
+- **The per-token variant was smoked and deliberately not run on the grid.** It ranks by the
+  novelty-discounted gain divided by the segment's tokens, at alpha 0.5. It is in the exp_g plan
+  as `supersede+leverage+novelty-per-token@0.5`, with 0 of 216 records, and the summary prints it
+  as `missing`. The smoke ran on two public transcripts, `trace-commons_ba1b4916` and
+  `trace-commons_11ef2190`. It swings hard toward coverage and away from recall: on
+  `trace-commons_ba1b4916` at keep 0.33, final-state recall 0.817 to 0.386 and coverage 0.829 to
+  0.931, against raw-gain novelty at 0.5. A per-token control at alpha 0 lands near per-token at
+  0.5, so it is dividing by tokens (density), not novelty, that drives the swing. The evidence is
+  two transcripts; the smoke output is not a committed file.
+
+## Decision log
+
+Every dated decision, oldest first, each with the option rejected. Gathered here on 2026-09-29
+from where they sat between the topic sections; the text is unchanged except for the dated
+"Superseded" notes added in place.
+
+### Decided 2026-09-10
+
+- **A defined pointer is admissible in retained text, so arm D may ship.** Losslessness was
+  never the goal — whole segments are discarded on purpose. The verbatim property was only ever
+  about the text that *survives*, and a marker whose definition ships in the same output has
+  reworded nothing and invented nothing. Rejected: requiring every retained span to be quotable
+  as-is, which forfeits path substitution's token saving and its recall guarantee together, and
+  rules out every future side-table mechanism on the same grounds. See
+  [DESIGN.md](DESIGN.md#pipeline).
+- **`min_mentions` is measured, not picked.** Arms C and D are each swept at both 1 and 2 (120
+  extra records between them), and the per-transcript table below prices what the extra rows cost
+  against what they guarantee. Rejected: locking either value, since the doc already recorded this
+  as a genuine tradeoff rather than a tuning constant — that is an argument for measuring it.
+  Sweeping C as well as D was added later the same day; see
+  [The path arms](#the-path-arms).
+- **The two distortion metrics are separate statistics and are never collapsed.** See below.
+- **`tool_use` tolerates the most loss of any channel.** A tool call is repetitive scaffolding;
+  what matters is that a call happened against a target, not the serialized arguments. This
+  reframes a question Phase 1 recorded as "emit `tool_use` as readable text rather than
+  `json.dumps`": the answer is not a prettier format but a far more aggressive shrinker, and
+  since shrinking is a downstream transformation like AST banding it is deliberately outside
+  `segments_digest` and costs no re-baseline. The field bander that was too conservative has since
+  been replaced — see [The tool_use channel](#the-tool_use-channel).
+- **The tool's name is not emitted in a rendered call.** `render_call` knows the name and drops
+  it. Two reasons, and the second is the decisive one. It reaches the renderer from the transcript
+  record's metadata rather than from the segment's own text, so it is neither a verbatim span of
+  the original nor a mechanically-defined pointer — the only two things the emitted text is
+  allowed to contain, per the pointer decision above. And it is strictly bad on the metric rather
+  than a trade: `MultiEdit`, `TodoWrite` and `NotebookEdit` all match the identifier pattern, so
+  they enter the rendered segment's atoms, while recall intersects against the atoms of the
+  *original* text, which never held them. The tokens cannot buy recall back and they count against
+  the ratio. Rejected: keeping it and redefining it as a mechanically-defined pointer, which fails
+  because a pointer's definition has to ship in the same output and there is nothing here to
+  point at. Also rejected: keeping it silently, on readability. A side effect worth recording —
+  the size guard in `quantize_tool_use` could tighten from "not larger" to "strictly smaller" once
+  the name was gone, because the name was exactly what a short single-argument call spent the
+  JSON-scaffolding saving on.
+- **The `tool_use` depth knob follows the global keep ratio.** The code has always done this;
+  `DESIGN.md` claimed the opposite and has been corrected. `quantize_segment` takes a
+  `tool_quality` override that defaults to `quality`, and nothing sets it. Rejected: changing the
+  code to match the doc — holding one channel's depth flat is a second knob turning inside a grid
+  whose discipline is one change at a time, and the argument for flat depth (that the case for
+  shrinking this channel does not weaken as the rate relaxes) is an argument, not a measurement.
+  Sweeping the depth as its own variant stays on the queue, and is where that argument gets
+  tested. (Done: swept 2026-09-16/18 and null — see [Decided 2026-09-18](#decided-2026-09-18).)
+- **Short ambiguous file extensions require a path context.** `c`, `h`, `a`, `o`, `cc`, `so` and
+  `mk` came out of the bare-filename allowlist because they were matching attribute access —
+  `self.c`, `obj.h`, `x.o`, `node.so` — and `env` came out because 43 of its 47 corpus mentions
+  are `process.env` or the like. They still extract inside a path, since the slash and drive
+  patterns never consult the extension list. Accepted cost, stated plainly: a bare `main.c` in
+  prose is no longer an atom, while `src/main.c` still is. Rejected: dropping the seven
+  extensions outright, which loses the path case too and the path case is the one that names a
+  real file. Also rejected: keeping them and relying on the dotted-chain rule alone, which fixes
+  `process.env.NODE_ENV` but does nothing for a bare `self.c` at the end of a sentence.
+- **The supersession pass and the shrinker can disagree about which tool a call came from, and
+  that is not being fixed before this run.** There are two independent sources for a tool's name.
+  `supersede.tool_names_from_transcript` rebuilds them positionally — it walks each turn's
+  `tool_use` blocks in order and pairs them with that turn's `tool_use` segments by a cursor —
+  while `code.quantize_tool_use` reads `Segment.tool_name`, which segmentation stored directly.
+  Anything that makes the positional walk drift (a dropped block, a segment the loader counted
+  differently) makes the two disagree, and nothing detects it. Rejected: unifying them on
+  `Segment.tool_name` now, which is the right fix and is a small one. It is refused on timing:
+  supersession's measured 25.9% lossless win is the project's clearest result, it was measured
+  under the positional rule, and changing the rule moves which calls are found superseded. Revisit
+  immediately after the grid, when a change to that number can be attributed instead of guessed
+  at. (Superseded 2026-09-29: unified as `SUPERSEDE_VERSION` 2, which reads `Segment.tool_name`;
+  it landed in the `ATOMS_VERSION` 5 batch, 2026-09-16, commit 8434893. Queue item 12.)
+
+### Decided 2026-09-16
+
+- **The shipped `compress` command runs `supersede+leverage`; banding is opt-in.** On final-state
+  atom recall (`exp_e_v4.out`, E1a, the run this was decided on) the band stack is 1.8 points
+  ahead at 4x (0.578 against 0.560), 1.3 ahead at 3x (0.684 against 0.671) and 0.8 *behind* at
+  2x (0.843 against 0.851); `exp_e_v5.out` re-measured it 2026-09-18 at +1.4 (0.576 against
+  0.562), +1.2 (0.669 against 0.657) and −1.3 (0.827 against 0.840), the same shape. It costs
+  15.40 s per 100k tokens against 0.20 s (v4 E4, warm embedding cache) — 149x budget-shaped
+  TF-IDF and 77x `supersede+leverage`. The v5 E4 row for this stack (0.81 s) is not a
+  measurement: its embeddings were read back from the cache the v4 run left on disk, see
+  [Decided 2026-09-18](#decided-2026-09-18). Cheap enough to run on every compaction is
+  the property that matters for a tool that sits inside a context window; the extra recall at
+  the aggressive end stays reachable through a flag or the aggressive preset (queue item 14), on
+  the reasoning that whoever asks for the hardest compression will take the wait. Rejected:
+  shipping the band stack as the default, which makes every run pay for a gain that is marginal
+  at 4x and negative at 2x. Also rejected: leaving banding out of the product, which discards
+  the best-measured selector at 3x and beyond for no saving once it is opt-in. No product
+  pipeline exists yet — `cli.py` is a stub — so this fixes what lands, not what runs today.
+  (Superseded 2026-09-29: the pipeline landed behind `compress` the same day, commit 79e42a1.
+  Item 14 was decided with no preset turning banding on, and the 2026-09-29 band re-check found
+  `--band` a wash — see [Decided 2026-09-29](#decided-2026-09-29).)
+- **What the compression knob means is deferred until the core lands.** `--quality` is currently
+  a 0–1 "retained-meaning target" (`cli.py`), while the only knob the code has is `keep_ratio`
+  (`budget.token_budget`), and how one drives the other is the open question under
+  [Still open](#still-open--do-not-treat-as-settled). Two options were on the table — make the
+  flag the keep ratio outright, bounded to the measured span 0.1–0.8, or keep it abstract and
+  write the mapping now — and neither was chosen: the mapping would be invented rather than
+  measured, and renaming the flag before there is a pipeline behind it decides a user-facing
+  surface for a stub. Revisit when `compress` runs something. Item 14 carries the presets.
+  (Superseded 2026-09-29: decided under queue item 14. `--quality` is removed; the rate is the
+  keep ratio, set by `--keep`, `--level` or `--target-tokens`.)
+- **`min_mentions` defaults to 2 and stays a flag.** At 1 the table's cost is unbounded — median
+  8.3% of the input, 48.7% on one public transcript — and the coverage cost of arm D doubles. At
+  2 it is capped under 5%. Rejected: 1 as the default. Also rejected: 1 as the aggressive preset
+  (queue item 14), since the table's share of the output is worst at exactly the rates that
+  preset targets. 1 stays reachable for recall at any price.
+- **Path substitution is off by default and opt-in.** For the default selector, arm D at
+  `min_mentions` 2 is +0.040 final-state recall at 4x, +0.031 at 3x and +0.002 at 2x, against
+  −0.040 to −0.050 coverage at every rate. That is a recall-versus-coverage split of the kind
+  this document refuses to collapse into a winner, and with no downstream task evaluation to
+  price both in one currency, the default is the configuration that does not spend coverage for
+  nothing at 2x. Rejected: on by default, on the argument that recall is the metric the project
+  exists for and the table is the only mechanism that guarantees anything — a values argument,
+  kept on record for when task evaluation exists. Also rejected: on at 3x and harder only, a
+  rate-dependent switch of the kind queue item 7 is trying to remove.
+
+### Decided 2026-09-18
+
+Read from the `ATOMS_VERSION` 5 grid (18 transcripts × 672 jobs, 0 failures, run 2026-09-16 to
+2026-09-18; `rebaseline_v5.log` and `exp_e_v5.out`).
+
+- **`topics` is out of the grid and out of Experiment E.** It lost to budget-shaped TF-IDF on
+  final-state recall at every multiplier in E1a (0.411 against 0.428 at 4x, 0.239 against 0.255
+  at 8x) and on coverage everywhere, for the second run in a row. `topics.py` stays as the Phase
+  1 labeller; the records already in the checkpoints stay too, unprinted. Grid 672 to 660.
+- **The depth sweep is null.** All three `tool_use` depth variants (`flat0.5`, `flat0.25`,
+  `half`) move final-state recall by at most 0.010 against the base mapping on either band
+  method at 2x, 3x or 4x ("variants vs the base configuration" block). The argument that the
+  channel should be shrunk hard regardless of the global rate was measured and found not to
+  matter; the knob stays on the global keep ratio. Queue item 4 is closed.
+- **The embedding cache is wiped before any transcript that reuses no records.** The cache
+  outlives runs and is keyed on the full text list, so when the routing fix left a transcript's
+  post-supersession pool byte-identical to version 4's, `supersede+band+leverage` read its
+  vectors back in ~1 s where a cold job is ~45 s (on `trace-commons_47d9fc04`, whose pool did
+  change, it was 45 s against `band+leverage`'s 62 s — the same 70% version 4 reported).
+  `exp_e_v5.out` E4 therefore reads 0.81 s per 100k tokens for that stack; it is not a
+  measurement, and the version-4 figures (15.40 s against 0.20 s) remain the cost quoted above.
+  From the next run on, every text list is cold on its first sweep point and warm after, within
+  one run only. Rejected: recording a cache-hit flag per record and filtering in E4, which fixes
+  the table but keeps the trap.
+
+### Decided 2026-09-21
+
+Read from two partial grids under `ATOMS_VERSION` 6 (18 transcripts; `tfidf`, `leverage`,
+`supersede+leverage`, `supersede+band+leverage` on the base variant plus `prose_shrink` on the
+two leverage methods; `rebaseline_v6_partial.log` and `rebaseline_v6b_partial.log`, both 0
+failures). Experiment E was not re-run: it reads base records only and nothing base changed.
+
+- **Whole-paragraph prose segments are neutral.** `ATOMS_VERSION` 6 splits prose and thinking
+  into paragraphs (12k-char safety cap) instead of ~600-char sentence runs. Every base cell at
+  2x/3x/4x moved by at most 0.006 against the version-5 numbers (`supersede+leverage`
+  final-state recall 0.840 to 0.836 at 2x, 0.562 to 0.566 at 4x). Kept, because the code is
+  simpler and the unit is the one a reader would name. (Corrected 2026-09-29: "at most 0.006" holds
+  for `leverage` and `supersede+leverage`, whose cells moved by at most 0.003 and 0.005. `tfidf`
+  coverage moved more: 0.955 to 0.961, 0.903 to 0.914 and 0.868 to 0.879 at 2x/3x/4x; its knee
+  went 0.793 to 0.806. Compare `exp_d_summary.txt` with `exp_d_band_recheck_summary.txt`.)
+- **Shrinking prose segments is a null, twice, and the arm is out of the grid.** First run
+  (2026-09-18 to 21): final-state recall within ±0.005 of base at 2x/3x/4x, coverage +0.005 to
+  +0.011. That run was measuring a dead knob — `PROSE_UNIT_TOKENS` was a decile table of ~600-char
+  units (145 tokens at the 90th) compared against a running total of 600-char chunks, so the
+  first chunk exceeded the budget at every quality below 0.9 and the same 22.5% of prose tokens
+  came off at 0.5, 0.3 and 0.1. `TRANSFORMS_VERSION` 3 replaced it with a fraction of the
+  passage's own tokens at sentence granularity (1.6% of prose removed at 0.9, 25.1% at 0.5,
+  35.8% at 0.1). Second run, with the knob live: final-state recall −0.004 / +0.003 / +0.004
+  (`leverage`) and −0.004 / −0.002 / +0.009 (`supersede+leverage`) at 2x/3x/4x; **coverage
+  −0.012 to −0.019 at every rate from 2x to 4x on both methods**; 24 s per 100k tokens against
+  0.17 s, because shrunk prose is new text and misses the embedding cache at every sweep point.
+  The mechanism reads clearly: the atoms in dropped tail sentences are bought back by the extra
+  segments the freed budget affords, so recall nets to zero, and the meaning is not. Prose is
+  13.0% of corpus tokens and most paragraphs are one to three sentences, so even a perfect
+  shrinker frees under 5% of the budget. Same rule as `topics`: loses or ties on both metrics,
+  out. `shrink_prose` stays for prose-shaped `tool_use` arguments, where the knob now works.
+  (Superseded 2026-09-29: `shrink_prose` was removed in `TRANSFORMS_VERSION` 4, 2026-09-24.)
+  Queue item 5 is closed. Grid 684 back to 660.
+- **Stale-stamped records are evicted, not averaged.** The first `TRANSFORMS_VERSION` bump that
+  did not also move `segments_digest` showed that a re-run added fresh records beside the stale
+  ones (96 reused + 36 to run wrote 132) and every table averaged both. `analyse()` now drops
+  any prior record whose identity no job in the full plan carries; a partial run's filter does
+  not evict the other arms. The one-transcript smoke that caught it is now the rule before any
+  grid: prove the arm moves with its knob on one transcript first.
+
+### Decided 2026-09-24
+
+- **Budget selection decides what stays; no positional cuts.** Scoring units and filling the token budget by score is the one mechanism that chooses what survives. Fixed "keep the start" rules are out: `TRANSFORMS_VERSION` 4 removes the leading-sentences cut on prose-shaped tool arguments, the leading-stages cut on shell commands, and the dead prose/thinking branch of `quantize_segment`. AST-depth banding stays: it keeps a code body's outline (definitions, imports, returns) rather than a position, and is the only in-segment transform left, behind `--band`. The one measured positional cut, `prose_shrink`, lost 0.012 to 0.019 coverage for no recall. The removed cuts were 30.4% of the tool_use channel's shrinkage at quality 0.5 (0.685 to 0.781 of raw) and 21.6% at 0.3 (0.549 to 0.647); the code channel is unchanged. Pending: re-run `supersede+band+leverage` on the partial main grid (216 jobs) after Experiment F finishes, to check that the 1.3 to 1.8 recall points `--band` bought at 3x/4x survive. (Corrected 2026-09-29: the Sep 18 table, `docs/results/exp_d_summary.txt`, gives +1.2 / +1.4 points of final-state recall at 3x/4x, 0.665 against 0.653 and 0.576 against 0.562, and +1.0 / +1.4 of all-history recall.) The smoke transcript (`swe-gym_row214`) could not show it: none of its 50 tool_use segments renders differently under version 3 and 4.
+(Done 2026-09-29: re-run, and `--band` turned out a wash — see the band re-check under
+[Decided 2026-09-29](#decided-2026-09-29).)
+
+### Decided 2026-09-29
+
+Read from the full Experiment F grid (`docs/results/exp_f_summary.txt`, 8,160 jobs, 0 failures,
+run 2026-09-22 to 28) and the Experiment G grid (`docs/results/exp_g_summary.txt`, 648 jobs, 0
+failures). Both compare at matched achieved rate against exp_d's reference records. The band
+re-check at the end reads from `docs/results/exp_d_band_recheck_summary.txt`. Four of the items below (the
+junk-bytes check, the new-facts tests, the per-token smoke, the band smoke) rest partly on scratch
+analyses that are not committed scripts, and say so where they appear.
+
+- **Experiment F is cut to four lazy arms.** `zlib-lazy`, `lzma-lazy`, `supersede+zlib-lazy` and
+  `supersede+lzma-lazy` stay in the grid; the other ten arms (exact, one-pass and stochastic
+  greedy) are out. The full 14-arm summary is kept verbatim in `exp_f_summary.txt`, because a
+  later run evicts the cut arms' records. The headline, measured, from that file's "each arm minus
+  leverage and minus supersede+leverage" block: compression-based selection trades atom recall
+  for coverage. The best of them, `supersede+lzma-lazy`, against the shipped
+  `supersede+leverage` is −0.007 / −0.026 / −0.023 on final-state recall and +0.028 / +0.041 /
+  +0.044 on coverage at 2x / 3x / 4x. It also costs 39.82 s per 100k tokens against 0.16 s (the
+  cost block), about 250x. No compression arm beats `supersede+leverage` on recall at any of the
+  three rates.
+- **The junk-bytes check is inconclusive.** The question was whether exact greedy's lower recall
+  comes from keeping junk: segments that compress badly because they are noise. The segments only
+  exact greedy picked were less compressible than the ones both selectors picked, but they were
+  not junkier. The check does not show junk is the cause, and does not rule it out. Scratch
+  analysis, not a committed script.
+- **The new-facts hypothesis is supported on the raw pool and weaker after supersession.** The
+  hypothesis: exact greedy's lower recall is explained by chasing byte novelty rather than new
+  facts. Three tests, all in scratch analyses, not committed scripts:
+  - T1 was tautological and is not evidence. Recall counts atoms in kept segments, so "segments
+    that add new atoms raise recall" restates the metric.
+  - T2 supports it on the raw pool (76.8%) and more weakly after supersession (65.1%, one stratum
+    over).
+  - T3: zlib's novelty does not track fact novelty (median Spearman rho −0.085). Leverage's raw
+    score tracks it, weakly (+0.194).
+- **Experiment G and its per-token variant** are written up under their own heading, [Experiment G](#experiment-g-leverage-times-word-novelty-2026-09-29), moved there unchanged on 2026-09-29.
+- **Decision: `supersede+leverage` stays the shipped default.** Neither compression-based
+  selection nor word novelty improves both metrics at once; each buys one with the other. No
+  downstream task evaluation exists to price the two in one currency, so the default does not
+  move. `novelty_select` (raw and `per_token`) stays in the repo as a measured, unshipped option.
+  Rejected: shipping novelty at alpha 0.5 for its recall gain, which is the same values argument
+  that kept path substitution opt-in (see [Decided 2026-09-16](#decided-2026-09-16)).
+- **Band re-check: without the tail cuts, `--band` is a wash.** Banding trims a code body to its
+  outline by AST nesting depth: definition headers, imports and returns are kept, deeper body
+  lines are elided, and the keep ratio sets how deep it keeps. This closes the item left pending
+  in [Decided 2026-09-24](#decided-2026-09-24): `supersede+band+leverage` was re-run on the base
+  variant after `TRANSFORMS_VERSION` 4 removed the prose and shell tail cuts (204 jobs, 0
+  failures; `docs/results/exp_d_band_recheck_summary.txt`, 2026-09-29). Measured, from that file's
+  aggressive-rate and knee blocks, against `supersede+leverage` on 18 transcripts at 2x / 3x /
+  4x: final-state recall 0.823 / 0.663 / 0.571 against 0.836 / 0.654 / 0.566, coverage
+  0.887 / 0.830 / 0.805 against 0.895 / 0.821 / 0.796. Every gap is 0.013 or less, so a wash.
+  The knee is worse, 0.612 against 0.598. The Sep 18 table (`docs/results/exp_d_summary.txt`) had band's knee at 0.580
+  and its final-state recall edge at +0.012 / +0.014 at 3x / 4x; now it is +0.009 / +0.005.
+  Inferred, not measured directly: band's earlier edge came mostly from the tail cuts. Caveat:
+  that old table predates `ATOMS_VERSION` 6, so old against new is not perfectly clean; the two
+  unbanded rows moved by at most 0.005 across that change. A smoke on two public transcripts,
+  `trace-commons_ba1b4916` and `trace-commons_11ef2190`, showed banding's token savings identical
+  at keep 0.33, 0.3 and 0.25: the depth knob saturates below about 1/3. The smoke output is not a
+  committed file. Inferred from `quantize_code`: the cutoff is `floor(keep * (max_band + 1))`, so
+  whenever `max_band` is 5 or less, those three keep ratios give the same cutoff.
+  Decision: `--band` stays an opt-in CLI flag, off by default. No code change.
 
 ## Corpus rule, restated
 

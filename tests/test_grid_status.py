@@ -144,10 +144,10 @@ def test_typical_gap_uses_current_transcript() -> None:
 
 
 def test_is_runner_ignores_the_test_file_the_watcher_and_other_grids() -> None:
-    line = '"C:\py\python.exe" experiments/exp_d_curves.py --grid exp_f --methods a'
+    line = r'"C:\py\python.exe" experiments/exp_d_curves.py --grid exp_f --methods a'
     assert gs.is_runner([line], "exp_f")
     assert not gs.is_runner([line], "exp_d")
-    assert gs.is_runner(["python C:\repo\experiments\exp_d_curves.py"], "exp_d")
+    assert gs.is_runner([r"python C:\repo\experiments\exp_d_curves.py"], "exp_d")
     assert gs.is_runner(["python experiments/exp_d_curves.py --grid=exp_f"], "exp_f")
     assert not gs.is_runner(["python -m pytest tests/test_exp_d_curves.py"], "exp_d")
     assert not gs.is_runner(["python experiments/grid_status.py exp_d_curves.py"], "exp_d")

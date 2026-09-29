@@ -1,11 +1,12 @@
 import numpy as np
 import pytest
+import scipy.sparse
 
 from loosy_goose.spectral import (
     inverse_participation_ratio,
     participation_fraction,
     ppmi,
-    truncated_svd,
+    truncated_svd_sparse,
 )
 
 
@@ -72,27 +73,27 @@ def test_ppmi_rejects_non_2d() -> None:
         ppmi(np.ones(4))
 
 
-def test_truncated_svd_eig_weight_one_reconstructs_rank_k() -> None:
+def test_truncated_svd_sparse_eig_weight_one_reconstructs_rank_k() -> None:
     rng = np.random.default_rng(1)
     k = 3
     m = rng.normal(size=(20, k)) @ rng.normal(size=(k, 15))
-    w, s, vt = truncated_svd(m, rank=k, eig_weight=1.0)
+    w, s, vt = truncated_svd_sparse(scipy.sparse.csr_matrix(m), rank=k, eig_weight=1.0)
     assert w.shape == (20, k)
     assert s.shape == (k,)
     assert vt.shape == (k, 15)
     assert w @ vt == pytest.approx(m, abs=1e-8)
 
 
-def test_truncated_svd_eig_weight_zero_has_orthonormal_columns() -> None:
+def test_truncated_svd_sparse_eig_weight_zero_has_orthonormal_columns() -> None:
     rng = np.random.default_rng(2)
     m = rng.normal(size=(30, 12))
-    w, _, _ = truncated_svd(m, rank=5)
+    w, _, _ = truncated_svd_sparse(scipy.sparse.csr_matrix(m), rank=5)
     assert w.T @ w == pytest.approx(np.eye(5), abs=1e-10)
 
 
-def test_truncated_svd_rejects_bad_rank() -> None:
-    m = np.eye(4)
+def test_truncated_svd_sparse_rejects_bad_rank() -> None:
+    m = scipy.sparse.csr_matrix(np.eye(4))
     with pytest.raises(ValueError):
-        truncated_svd(m, rank=0)
+        truncated_svd_sparse(m, rank=0)
     with pytest.raises(ValueError):
-        truncated_svd(m, rank=5)
+        truncated_svd_sparse(m, rank=4)

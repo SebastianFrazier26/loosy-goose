@@ -1,8 +1,8 @@
 # Raw result tables
 
 Verbatim summary tables as emitted by the experiment scripts, kept here so the findings survive
-independently of any one machine. The first four are Phase 1, run 2026-09-08; `exp_d_summary.txt`
-is Phase 2, re-baselined 2026-09-16/18. Interpretation lives in [../PHASE1.md](../PHASE1.md) and
+independently of any one machine. The first four are Phase 1, run 2026-09-08; the rest are
+Phase 2, from 2026-09-18 to 2026-09-29. Interpretation lives in [../PHASE1.md](../PHASE1.md) and
 [../PHASE2.md](../PHASE2.md).
 
 | File | Produced by |
@@ -37,8 +37,10 @@ distinct union either. Three conventions are in use across this project; see the
 Regenerate with `uv run python experiments/corpus_stats.py`, which reads `data/local/` as well as
 the public corpora.
 
-**`exp_d_summary.txt` — current as of `ATOMS_VERSION` 5, `TRANSFORMS_VERSION` 2, `PATHS_VERSION` 3
-and `SUPERSEDE_VERSION` 2.** Replaced 2026-09-18 with the summary regenerated from the
+**`exp_d_summary.txt` — the 2026-09-18 full-grid table, partly stale.** It was current as of
+`ATOMS_VERSION` 5, `TRANSFORMS_VERSION` 2, `PATHS_VERSION` 3 and `SUPERSEDE_VERSION` 2, and is still
+the only table with every method and variant in it. The current table for the four methods that
+matter now is `exp_d_band_recheck_summary.txt`, below. Replaced 2026-09-18 with the summary regenerated from the
 2026-09-16/18 re-baseline's checkpoints after `topics` left the grid (the run log is the committed
 `experiments/output/rebaseline_v5.log`, whose own summary tail still carries the `topics` rows);
 the version-4 summary it replaced is in git history at 4cf7c7e, the version-2 one at 929997c. The

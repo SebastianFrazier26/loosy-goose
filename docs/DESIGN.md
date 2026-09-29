@@ -60,12 +60,12 @@ what matters, a quantizer that discards what does not, and a decoder that tolera
 
 | Codec stage | Loosy-Goose |
 | --- | --- |
-| Block split | Segment the transcript into units (sentences, code blocks, tool-result chunks) |
+| Block split | Segment the transcript into units (whole prose paragraphs, code blocks, tool calls, tool-result line chunks) |
 | Transform (DCT ≈ KLT) | SVD of the context's own semantic matrix — the exact KLT, affordable because one session is small |
 | Quantization matrix | Per-kind quality table plus rank cutoff, dead-zone thresholds and recency weighting — a design idea, not wired; the shipped rate control is `--keep` / `--level` / `--target-tokens` |
 | Coefficient truncation | Drop segments with little weight on the retained directions; band-limit the ones we keep |
 | Entropy coding | Emit text; the target model's tokenizer does the lossless part |
-| Chroma subsampling | Code and tool output are quantized more aggressively than prose, but never dropped wholesale |
+| Chroma subsampling | Code and code-shaped tool arguments can be banded to their outline rather than dropped wholesale (opt-in, `--band`) |
 
 One place the analogy inverts, and it matters. In JPEG the energy is in the low-frequency
 coefficients, so truncating the tail is nearly free. In text embeddings the top directions are
@@ -83,8 +83,10 @@ transcript --> segment --> spectral --> select --> quantize --> emit
 ```
 
 1. **Segment** (`segment.py`). Split into `Segment` units with a `kind` in
-   {prose, code, tool_result, tool_use, thinking}. Prose splits paragraph then sentence;
-   code and tool_use are atomic; tool_result is line-chunked. Each segment carries `atoms`
+   {prose, code, tool_result, tool_use, thinking}. Prose and thinking split into whole
+   paragraphs, with a 12,000-character safety cap (`ATOMS_VERSION` 6; before that they split
+   further into ~600-character sentence runs); code blocks and tool_use are atomic; tool_result
+   is line-chunked at 600 characters. Each segment carries `atoms`
    — identifiers, paths, numbers, URLs — which the distortion metric scores against.
 2. **Spectral** (`cooccur.py`, `topics.py`, `select.py`). Two bases, used for different jobs:
    - PPMI co-occurrence plus truncated SVD over the session's own vocabulary, with inverse
@@ -122,11 +124,11 @@ by different mechanisms and to different degrees.
 
 | Kind | Mechanism | Notes |
 | --- | --- | --- |
-| prose | segment selection | Highest fidelity. User directives weighted up. |
+| prose | segment selection | Design intent, not implemented: highest fidelity, user directives weighted up. Today prose competes in the same budget fill as every other kind, with no per-kind weight. |
 | code | AST-depth banding | Band 0 (imports, signatures, type and class declarations) is the DC coefficient and survives at any quality. Nested bodies are high-frequency detail. |
-| tool_use | shape routing plus a compact call rendering | Target path kept verbatim — it is the identifying fact and supersession's key. Every other value is routed by *shape*, not by key name: code-shaped to the AST bander, shell to stage elision, prose to passage elision. The call is emitted as a call line rather than a JSON object, and the tool's own name is not emitted with it (decided 2026-09-10). **This channel tolerates the most loss of any** (decided 2026-09-10). Its trimming depth **follows the global keep ratio**; see the note below. On the channel, **1.92x at depth 0.33**, which is where the rates this project targets put it; 2.21x is the depth-0.0 figure and is not what a real run realizes. |
+| tool_use | selection; under `--band`, code-shaped arguments banded plus a compact call rendering | Target path kept verbatim — it is the identifying fact and supersession's key. Under `--band`, a value is routed by *shape*, not by key name: code-shaped values go to the AST bander and every other value (shell, prose) passes through verbatim (`TRANSFORMS_VERSION` 4, 2026-09-24, removed the shell-stage and prose-passage cuts). The call is emitted as a compact call line rather than a JSON object, and the tool's own name is not emitted with it (decided 2026-09-10). Banding depth **follows the global keep ratio**; see the note below. Without `--band` a call is kept or dropped whole. No channel compression figure is current: the old 1.92x figure was measured under `TRANSFORMS_VERSION` 1 and no script regenerates it. |
 | tool_result | line chunking plus selection | Plus supersession dedupe. |
-| thinking | segment selection | Lowest default fidelity. |
+| thinking | segment selection | Design intent, not implemented: lowest default fidelity. Today it is selected like prose. |
 
 **The `tool_use` depth knob follows the global rate** (decided 2026-09-10, correcting this
 document). An earlier version of the row above said the knob was applied flat rather than scaled
@@ -135,9 +137,13 @@ override, it defaults to `quality`, and no caller in the sweep or the pipeline s
 channel is trimmed at whatever rate the run asks of everything else. Rejected: changing the code
 to match what the doc claimed. Holding one channel's depth flat while every other kind scales is
 a second knob turning inside a grid whose whole discipline is one change at a time, and the case
-for a flat depth is an argument rather than a measurement. Sweeping the depth as its own variant
-stays queued as separate work — see [PHASE2.md](PHASE2.md#queue) — and only then is there
-evidence for holding it anywhere.
+for a flat depth is an argument rather than a measurement.
+
+(Updated 2026-09-29.) The one caller that does set `tool_quality` is the Experiment D runner,
+through `Variant.tool_depth`: the depth sweep ran as three variants (`flat0.5`, `flat0.25`,
+`half`) and was null, moving final-state recall by at most 0.010 on either band method at 2x, 3x
+or 4x — see [PHASE2.md](PHASE2.md#decided-2026-09-18). The pipeline never sets it, so the
+channel's depth stays on the global keep ratio, now by measurement rather than by default.
 
 Two lossless passes run before any lossy stage, because free wins should never be paid for
 with distortion:
@@ -190,11 +196,14 @@ own similarity function, which inflates every result.
   demotion and is still what justifies stripping top directions. See
   [PHASE1.md](PHASE1.md); the same result is stated in `README.md` and `CLAUDE.md`.
 - How to drive the whole quality table from a single knob. The shipped CLI sets only the rate —
-  `--keep`, `--level` or `--target-tokens` — and the per-kind quality table remains a design idea,
-  not wired.
+  `--keep`, `--level` or `--target-tokens` — and the old `--quality` flag is removed (2026-09-29).
+  The per-kind quality table remains a design idea, not wired.
 - Whether the background prior should be generic, personalized from the user's own sessions, or
   both layered. The personalization prior is a committed roadmap item.
-- Segment-level versus span-level trimming for prose.
+- ~~Segment-level versus span-level trimming for prose.~~ **Settled 2026-09-24:** segment-level.
+  Budget selection decides what stays and no positional cut trims inside a segment; the one
+  span-level trim measured, `prose_shrink`, was null on recall twice and cost 0.012 to 0.019
+  coverage. See [PHASE2.md](PHASE2.md#decided-2026-09-24).
 - ~~Whether "extractive" must mean *contiguous substring of the original*.~~ **Settled
   2026-09-10:** it does not. A mechanically-defined pointer whose definition ships alongside it
   is admissible in retained text; see the emit step above. The rejected alternative was requiring

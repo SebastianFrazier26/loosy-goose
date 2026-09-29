@@ -9,12 +9,12 @@ A long conversation is treated the way an image codec treats pixels:
 
 | Codec stage | Loosy-Goose |
 | --- | --- |
-| Block split | Segment the transcript into units (sentences, code blocks, tool-result chunks) |
+| Block split | Segment the transcript into units: whole prose paragraphs (12k-character cap), code blocks and tool calls kept whole, tool results cut into line chunks |
 | Transform (DCT ≈ KLT) | SVD of the context's own semantic matrix — the exact KLT, affordable because a session is small |
 | Quantization matrix | Per-kind quality table plus rank cutoff, dead-zone thresholds and recency weighting — a design idea, not wired; the shipped rate control is `--keep` / `--level` / `--target-tokens` |
 | Coefficient truncation | Drop segments with little weight on the retained dimensions; band-limit the ones we keep |
 | Entropy coding | Emit text; the target model's tokenizer does the lossless part |
-| Chroma subsampling | Code and tool output are quantized harder than prose — banded to signatures and commands, not dropped wholesale |
+| Chroma subsampling | Opt-in (`--band`, off by default): code bodies and code-shaped tool arguments are banded down to their outline by AST depth rather than dropped wholesale |
 
 The output is **extractive**: real segments of the original, kept, trimmed or dropped. No
 summarizer rewrites anything, so the result is deterministic and auditable.
@@ -36,7 +36,31 @@ is the reason the paper is load-bearing rather than decorative — is
 
 ## Status
 
-Pre-alpha. The `compress` command is a stub.
+Pre-alpha. The `compress` command works: it runs the measured default pipeline (supersession,
+then leverage scoring, then selection into a token budget) and writes the kept text as JSONL.
+Phase 2 is still open; see [docs/PHASE2.md](docs/PHASE2.md).
+
+### Current results
+
+The shipped default is `supersede+leverage`. Measured on 18 transcripts at matched achieved
+rates (`docs/results/exp_d_band_recheck_summary.txt`, 2026-09-29):
+
+| Rate | final-state atom recall | semantic coverage |
+| --- | --- | --- |
+| 2x | 0.836 | 0.895 |
+| 3x | 0.654 | 0.821 |
+| 4x | 0.566 | 0.796 |
+
+Tried against it, and none of them improved both metrics at once
+([docs/PHASE2.md § Decision log](docs/PHASE2.md#decision-log)):
+
+- Compression-based selection (Experiment F, zlib and lzma) buys coverage and loses recall.
+- Leverage times word novelty (Experiment G) buys recall and loses coverage; ranking it per token
+  swings further toward coverage.
+- `--band` is a wash once the positional tail cuts were removed: every gap at 2x/3x/4x is 0.013
+  or less.
+
+### Phase 1
 
 Phase 1 experiments are **complete** — see [docs/PHASE1.md](docs/PHASE1.md) for the full
 results. Headline findings, stated plainly:
@@ -65,13 +89,49 @@ results. Headline findings, stated plainly:
 
 ## Run
 
+The CLI needs the `embed` extra, because leverage scoring embeds every segment with
+sentence-transformers:
+
 ```
-uv sync
+uv sync --extra embed
 uv run loosy-goose compress path/to/transcript.jsonl                  # level medium, keep 0.33 (~3x)
 uv run loosy-goose compress path/to/transcript.jsonl --level light    # 0.50 (~2x); heavy = 0.25 (~4x)
 uv run loosy-goose compress path/to/transcript.jsonl --keep 0.42      # any ratio in [0.10, 0.80]
 uv run loosy-goose compress path/to/transcript.jsonl --target-tokens 20000
 ```
+
+The first run downloads the selection embedding model, `BAAI/bge-small-en-v1.5`, from Hugging
+Face. The experiments also use a second model, `sentence-transformers/all-MiniLM-L6-v2`, to score
+coverage; the two are kept apart on purpose (see `src/loosy_goose/embed.py`).
+
+**Input.** Two formats, picked by file suffix:
+
+- `.jsonl` — a Claude Code session log. Unknown record and block types are counted and skipped,
+  never fatal.
+- `.json` — a generic message list, `[{"role": ..., "content": ...}]`, or an object with a
+  `messages` key holding one. Roles `user`, `assistant`, `system` and `tool` are read; `content`
+  may be a string or a list of content blocks.
+
+**Output.** JSONL. The first line is a header object under the key `loosy_goose`: the rate used
+and where it came from, the flags, the token budget, input and output token counts,
+`atom_recall_final` (information only; nothing reads it back), the version stamps, and the path
+table when `--paths` is on. Every line after that is one kept turn,
+`{"index", "role", "blocks": [{"kind", "text", "meta"}]}`, in original order.
+
+**Flags.**
+
+| Flag | Meaning |
+| --- | --- |
+| `--level light\|medium\|heavy` | preset rate: keep 0.50 / 0.33 / 0.25 of input tokens (~2x / ~3x / ~4x). Default `medium` |
+| `--keep R` | keep ratio in [0.10, 0.80], in 0.01 steps (finer values are rounded) |
+| `--target-tokens N` | output token budget; one that implies a ratio outside [0.10, 0.80] is clamped, with a warning |
+| `--band` | AST-depth banding of code and code-shaped tool arguments before scoring. Off by default |
+| `--paths` | name each repeated path once in a leading table and replace mentions with `[P<n>]` markers. Off by default |
+| `--min-mentions N` | with `--paths`, tabulate paths mentioned at least N times (default 2; 1 = every path) |
+| `--output PATH` | write here instead of stdout (`-`, the default, is stdout) |
+
+`--level`, `--keep` and `--target-tokens` are mutually exclusive. No preset turns on `--band` or
+`--paths`.
 
 ## Continuing on another machine
 
@@ -80,7 +140,8 @@ Everything needed is in the repo; nothing depends on the machine Phase 1 ran on.
 ```
 git clone https://github.com/SebastianFrazier26/loosy-goose
 cd loosy-goose
-uv sync --dev --extra embed      # embed extra pulls torch CPU + sentence-transformers
+uv sync --dev --extra embed      # embed extra pulls torch CPU + sentence-transformers;
+                                 # the dev group carries scikit-learn, which the experiments need
 uv run pytest                    # expect a green suite
 uv run python experiments/fetch_public.py    # public corpora into data/public/
 uv run python experiments/corpus_stats.py
@@ -114,8 +175,8 @@ Lint, format check and type check: `uv run ruff check . && uv run ruff format --
 - **Done** — Phase 1: PPMI-SVD vs embedding-SVD vs code channel, on real and public transcripts
 - **In progress** — Phase 2: unified rate-distortion curves, all methods and baselines at matched
   budgets. Plan, decisions and open questions in [docs/PHASE2.md](docs/PHASE2.md)
-- Core: segment → spectral → select → quantize → emit
-- CLI
+- **Done** — core pipeline and CLI: segment → supersede → (band) → leverage score → budget
+  select → emit
 - MCP server
 - Claude Code plugin; Codex parity
 - Personalization prior built from the user's own local sessions

@@ -116,10 +116,10 @@ class Segment:
     text: str
     protected: bool
     atoms: list[str] = field(default_factory=list)
-    # The tool's name, for `tool_use` segments only. Carried because the shrinker has to say
-    # which operation a call was, and inferring it from payload shape (as supersede.py must)
-    # cannot classify a call that fits no known shape. Deliberately not part of `text`, so it
-    # changes no segment's content and no experiment checkpoint's `segments_digest`.
+    # The tool's name, for `tool_use` segments only. Carried because supersede.py has to know
+    # which operation a call was, and payload shape alone cannot classify a call that fits no
+    # known shape. Deliberately not part of `text`, so it changes no segment's content and no
+    # experiment checkpoint's `segments_digest`.
     tool_name: str | None = None
 
 

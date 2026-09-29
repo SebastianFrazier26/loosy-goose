@@ -98,10 +98,6 @@ PROTECT_CODE_ONLY_METHODS = ("tfidf", "leverage")
 # The list is hand-written, which is a real risk — `test_transforming_methods_lists_every_method_
 # that_shrinks` detects the true set by observation and fails if this drifts from it.
 TRANSFORMING_METHODS = ("band+leverage", "supersede+band+leverage")
-# Methods that run `supersede.apply_supersession` on their candidate pool, so their records
-# carry SUPERSEDE_VERSION the way the shrinking methods carry TRANSFORMS_VERSION. Hand-written
-# like that list and guarded the same way, by `test_superseding_methods_lists_every_method_
-# that_supersedes`.
 # Experiment F's compression-based selectors (experiments/exp_f_compress.py). Named here rather
 # than there because every stamp below is keyed on method name and this module cannot import that
 # one; a test pins the two lists together.
@@ -119,6 +115,10 @@ NOVELTY_PER_TOKEN_ALPHAS = (0.5,)
 NOVELTY_PER_TOKEN_METHODS = tuple(
     f"supersede+leverage+novelty-per-token@{a:g}" for a in NOVELTY_PER_TOKEN_ALPHAS
 )
+# Methods that run `supersede.apply_supersession` on their candidate pool, so their records
+# carry SUPERSEDE_VERSION the way the shrinking methods carry TRANSFORMS_VERSION. Hand-written
+# like that list and guarded the same way, by `test_superseding_methods_lists_every_method_
+# that_supersedes`.
 SUPERSEDING_METHODS = (
     "supersede+tfidf",
     "supersede+leverage",
@@ -477,14 +477,15 @@ SCHEMA_VERSION = 3
 
 
 def segments_digest(segments: list[Segment]) -> str:
-    """Fingerprint of the segmenter's output for a transcript.
+    """Fingerprint of the segmenter's OUTPUT for a transcript (each segment's kind and text),
+    folded with ATOMS_VERSION and SUPERSEDE_VERSION.
 
-    This is the checkpoint's *input* identity, and it is the only thing that can invalidate a
-    whole file: if the loader or segmenter changes, every record was scored against text that no
-    longer exists. Downstream text transformations (banding, and later path substitution and the
-    per-kind shrinkers) are deliberately NOT in here — they belong to the variant that produced a
-    record, so a run with substitution on and a run with it off coexist in one checkpoint rather
-    than evicting each other.
+    This is the checkpoint's input identity, and the only thing that can invalidate a whole file:
+    if the loader, segmenter, atom extractor or supersession pass changes, every record was scored
+    against a text or denominator that no longer exists. Downstream text transforms (banding, path
+    substitution) are deliberately NOT in here — they belong to the variant and stamps that
+    produced a record, so a run with substitution on and a run with it off coexist in one
+    checkpoint rather than evicting each other.
     """
     h = hashlib.sha256()
     # The atom extractor is part of the input identity even though it changes no segment text:
@@ -606,7 +607,7 @@ def select_stamp(method: str) -> int:
 class RecordIdentity(NamedTuple):
     """What makes a stored result the answer to a specific question.
 
-    A NamedTuple rather than a bare tuple on purpose: this grew from four fields to seven, and
+    A NamedTuple rather than a bare tuple on purpose: this grew from four fields to nine, and
     the positional unpack left behind by the five-field version crashed `_write_summary`
     — the last step of a multi-hour run. Fields are read by name so adding one cannot do that
     again.

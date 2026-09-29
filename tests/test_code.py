@@ -385,7 +385,7 @@ PAYLOAD_SHAPES = [
 @pytest.mark.parametrize("quality", [0.0, 0.5, 0.9])
 def test_quantize_tool_use_never_grows_its_input(text: str, quality: float) -> None:
     # `render_call` re-serialises nested containers with json.dumps, repaying the scaffolding
-    # `_shrink_arg` just saved, so shrinking a payload of containers could grow it.
+    # `_band_arg` just saved, so shrinking a payload of containers could grow it.
     assert count_tokens(quantize_tool_use(text, quality)) <= count_tokens(text)
 
 

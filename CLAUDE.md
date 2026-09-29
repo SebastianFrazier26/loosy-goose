@@ -8,27 +8,30 @@ Read [docs/DESIGN.md](docs/DESIGN.md) before changing the algorithm and
 
 ## Commands
 
-- `uv sync --dev --extra embed` — install (Python 3.12 pinned via `.python-version`)
+- `uv sync --dev --extra embed` — install (Python 3.12 pinned via `.python-version`). The CLI
+  alone needs `uv sync --extra embed`; the experiments also need the dev group, which carries
+  scikit-learn (TF-IDF baselines)
 - `uv run pytest` — tests
 - `uv run ruff check . && uv run ruff format --check .` — lint + format check
 - `uv run mypy src` — type check (strict)
 - `uv run loosy-goose compress <transcript> [--keep 0.5 | --level light|medium|heavy | --target-tokens N] [--band] [--paths --min-mentions 2] [--output out.jsonl]` — CLI: supersede → leverage → budget selection; rate defaults to `--level medium` (0.33); header reports `atom_recall_final` as information only
 
-The `embed` extra pulls torch CPU + sentence-transformers for the embedding-SVD work; CI skips
-it. Everything is CPU-only. Do not unpin Python 3.12 — 3.13+ lacks torch wheels.
+The `embed` extra pulls torch CPU + sentence-transformers for the embedding-SVD work, and the CLI
+cannot score without it; CI skips it. Everything is CPU-only. Do not unpin Python 3.12 — 3.13+
+lacks torch wheels.
 
 ## Layout
 
 Core:
 
-- `spectral.py` — PPMI, inverse participation ratio, dense and sparse truncated SVD
+- `spectral.py` — PPMI, inverse participation ratio, sparse truncated SVD
 - `transcript.py` — `Transcript`/`Turn`/`Block`; tolerant Claude Code JSONL loader (unknown record/block types are counted in `Transcript.meta`, never fatal) and generic `[{role, content}]` loader
 - `segment.py` — `Segment` units: prose split into whole paragraphs (12k-char cap), code/tool_use atomic, tool_result line-chunked; `atoms` = identifiers/paths/numbers/URLs for the recall metric
 - `tokens.py` — `count_tokens` via tiktoken `o200k_base` (model-agnostic rate proxy)
 - `embed.py` — pinned select/score model pair
 - `budget.py` — token budget, protect policy, greedy score-based selection. **The shared contract**: every method competes at an identical token budget, or results are not comparable
 - `metrics.py` — compression ratio, atom recall, semantic coverage, `evaluate`
-- `pipeline.py` — `compress_transcript`: the shipped supersede → band → paths → leverage → budget stack, mirroring the Experiment D runner's measured configuration; `to_turns` regroups kept segments into turns
+- `pipeline.py` — `compress_transcript`: the shipped supersede → (band) → (paths) → leverage → budget stack, band and paths opt-in, mirroring the Experiment D runner's measured configuration; `PipelineOptions` carries the knobs; `to_turns` regroups kept segments into turns
 - `cli.py` — argparse entry point
 
 Experiment A (topic basis):
@@ -51,16 +54,20 @@ Experiment C (code channel):
 Supporting:
 
 - `tests/` — pytest
-- `experiments/` — Phase 1 scripts; outputs in `experiments/output/` (gitignored)
+- `experiments/` — experiment scripts, Phase 1 and 2; outputs in `experiments/output/` (gitignored); see `experiments/README.md`
   - `fetch_public.py` — downloads trace-commons/agent-traces, SWE-Gym/OpenHands-SFT-Trajectories, oasst2 validation into `data/public/`, writes `SOURCES.md` with revision hashes
   - `pick_local.py` — copies 5 local Claude Code sessions nearest {5K,20K,50K,100K,200K} tokens into `data/local/sessions/`
   - `corpus_stats.py` — per-transcript segment/token/per-kind/atom table
   - `baselines.py` — random drop, recency, TF-IDF
   - `exp_a_ppmi.py`, `exp_b_embed.py`, `exp_c_code.py` — the three Phase 1 tracks
+  - `exp_d_curves.py` — the Phase 2 rate-distortion runner and the grid registry (`--grid exp_d|exp_f|exp_g`, partial runs via `--methods` / `--variants`)
+  - `exp_e_analysis.py` — Experiment E, elasticity / per-kind / predictors / cost over the exp_d checkpoints; no argparse, so any invocation runs it and rewrites its output
   - `exp_f_compress.py` — Experiment F grid (`exp_d_curves.py --grid exp_f`): the `compress_select` arms, compared against exp_d's reference checkpoints
   - `exp_g_novelty.py` — Experiment G grid (`exp_d_curves.py --grid exp_g`): `novelty_select` on the supersession pool at alpha 0.5 / 1 / 2, plus a per-token arm at 0.5, compared against exp_d's leverage and supersede+leverage
-  - `grid_status.py` — read-only progress watcher for a running grid (`--grid NAME [--log PATH] [--watch]`): done/planned per transcript and method, rough ETA, NOT RUNNING / stall warnings
-- `docs/` — design spec, Phase 1 write-up, committed result tables
+  - `grid_status.py` — read-only progress watcher for a running grid (`--grid NAME [--methods A,B] [--variants base] [--log PATH] [--watch [--interval 10]]`): done/planned per transcript and method, rough ETA, NOT RUNNING / stall warnings
+  - `survey_paths.py` — path mass and substitution-table cost; still carries the v1 path patterns (PHASE2 queue item 13)
+  - `survey_tool_output.py` — shapes inside `tool_result` blocks and their token share
+- `docs/` — design spec, Phase 1 and Phase 2 write-ups, committed result tables
 - `data/local/` — user's own session logs, gitignored, **never committed**
 - `data/public/` — public dataset downloads, gitignored; regenerate with `fetch_public.py`
 - `.claude/` — local-only personal agent env, excluded via `.git/info/exclude`, not part of the repo
@@ -73,14 +80,20 @@ Supporting:
 - Tests cover the algorithmic core; thin CLI glue gets smoke tests only.
 - Selection and scoring must never share an embedding model — see `embed.py`.
 - **Any transform downstream of segmentation needs its own version stamp** in Experiment D's
-  record identity. `segments_digest` fingerprints the segmenter's *input* and deliberately stops
-  there, so that variants accumulate in a checkpoint rather than evicting each other — which
-  means a rewritten `code.py` or `paths.py` leaves stored records looking valid while describing
-  behaviour that no longer exists. Three stamps exist for this: `code.TRANSFORMS_VERSION`,
-  `paths.PATHS_VERSION`, and `exp_d_curves.BAND_QUALITY_VERSION` for the runner's own decision to
-  hand `quantize_segment` the sweep's keep ratio as its fidelity knob. The third is the one that
+  record identity. `segments_digest` fingerprints the segmenter's *output* — each segment's kind
+  and text — plus `segment.ATOMS_VERSION` and `supersede.SUPERSEDE_VERSION`, because atoms and
+  the supersession pass's final-state atom set are every record's recall denominator. It
+  deliberately stops there, so that variants accumulate in a checkpoint rather than evicting each
+  other — which means a rewritten `code.py` or `paths.py` leaves stored records looking valid
+  while describing behaviour that no longer exists. `RecordIdentity` therefore carries, beside
+  method, protect, ratio and variant key, one stamp per downstream transform, each 0 for methods
+  it does not touch: `code.TRANSFORMS_VERSION` (banding methods), `paths.PATHS_VERSION` (path
+  variants), `exp_d_curves.BAND_QUALITY_VERSION` (the runner's own decision to hand
+  `quantize_segment` the sweep's keep ratio as its fidelity knob), `SUPERSEDE_VERSION` (methods
+  that supersede), and `select_version` (`compress_select.SELECT_VERSION` or
+  `novelty_select.NOVELTY_VERSION`, via `select_stamp`). `BAND_QUALITY_VERSION` is the one that
   shows the rule is about transforms, not modules — it lives in the runner because that mapping
-  does. A fourth transform needs a fourth. See
+  does. Any new transform needs its own. See
   [docs/PHASE2.md](docs/PHASE2.md#a-silent-staleness-trap-found-by-walking-into-it).
 
 ## Algorithm decisions (locked 2026-09-08)
@@ -108,8 +121,8 @@ is demoted to a labeller and Experiment B drives selection. Spectral and budget-
 **split the two distortion metrics** — spectral wins atom recall at every rate, TF-IDF wins
 semantic coverage at every rate — and that split is reported as two statistics rather than
 resolved into a winner. Do not re-run these; read [docs/PHASE1.md](docs/PHASE1.md), which also
-lists the segmenter, loader and atom-extractor defects found since, and five implementation
-defaults still awaiting confirmation.
+lists the segmenter, loader and atom-extractor defects found since. Phase 2's current state is at
+the top of [docs/PHASE2.md](docs/PHASE2.md).
 
 ## Hard rules
 

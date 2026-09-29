@@ -117,19 +117,6 @@ def test_unrelated_segments_untouched_and_apply_preserves_order() -> None:
     assert [s.id for s in kept] == [s.id for s in b.segments]
 
 
-def test_tool_names_override_payload_shape_inference() -> None:
-    b = _Builder()
-    # Payload shape alone says "read" (path only); a Delete-like tool name must not become a Read.
-    odd = b.call(file_path="a.py", offset=0)
-    b.result("deleted")
-    read = b.call(file_path="a.py")
-    b.result("     1→x")
-    gone = find_superseded(b.segments, tool_names={odd.id: "Delete", read.id: "Read"})
-    assert odd.id not in gone
-    gone_default = find_superseded(b.segments)
-    assert gone_default[odd.id].reason == "read_superseded"
-
-
 def test_attribute_results_single_and_matched_calls() -> None:
     b = _Builder()
     c1 = b.call(file_path="a.py")
@@ -187,16 +174,6 @@ def test_stored_tool_name_classifies_a_call_payload_shape_cannot() -> None:
     assert gone[read.id].reason == "read_superseded" and gone[read.id].by == write.id
     assert gone[dump.id].reason == "read_superseded"
     assert write.id not in gone
-
-
-def test_explicit_tool_names_override_stored_name() -> None:
-    b = _Builder()
-    odd = b.call("Read", file_path="a.py", offset=0)
-    b.result("deleted")
-    b.call("Read", file_path="a.py")
-    b.result("     1→x")
-    assert find_superseded(b.segments)[odd.id].reason == "read_superseded"
-    assert odd.id not in find_superseded(b.segments, tool_names={odd.id: "Delete"})
 
 
 def test_openhands_xml_payloads_participate_in_supersession() -> None:

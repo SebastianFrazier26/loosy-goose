@@ -166,7 +166,8 @@ def _lazy_greedy(
 ) -> None:
     # Minoux lazy greedy: a stale bound is trusted as an upper bound on the candidate's current
     # density. That holds only if gains never grow as context grows (submodularity), which
-    # compressed length satisfies only approximately — zlib exact vs zlib lazy measures the gap.
+    # compressed length satisfies only approximately; tests compare against `_exact_greedy` on
+    # zlib to bound the gap.
     heap: list[tuple[float, int, int]] = []
     for i in candidates:
         if costs[i] <= remaining:

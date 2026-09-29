@@ -25,7 +25,7 @@ from loosy_goose.segment import Segment
 #    with that turn's `tool_use` segments by a cursor — and only when the caller supplied them.
 # 2: tool names read from `Segment.tool_name`, which segmentation stored directly, so this pass
 #    and the shrinker can no longer disagree about which tool a call was. The positional walk is
-#    gone; an explicit `tool_names` mapping still wins for the ids it covers.
+#    gone.
 SUPERSEDE_VERSION = 2
 
 Reason = Literal["edit_superseded", "read_superseded", "duplicate"]
@@ -103,10 +103,8 @@ def attribute_results(segments: list[Segment]) -> dict[int, int]:
 def find_superseded(
     segments: list[Segment],
     *,
-    tool_names: Mapping[int, str] | None = None,
     result_owner: Mapping[int, int] | None = None,
 ) -> dict[int, Supersession]:
-    names = tool_names or {}
     owner = result_owner if result_owner is not None else attribute_results(segments)
     out: dict[int, Supersession] = {}
 
@@ -114,7 +112,7 @@ def find_superseded(
     for s in segments:
         payload = _payload(s)
         if payload is not None:
-            file_op = _file_op(payload, names.get(s.id, s.tool_name))
+            file_op = _file_op(payload, s.tool_name)
             if file_op is not None:
                 ops[s.id] = file_op
 

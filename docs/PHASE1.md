@@ -282,6 +282,10 @@ Chosen by implementation rather than by explicit decision. All currently kept as
 4. `ipr_weight` normalization in `TopicConfig`.
 5. Min-max normalization of scores before the recency blend in `budget.select_by_score`.
 
+(Moot as of 2026-09-29: items 1–4 belong to the PPMI topic basis, which was demoted to a labeller
+and cut from the Phase 2 grid, and the recency blend in item 5 is reached only through
+`topics.py`; no other caller passes a recency weight, so it stays at its default of 0.)
+
 ## Phase 2
 
 The unified rate-distortion runner: every method — A-labelled, B-selected, C-quantized, and the
