@@ -793,7 +793,7 @@ def test_every_grid_is_registered_and_the_stamp_lists_cover_exp_f_and_exp_g() ->
     assert registry["exp_f"] is exp_f.EXP_F
     assert registry["exp_g"] is exp_g.EXP_G
     assert tuple(exp_f.METHODS) == exp_d.COMPRESS_SELECT_METHODS
-    assert tuple(exp_g.METHODS) == exp_d.NOVELTY_METHODS
+    assert tuple(exp_g.METHODS) == exp_d.NOVELTY_METHODS + exp_d.NOVELTY_PER_TOKEN_METHODS
     assert set(_every_grids_methods()) == set(METHODS) | set(exp_f.METHODS) | set(exp_g.METHODS)
 
 

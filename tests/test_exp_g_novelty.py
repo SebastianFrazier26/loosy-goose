@@ -92,17 +92,20 @@ def test_alpha_zero_is_the_exp_d_supersede_leverage_method(
     assert [s.id for s in got] == [s.id for s in want]
 
 
-def test_the_exp_g_grid_is_36_protect_none_base_jobs_per_transcript() -> None:
+def test_the_exp_g_grid_is_48_protect_none_base_jobs_per_transcript() -> None:
     jobs = plan_jobs(grid=EXP_G)
     assert list(exp_g.METHODS) == [
         "supersede+leverage+novelty@0.5",
         "supersede+leverage+novelty@1",
         "supersede+leverage+novelty@2",
+        "supersede+leverage+novelty-per-token@0.5",
     ]
-    assert len(jobs) == 3 * len(KEEP_RATIOS) == 36
+    assert len(jobs) == 4 * len(KEEP_RATIOS) == 48
+    # 5 local + 8 trace-commons + 5 swe-gym transcripts; the first 648 are already checkpointed.
+    assert 18 * len(jobs) == 864
     assert {j.protect for j in jobs} == {"none"}
     assert {j.variant for j in jobs} == {BASE_VARIANT}
-    assert len({j.identity() for j in jobs}) == 36
+    assert len({j.identity() for j in jobs}) == 48
     assert EXP_G.out not in (EXP_D.out, exp_d.grids()["exp_f"].out)
     assert not EXP_G.plots
 
@@ -135,17 +138,17 @@ def test_a_novelty_version_bump_reruns_exp_g_and_leaves_exp_d_identities_alone(
 ) -> None:
     first = _run(tmp_path)
     assert first["failures"] == []
-    assert len(first["records"]) == 36
+    assert len(first["records"]) == 48
     assert {r["select_version"] for r in first["records"]} == {NOVELTY_VERSION}
     seen: list[str] = []
     _run(tmp_path, prior=first, seen=seen)
-    assert any("36 records reused, 0 to run" in m for m in seen)
+    assert any("48 records reused, 0 to run" in m for m in seen)
 
     exp_d_before = [j.identity() for j in plan_jobs()]
     monkeypatch.setattr(novelty_select, "NOVELTY_VERSION", NOVELTY_VERSION + 1)
     seen.clear()
     second = _run(tmp_path, prior=first, seen=seen)
-    assert any("36 stale records evicted" in m for m in seen)
+    assert any("48 stale records evicted" in m for m in seen)
     assert {r["select_version"] for r in second["records"]} == {NOVELTY_VERSION + 1}
     assert [j.identity() for j in plan_jobs()] == exp_d_before
 
@@ -171,7 +174,7 @@ def _fake_record(method: str, ratio: float, quality: float) -> dict[str, Any]:
 
 
 def test_summary_reads_matched_exp_d_references_and_signs_the_deltas(tmp_path: Path) -> None:
-    quality = dict(zip(exp_g.METHODS, (1.1, 0.9, 1.0), strict=True))
+    quality = dict(zip(exp_g.METHODS, (1.1, 0.9, 1.0, 1.2), strict=True))
     results = [
         {
             "label": label,
@@ -207,16 +210,23 @@ def test_summary_reads_matched_exp_d_references_and_signs_the_deltas(tmp_path: P
     assert "INCOMPLETE" not in text
     assert "tfidf" not in text
 
-    def delta(pair: str) -> list[float]:
+    def delta(pair: str, both: bool = False) -> list[float]:
         row = next(ln for ln in lines if ln.startswith(pair + " "))
         cells = row[len(pair) :].split()
-        assert all(c.endswith("*1/2") for c in cells)
+        # Two exp_g arms share every transcript, so their cells carry no n/N marker.
+        assert all(("*" not in c) if both else c.endswith("*1/2") for c in cells)
         return [float(c.split("*")[0]) for c in cells]
 
     up = delta("supersede+leverage+novelty@0.5 - supersede+leverage")
     down = delta("supersede+leverage+novelty@1 - supersede+leverage")
     assert all(v > 0 for v in up) and all(v < 0 for v in down)
     assert delta("supersede+leverage+novelty@2 - leverage") == [0.0] * 6
+    per_token = "supersede+leverage+novelty-per-token@0.5"
+    assert all(v > 0 for v in delta(f"{per_token} - supersede+leverage"))
+    assert all(v > 0 for v in delta(f"{per_token} - leverage"))
+    assert all(v > 0 for v in delta(f"{per_token} - supersede+leverage+novelty@0.5", both=True))
     for section in ("== distortion", "== knee:", "== cost:"):
         assert section in text, section
+        body = text.split(section, 1)[1].split("\n\n", 1)[0]
+        assert any(ln.startswith(per_token + " ") for ln in body.splitlines()), section
     assert max(len(ln) for ln in lines) < 200

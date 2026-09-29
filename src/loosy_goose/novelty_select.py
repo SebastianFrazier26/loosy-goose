@@ -46,10 +46,13 @@ def novelty_select(
     budget: int,
     alpha: float,
     protect: ProtectPolicy = "none",
+    *,
+    per_token: bool = False,
 ) -> list[Segment]:
     """`budget.select_with_budget`'s greedy fill, with each candidate's score discounted by
-    novelty_share(its words, the kept set's words) ** alpha. Ranked by raw score, not per token,
-    to match that fill; alpha=0 reproduces it exactly."""
+    novelty_share(its words, the kept set's words) ** alpha. Ranked by raw score by default, to
+    match that fill; alpha=0 reproduces it exactly. `per_token` ranks by that score divided by the
+    segment's token cost instead, so a large segment no longer wins on size alone."""
     n = len(segments)
     if n == 0:
         return []
@@ -71,13 +74,19 @@ def novelty_select(
         if forced:
             seen |= words[i]
 
+    # Only empty text costs 0 tokens; it fits any remaining budget and adds no words to `seen`,
+    # so its rank cannot change another pick, and a divisor of 1 keeps the key finite.
+    denom = [max(c, 1) for c in costs] if per_token else None
+
     def score(i: int) -> float:
-        return float(raw[i]) * math.pow(novelty_share(words[i], seen), alpha)
+        gain = float(raw[i]) * math.pow(novelty_share(words[i], seen), alpha)
+        return gain if denom is None else gain / denom[i]
 
     if used < budget:
         remaining = budget - used
-        # Minoux lazy greedy, exact here: novelty only shrinks as `seen` grows, so a stale score
-        # is a true upper bound. The index breaks ties toward earlier segments, as the fill does.
+        # Minoux lazy greedy, exact here: novelty only shrinks as `seen` grows and a segment's
+        # token cost is fixed, so a stale score is a true upper bound. The index breaks ties
+        # toward earlier segments, as the fill does.
         heap = [(-score(i), i, 0) for i in range(n) if not keep[i]]
         heapq.heapify(heap)
         picks = 0

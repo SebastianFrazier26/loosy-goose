@@ -40,7 +40,7 @@ Experiment B (selection):
 
 - `select.py` — embedding-matrix SVD, leverage / ridge-leverage / CUR-residual scores, direction labelling
 - `compress_select.py` — compression-based selection: conditional greedy (lazy; exact kept as a test anchor) over the compressed bytes a segment adds, zlib or lzma
-- `novelty_select.py` — leverage x word novelty: each candidate's score discounted by (share of its plain words the kept set lacks) ** alpha, lazy greedy; alpha=0 is the plain budget fill
+- `novelty_select.py` — leverage x word novelty: each candidate's score discounted by (share of its plain words the kept set lacks) ** alpha, lazy greedy; alpha=0 is the plain budget fill; `per_token=True` ranks by that gain per token
 
 Experiment C (code channel):
 
@@ -58,7 +58,7 @@ Supporting:
   - `baselines.py` — random drop, recency, TF-IDF
   - `exp_a_ppmi.py`, `exp_b_embed.py`, `exp_c_code.py` — the three Phase 1 tracks
   - `exp_f_compress.py` — Experiment F grid (`exp_d_curves.py --grid exp_f`): the `compress_select` arms, compared against exp_d's reference checkpoints
-  - `exp_g_novelty.py` — Experiment G grid (`exp_d_curves.py --grid exp_g`): `novelty_select` on the supersession pool at alpha 0.5 / 1 / 2, compared against exp_d's leverage and supersede+leverage
+  - `exp_g_novelty.py` — Experiment G grid (`exp_d_curves.py --grid exp_g`): `novelty_select` on the supersession pool at alpha 0.5 / 1 / 2, plus a per-token arm at 0.5, compared against exp_d's leverage and supersede+leverage
   - `grid_status.py` — read-only progress watcher for a running grid (`--grid NAME [--log PATH] [--watch]`): done/planned per transcript and method, rough ETA, NOT RUNNING / stall warnings
 - `docs/` — design spec, Phase 1 write-up, committed result tables
 - `data/local/` — user's own session logs, gitignored, **never committed**

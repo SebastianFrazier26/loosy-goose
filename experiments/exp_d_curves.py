@@ -113,12 +113,19 @@ COMPRESS_SELECT_METHODS = COMPRESS_SCORERS + tuple(f"supersede+{n}" for n in COM
 # reason as COMPRESS_SCORERS.
 NOVELTY_ALPHAS = (0.5, 1.0, 2.0)
 NOVELTY_METHODS = tuple(f"supersede+leverage+novelty@{a:g}" for a in NOVELTY_ALPHAS)
+# The same selector ranked by gain per token (`novelty_select(per_token=True)`). Its own names
+# rather than a stamp change, so the raw arms' stored records keep their identities.
+NOVELTY_PER_TOKEN_ALPHAS = (0.5,)
+NOVELTY_PER_TOKEN_METHODS = tuple(
+    f"supersede+leverage+novelty-per-token@{a:g}" for a in NOVELTY_PER_TOKEN_ALPHAS
+)
 SUPERSEDING_METHODS = (
     "supersede+tfidf",
     "supersede+leverage",
     "supersede+band+leverage",
     *(f"supersede+{n}" for n in COMPRESS_SCORERS),
     *NOVELTY_METHODS,
+    *NOVELTY_PER_TOKEN_METHODS,
 )
 # Version of the runner's own transform: `_band` hands quantize_segment the sweep's keep
 # ratio as its fidelity knob, so trimming depth follows the global ratio. That mapping lives
@@ -591,7 +598,7 @@ def select_stamp(method: str) -> int:
     is the one identity sees."""
     if method in COMPRESS_SELECT_METHODS:
         return compress_select.SELECT_VERSION
-    if method in NOVELTY_METHODS:
+    if method in NOVELTY_METHODS or method in NOVELTY_PER_TOKEN_METHODS:
         return novelty_select.NOVELTY_VERSION
     return 0
 
