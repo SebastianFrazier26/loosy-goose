@@ -11,7 +11,7 @@ A long conversation is treated the way an image codec treats pixels:
 | --- | --- |
 | Block split | Segment the transcript into units (sentences, code blocks, tool-result chunks) |
 | Transform (DCT ≈ KLT) | SVD of the context's own semantic matrix — the exact KLT, affordable because a session is small |
-| Quantization matrix | Per-kind quality table plus rank cutoff, dead-zone thresholds and recency weighting, all behind one `--quality` knob |
+| Quantization matrix | Per-kind quality table plus rank cutoff, dead-zone thresholds and recency weighting — a design idea, not wired; the shipped rate control is `--keep` / `--level` / `--target-tokens` |
 | Coefficient truncation | Drop segments with little weight on the retained dimensions; band-limit the ones we keep |
 | Entropy coding | Emit text; the target model's tokenizer does the lossless part |
 | Chroma subsampling | Code and tool output are quantized harder than prose — banded to signatures and commands, not dropped wholesale |
@@ -67,7 +67,10 @@ results. Headline findings, stated plainly:
 
 ```
 uv sync
-uv run loosy-goose compress path/to/transcript.jsonl --quality 0.6
+uv run loosy-goose compress path/to/transcript.jsonl                  # level medium, keep 0.33 (~3x)
+uv run loosy-goose compress path/to/transcript.jsonl --level light    # 0.50 (~2x); heavy = 0.25 (~4x)
+uv run loosy-goose compress path/to/transcript.jsonl --keep 0.42      # any ratio in [0.10, 0.80]
+uv run loosy-goose compress path/to/transcript.jsonl --target-tokens 20000
 ```
 
 ## Continuing on another machine

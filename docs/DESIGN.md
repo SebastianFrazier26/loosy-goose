@@ -62,7 +62,7 @@ what matters, a quantizer that discards what does not, and a decoder that tolera
 | --- | --- |
 | Block split | Segment the transcript into units (sentences, code blocks, tool-result chunks) |
 | Transform (DCT ≈ KLT) | SVD of the context's own semantic matrix — the exact KLT, affordable because one session is small |
-| Quantization matrix | Per-kind quality table plus rank cutoff, dead-zone thresholds and recency weighting, all behind one `--quality` knob |
+| Quantization matrix | Per-kind quality table plus rank cutoff, dead-zone thresholds and recency weighting — a design idea, not wired; the shipped rate control is `--keep` / `--level` / `--target-tokens` |
 | Coefficient truncation | Drop segments with little weight on the retained directions; band-limit the ones we keep |
 | Entropy coding | Emit text; the target model's tokenizer does the lossless part |
 | Chroma subsampling | Code and tool output are quantized more aggressively than prose, but never dropped wholesale |
@@ -189,7 +189,9 @@ own similarity function, which inflates every result.
   threshold existed to stop. The IPR distinction the paper contributes is untouched by the
   demotion and is still what justifies stripping top directions. See
   [PHASE1.md](PHASE1.md); the same result is stated in `README.md` and `CLAUDE.md`.
-- How to drive the whole quality table from a single `--quality` knob.
+- How to drive the whole quality table from a single knob. The shipped CLI sets only the rate —
+  `--keep`, `--level` or `--target-tokens` — and the per-kind quality table remains a design idea,
+  not wired.
 - Whether the background prior should be generic, personalized from the user's own sessions, or
   both layered. The personalization prior is a committed roadmap item.
 - Segment-level versus span-level trimming for prose.

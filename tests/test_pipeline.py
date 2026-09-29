@@ -7,6 +7,7 @@ import pytest
 
 from loosy_goose.budget import token_budget
 from loosy_goose.code import quantize_segment
+from loosy_goose.metrics import atom_recall_final
 from loosy_goose.paths import PathTable, build_table
 from loosy_goose.pipeline import Compressed, PipelineOptions, compress_transcript, to_turns
 from loosy_goose.segment import Segment, SegmentKind, segment
@@ -123,7 +124,7 @@ def test_to_turns_groups_by_source_turn_in_id_order() -> None:
         _seg(0, 0, "prose", "a"),
         _seg(4, 3, "thinking", "d"),
     ]
-    turns = to_turns(Compressed(kept, None, 0, 0, 0), t)
+    turns = to_turns(Compressed(kept, None, 0, 0, 0, 1.0), t)
     assert [(x.index, x.role) for x in turns] == [(0, "assistant"), (2, "user"), (3, "assistant")]
     assert [[(b.kind, b.text) for b in x.blocks] for x in turns] == [
         [("text", "a"), ("code", "b")],
@@ -131,7 +132,7 @@ def test_to_turns_groups_by_source_turn_in_id_order() -> None:
         [("thinking", "d"), ("tool_use", "{}")],
     ]
     assert all(b.meta == {} for x in turns for b in x.blocks)
-    assert to_turns(Compressed([], None, 0, 0, 0), t) == []
+    assert to_turns(Compressed([], None, 0, 0, 0, 1.0), t) == []
 
 
 def test_strategy_threads_into_compress_config(
@@ -147,3 +148,27 @@ def test_strategy_threads_into_compress_config(
     compress_transcript(_transcript(), PipelineOptions(keep=0.5, strategy="ridge"))
     assert [c.strategy for c in seen] == ["ridge"]
     assert seen[0] == CompressConfig(strategy="ridge")
+
+
+def test_explicit_budget_overrides_keep_but_not_band_depth(stub_embed: None) -> None:
+    t = _transcript()
+    derived = compress_transcript(t, PipelineOptions(keep=0.5, band=True))
+    same = compress_transcript(t, PipelineOptions(keep=0.5, budget=derived.budget, band=True))
+    assert same == derived
+    tight = compress_transcript(t, PipelineOptions(keep=0.5, budget=20, band=True))
+    assert tight.budget == 20 and _kept_tokens(tight) <= 20
+    by_id = {s.id: s for s in segment(t)}
+    for s in tight.segments:
+        if s.kind in ("code", "tool_use"):
+            assert s.text == quantize_segment(by_id[s.id], quality=0.5).text
+
+
+def test_recall_is_reported_against_final_state_atoms(stub_embed: None) -> None:
+    t = _transcript()
+    c = compress_transcript(t, PipelineOptions(keep=0.5))
+    assert c.atom_recall_final == atom_recall_final(segment(t), c.segments)
+    with_table = compress_transcript(t, PipelineOptions(keep=0.5, paths=True, min_mentions=1))
+    assert with_table.table is not None
+    assert with_table.atom_recall_final == atom_recall_final(
+        segment(t), with_table.segments, guaranteed=with_table.table.guaranteed_atoms()
+    )

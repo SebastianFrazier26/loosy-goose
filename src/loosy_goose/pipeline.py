@@ -5,6 +5,7 @@ from pathlib import Path
 
 from loosy_goose.budget import ProtectPolicy, select_with_budget, token_budget
 from loosy_goose.code import quantize_segment
+from loosy_goose.metrics import atom_recall_final
 from loosy_goose.paths import PathTable, build_table, substitute
 from loosy_goose.segment import Segment, SegmentKind, segment
 from loosy_goose.select import CompressConfig, Strategy, embed_segments, score_segments
@@ -26,7 +27,12 @@ _BLOCK_KIND: dict[SegmentKind, BlockKind] = {
 
 @dataclass(frozen=True)
 class PipelineOptions:
+    """`keep` is the rate: it sets the budget unless `budget` names one outright, and it is the
+    banding depth either way. A caller passing `budget` must pass the ratio it implies as `keep`.
+    """
+
     keep: float
+    budget: int | None = None
     band: bool = False
     paths: bool = False
     min_mentions: int = 2
@@ -41,6 +47,7 @@ class Compressed:
     budget: int
     input_tokens: int
     output_tokens: int
+    atom_recall_final: float
 
 
 def compress_transcript(
@@ -50,7 +57,7 @@ def compress_transcript(
     # Budget from the original segments, before anything shrinks them: the runner's shared-budget
     # contract. Deriving it after supersession or banding would hand the stack a smaller budget
     # than the keep ratio names.
-    budget = token_budget(original, opts.keep)
+    budget = opts.budget if opts.budget is not None else token_budget(original, opts.keep)
     segs = apply_supersession(original)
     if opts.band:
         # quality == keep ratio, as the runner's `_band` does; only code and tool_use are banded.
@@ -68,12 +75,16 @@ def compress_transcript(
     scores = score_segments(x, config)
     kept = select_with_budget(scored, scores, budget, opts.protect)
     table_tokens = table.tokens() if table is not None else 0
+    # Reported only, after selection: the header states what this output preserved, and nothing
+    # upstream reads it back. The table's atoms count, as they do in the runner's records.
+    guaranteed = table.guaranteed_atoms() if table is not None else None
     return Compressed(
         segments=kept,
         table=table,
         budget=budget,
         input_tokens=sum(count_tokens(s.text) for s in original),
         output_tokens=sum(count_tokens(s.text) for s in kept) + table_tokens,
+        atom_recall_final=atom_recall_final(original, kept, guaranteed=guaranteed),
     )
 
 

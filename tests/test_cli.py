@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from loosy_goose.cli import build_parser, main
+from loosy_goose.cli import LEVELS, build_parser, main, resolve_rate
 from loosy_goose.transcript import HEADER_KEY, load_blocks_jsonl
 
 
@@ -32,10 +32,125 @@ def _header(path: Path) -> dict[str, object]:
     return header
 
 
-def test_compress_requires_keep() -> None:
+_CONTENTS = [
+    "Please look at the failing test in tests/test_main.py and tell me what you see.",
+    "The assertion compares floats exactly; a tolerance is needed around line 42.",
+    "Add the tolerance and rerun the suite for me.",
+    "Done, the suite is green again with pytest.approx in place.",
+    "Now also update src/app/main.py so compute() returns a float.",
+    "Updated compute() in src/app/main.py; it now returns float(total) / 3.",
+    "Great, thanks. Summarise what changed.",
+    "Two edits: tolerance in tests/test_main.py and a float return in src/app/main.py.",
+]
+_CONTENTS_TOKENS = 120
+
+
+def _run(tmp_path: Path, *flags: str) -> tuple[dict[str, object], list[str]]:
+    src = tmp_path / "chat.json"
+    _write_messages(src, _CONTENTS)
+    out = tmp_path / "out.jsonl"
+    assert main(["compress", str(src), *flags, "--output", str(out)]) == 0
+    return _header(out), out.read_text(encoding="utf-8").splitlines()[1:]
+
+
+def test_levels_map_to_documented_ratios() -> None:
+    assert LEVELS == {"light": 0.50, "medium": 0.33, "heavy": 0.25}
+    for name, ratio in LEVELS.items():
+        rate = resolve_rate(None, name, None, 0)
+        assert (rate.keep, rate.budget, rate.source, rate.level) == (ratio, None, "level", name)
+
+
+def test_default_is_level_medium() -> None:
+    args = build_parser().parse_args(["compress", "session.jsonl"])
+    rate = resolve_rate(args.keep, args.level, args.target_tokens, 0)
+    assert (rate.keep, rate.source, rate.level, rate.notes) == (0.33, "level", "medium", ())
+
+
+def test_keep_rounds_to_hundredths_with_note() -> None:
+    rate = resolve_rate(0.333, None, None, 0)
+    assert rate.keep == 0.33 and rate.source == "keep"
+    assert len(rate.notes) == 1 and "0.33" in rate.notes[0]
+    assert resolve_rate(0.42, None, None, 0).notes == ()
+
+
+def test_keep_rounding_note_reaches_stderr(
+    tmp_path: Path, stub_embed: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    header, _ = _run(tmp_path, "--keep", "0.333")
+    assert header["keep"] == 0.33
+    assert "using 0.33" in capsys.readouterr().err
+
+
+def test_target_tokens_in_range_is_exact_budget() -> None:
+    rate = resolve_rate(None, None, 50, 200)
+    assert (rate.budget, rate.keep, rate.source, rate.notes) == (50, 0.25, "target-tokens", ())
+
+
+@pytest.mark.parametrize(("target", "clamped"), [(5, 0.1), (190, 0.8)])
+def test_target_tokens_out_of_range_clamps_with_warning(target: int, clamped: float) -> None:
+    rate = resolve_rate(None, None, target, 200)
+    assert rate.keep == clamped and rate.budget is None and rate.target_tokens == target
+    (warning,) = rate.notes
+    assert f"{target / 200:.4f}" in warning and f"{clamped:.2f}" in warning
+
+
+def test_target_tokens_clamp_warning_reaches_stderr(
+    tmp_path: Path, stub_embed: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    header, _ = _run(tmp_path, "--target-tokens", "1")
+    assert header["keep"] == 0.1 and header["budget"] == 12
+    assert "clamped to keep 0.10" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("bad", ["0", "-3", "1.5"])
+def test_target_tokens_rejects_non_positive_int(bad: str) -> None:
     with pytest.raises(SystemExit) as exc:
-        main(["compress", "session.jsonl"])
+        build_parser().parse_args(["compress", "s.jsonl", "--target-tokens", bad])
     assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "pair",
+    [
+        ["--keep", "0.5", "--level", "light"],
+        ["--keep", "0.5", "--target-tokens", "10"],
+        ["--level", "heavy", "--target-tokens", "10"],
+    ],
+)
+def test_rate_flags_are_mutually_exclusive(pair: list[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args(["compress", "s.jsonl", *pair])
+    assert exc.value.code == 2
+
+
+def test_quality_is_rejected_as_unknown(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["compress", "session.jsonl", "--quality", "0.6"])
+    assert exc.value.code == 2
+    assert "unrecognized arguments: --quality" in capsys.readouterr().err
+
+
+def test_header_reports_rate_mode_and_recall(tmp_path: Path, stub_embed: None) -> None:
+    header, _ = _run(tmp_path, "--level", "heavy")
+    assert (header["keep"], header["keep_source"], header["level"]) == (0.25, "level", "heavy")
+    assert header["target_tokens"] is None
+    recall = header["atom_recall_final"]
+    assert isinstance(recall, float) and 0.0 <= recall <= 1.0
+
+    header, _ = _run(tmp_path, "--target-tokens", "48")
+    assert (header["budget"], header["keep_source"], header["level"]) == (48, "target-tokens", None)
+    assert header["keep"] == 48 / _CONTENTS_TOKENS and header["target_tokens"] == 48
+
+
+def test_keep_half_output_matches_pre_level_control(tmp_path: Path, stub_embed: None) -> None:
+    # Pinned from the CLI as it stood before --level/--target-tokens existed (exp/compress-select
+    # at the branch point), same fixture and stubbed embeddings.
+    header, lines = _run(tmp_path, "--keep", "0.5")
+    assert (header["budget"], header["input_tokens"], header["output_tokens"]) == (60, 120, 53)
+    assert [json.loads(line)["index"] for line in lines] == [0, 2, 3, 6]
+    assert json.loads(lines[1])["blocks"] == [
+        {"kind": "text", "text": _CONTENTS[2], "meta": {}},
+    ]
 
 
 @pytest.mark.parametrize("bad", ["0.05", "0.9", "abc"])
@@ -56,13 +171,6 @@ def test_min_mentions_rejects_zero_accepts_one() -> None:
     with pytest.raises(SystemExit):
         build_parser().parse_args([*base, "0"])
     assert build_parser().parse_args([*base, "1"]).min_mentions == 1
-
-
-@pytest.mark.parametrize("bad", ["1.5", "-0.1", "abc"])
-def test_compress_rejects_bad_quality(bad: str) -> None:
-    with pytest.raises(SystemExit) as exc:
-        main(["compress", "session.jsonl", "--quality", bad])
-    assert exc.value.code != 0
 
 
 def test_missing_subcommand_exits_nonzero() -> None:

@@ -12,7 +12,7 @@ Read [docs/DESIGN.md](docs/DESIGN.md) before changing the algorithm and
 - `uv run pytest` — tests
 - `uv run ruff check . && uv run ruff format --check .` — lint + format check
 - `uv run mypy src` — type check (strict)
-- `uv run loosy-goose compress <transcript> --keep 0.5 [--band] [--paths --min-mentions 2] [--output out.jsonl]` — CLI: supersede → leverage → budget selection; `--quality` accepted but not yet wired
+- `uv run loosy-goose compress <transcript> [--keep 0.5 | --level light|medium|heavy | --target-tokens N] [--band] [--paths --min-mentions 2] [--output out.jsonl]` — CLI: supersede → leverage → budget selection; rate defaults to `--level medium` (0.33); header reports `atom_recall_final` as information only
 
 The `embed` extra pulls torch CPU + sentence-transformers for the embedding-SVD work; CI skips
 it. Everything is CPU-only. Do not unpin Python 3.12 — 3.13+ lacks torch wheels.
