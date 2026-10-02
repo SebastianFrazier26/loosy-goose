@@ -142,15 +142,46 @@ def test_header_reports_rate_mode_and_recall(tmp_path: Path, stub_embed: None) -
     assert header["keep"] == 48 / _CONTENTS_TOKENS and header["target_tokens"] == 48
 
 
-def test_keep_half_output_matches_pre_level_control(tmp_path: Path, stub_embed: None) -> None:
+def test_no_novelty_keep_half_output_matches_pre_level_control(
+    tmp_path: Path, stub_embed: None
+) -> None:
     # Pinned from the CLI as it stood before --level/--target-tokens existed (exp/compress-select
     # at the branch point), same fixture and stubbed embeddings.
-    header, lines = _run(tmp_path, "--keep", "0.5")
+    header, lines = _run(tmp_path, "--keep", "0.5", "--no-novelty")
+    assert header["selector"] == "supersede+leverage" and header["novelty"] is False
     assert (header["budget"], header["input_tokens"], header["output_tokens"]) == (60, 120, 53)
     assert [json.loads(line)["index"] for line in lines] == [0, 2, 3, 6]
     assert json.loads(lines[1])["blocks"] == [
         {"kind": "text", "text": _CONTENTS[2], "meta": {}},
     ]
+
+
+def test_default_keep_half_output_is_pinned(tmp_path: Path, stub_embed: None) -> None:
+    header, lines = _run(tmp_path, "--keep", "0.5")
+    assert header["selector"] == "supersede+leverage+novelty-per-token@0.5"
+    assert header["novelty"] is True
+    # Observed when novelty became the default, same fixture and stubbed embeddings.
+    assert (header["budget"], header["input_tokens"], header["output_tokens"]) == (60, 120, 49)
+    assert [json.loads(line)["index"] for line in lines] == [2, 3, 4, 6]
+
+
+@pytest.mark.parametrize(
+    ("flags", "selector"),
+    [
+        (["--band"], "supersede+band+leverage"),
+        (["--paths"], "supersede+leverage [paths=full]"),
+        (["--paths", "--min-mentions", "1"], "supersede+leverage [paths=full+mm=1]"),
+        (["--band", "--paths"], "supersede+band+leverage [paths=full]"),
+    ],
+)
+def test_band_and_paths_fall_back_to_the_leverage_fill(
+    tmp_path: Path, stub_embed: None, flags: list[str], selector: str
+) -> None:
+    header, lines = _run(tmp_path, "--keep", "0.5", *flags)
+    control, control_lines = _run(tmp_path, "--keep", "0.5", *flags, "--no-novelty")
+    assert header["selector"] == control["selector"] == selector
+    assert lines == control_lines
+    assert header["output_tokens"] == control["output_tokens"]
 
 
 @pytest.mark.parametrize("bad", ["0.05", "0.9", "abc"])

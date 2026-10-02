@@ -1,6 +1,6 @@
 # Phase 2 — plan, decisions, and what is still open
 
-Status as of 2026-09-29: in progress. The shipped pipeline is settled; the items under
+Status as of 2026-10-02: in progress. The final grid has run and the shipped pipeline is settled; the items under
 [Still open](#still-open--do-not-treat-as-settled) and in the [Queue](#queue) are not. Phase 1's
 results are in [PHASE1.md](PHASE1.md); the algorithm specification is in [DESIGN.md](DESIGN.md). This document is the working plan — what
 Phase 2 is trying to settle, which decisions are already locked and why, and which are not.
@@ -11,53 +11,79 @@ budget. Phase 2 set out to settle that, and to find compression outside `code`, 
 share of a real agentic transcript. The first half turned out to be the wrong question — see
 [Spectral versus TF-IDF](#spectral-versus-tf-idf-two-statistics-not-one-verdict).
 
-## Current state (2026-09-29)
+## Current state (2026-10-02)
 
-**What ships.** `loosy-goose compress` runs supersession, then leverage scoring, then selection
-into a token budget (`src/loosy_goose/pipeline.py`). Two stages are opt-in and off by default:
-`--band` (AST-depth banding of code and code-shaped tool arguments) and `--paths` (path table
-plus `[P<n>]` markers). The rate is the keep ratio, set by `--level light|medium|heavy` (0.50 /
-0.33 / 0.25, default `medium`), `--keep` (0.10–0.80) or `--target-tokens`. See queue item 14.
+**What ships.** `loosy-goose compress` runs supersession, then leverage scoring, then fills the
+token budget by novelty-discounted leverage per token at alpha 0.5 (`novelty_select`,
+`per_token=True`): the Experiment G arm `supersede+leverage+novelty-per-token@0.5`, the default
+since 2026-10-02 (`src/loosy_goose/pipeline.py`). `--no-novelty` restores the previous default,
+`supersede+leverage` with a plain budget fill. Two stages are opt-in and off by default: `--band`
+(AST-depth banding of code and code-shaped tool arguments) and `--paths` (path table plus
+`[P<n>]` markers). Either one makes selection fall back to plain leverage, because novelty was
+never measured stacked on them. The rate is the keep ratio, set by `--level light|medium|heavy`
+(0.50 / 0.33 / 0.25, default `medium`), `--keep` (0.10–0.80) or `--target-tokens`. See queue item
+14 and [Decided 2026-10-02, after the final grid](#decided-2026-10-02-after-the-final-grid).
 
-**Headline numbers** for the default, `supersede+leverage`, on 18 transcripts at matched achieved
-rate (`docs/results/exp_d_band_recheck_summary.txt`):
+**The final grid** ran to 2026-10-01: exp_d's full plan (11,880 jobs), exp_g, exp_h and exp_f
+(864 each), then Experiment E, `exp_c_code.py` and `corpus_stats.py`; 0 failed jobs. Versions in
+force: `ATOMS_VERSION` 8, `TRANSFORMS_VERSION` 5, `PATHS_VERSION` 6, `SUPERSEDE_VERSION` 2,
+`NOVELTY_VERSION` 1, `KIND_SELECT_VERSION` 1, `SELECT_VERSION` 1. Every table in
+`docs/results/` except the Phase 1 `exp_a` and `exp_b` tables comes from it.
+
+**Headline numbers** on 18 transcripts at matched achieved rate (`docs/results/exp_g_summary.txt`;
+the old default's rows are exp_d's records, as in `docs/results/exp_d_summary.txt`). A cell
+marked n/18 averages only the transcripts that reach that rate.
 
 | | 2x | 3x | 4x |
 | --- | --- | --- | --- |
-| final-state atom recall | 0.836 | 0.654 | 0.566 |
-| semantic coverage | 0.895 | 0.821 | 0.796 |
+| new default, final-state atom recall | 0.829 (15/18) | 0.655 (17/18) | 0.577 |
+| new default, semantic coverage | 0.921 (15/18) | 0.887 (17/18) | 0.872 |
+| `supersede+leverage`, final-state atom recall | 0.837 (16/18) | 0.656 (17/18) | 0.568 |
+| `supersede+leverage`, semantic coverage | 0.895 (16/18) | 0.821 (17/18) | 0.796 |
+| paired delta, recall / coverage | −0.011 / +0.026 (15/18) | −0.001 / +0.066 (17/18) | +0.009 / +0.076 |
 
-Its knee (lowest rate still holding final-state recall of 0.9) is 0.598, the best in that table.
-Supersession alone removes 25.9% of tokens losslessly ([PHASE1.md](PHASE1.md), C2).
+Knee (lowest rate still holding final-state recall of 0.9; lower is better): 0.606 on 15 of 18
+transcripts for the new default, 0.598 on 16 of 18 for `supersede+leverage`. Cost: 0.24 s per
+100k tokens against 0.32. Supersession alone removes 24.8% of tokens losslessly in the final
+grid (373,635 of 1,503,755; `docs/results/exp_c_summary.txt`, C2); Phase 1 measured 25.9% under
+the older segmenter ([PHASE1.md](PHASE1.md), C2).
 
-**Tried, and did not beat the default** — each one buys one metric with the other:
+**Tried against `supersede+leverage` in the final grid, and not the default:**
 
-- Experiment F, compression-based selection. The best arm, `supersede+lzma-lazy`, is −0.007 /
-  −0.026 / −0.023 on recall and +0.028 / +0.041 / +0.044 on coverage at 2x / 3x / 4x, at 39.82 s
-  per 100k tokens against 0.16 s (`docs/results/exp_f_summary.txt`).
-- Experiment G, leverage times word novelty: +0.011 to +0.040 recall, −0.021 to −0.061 coverage
-  across the three rates (`docs/results/exp_g_summary.txt`). The per-token variant swung further
-  toward coverage on a two-transcript smoke and was not run on the grid (superseded 2026-09-29:
-  it runs in the final grid, see below).
-- `--band`, re-checked after the tail cuts were removed: every gap at 2x/3x/4x is 0.013 or less,
-  and its knee is worse, 0.612.
+- Experiment F, compression-based selection. No arm beats `supersede+leverage` on recall at any
+  rate. The best, `supersede+lzma-lazy`, is −0.008 / −0.026 / −0.022 on final-state recall and
+  +0.028 / +0.041 / +0.044 on coverage at 2x / 3x / 4x, at 34.30 s per 100k tokens against 0.32
+  (`docs/results/exp_f_summary.txt`).
+- Experiment G, raw-gain word novelty at alpha 0.5 / 1 / 2: final-state recall +0.011 to +0.013 /
+  +0.038 to +0.039 / +0.030 to +0.041, coverage −0.021 to −0.028 / −0.044 to −0.046 / −0.053 to
+  −0.061. Knees 0.601 / 0.601 / 0.617 (alpha 2 reaches the floor on 18 of 18, so it is not
+  comparable). Cost 0.20 to 0.22 s per 100k tokens. The per-token arm ran this time, and is the
+  new default; against raw-gain novelty at the same alpha it is −0.024 / −0.041 / −0.021 recall and
+  +0.047 / +0.110 / +0.128 coverage.
+- Experiment H, per-kind scoring. No arm beats `supersede+leverage` on recall at any rate (−0.024
+  to −0.036). Only `kind-budget` gains coverage, +0.009 / +0.011 / +0.002. See
+  [Experiment H](#experiment-h-per-kind-scoring-built-2026-09-29-measured-2026-10-01).
+- `--band`: `supersede+band+leverage` reads 0.823 / 0.665 / 0.573 final-state recall and 0.887 /
+  0.830 / 0.805 coverage, against 0.837 / 0.656 / 0.568 and 0.895 / 0.821 / 0.796
+  (`docs/results/exp_d_summary.txt`). It loses at 2x and is about one point ahead at 3x and 4x.
+  Knee 0.599 against 0.598. Experiment E's E4 prices it at 17.82 s per 100k tokens against 0.38,
+  about 47x. The new default without banding beats it at 4x on both metrics.
+- `--paths`: the full arms on `supersede+leverage` gain final-state recall (+0.005 / +0.031 /
+  +0.042 at `min_mentions` 2, +0.024 / +0.084 / +0.111 at 1) and lose coverage (−0.043 to −0.053
+  and −0.076 to −0.093). Recall on the atoms the table does not guarantee (`recall_f_earn`) is
+  negative on every table arm of every method.
 
-Details in [Decided 2026-09-29](#decided-2026-09-29),
-[Experiment F](#experiment-f-selection-by-compressed-novelty-set-up-2026-09-22) and
-[Experiment G](#experiment-g-leverage-times-word-novelty-2026-09-29).
+Details in [Experiment E](#experiment-e-elasticity-per-kind-predictors-cost-2026-10-01),
+[Experiment F](#experiment-f-selection-by-compressed-novelty-set-up-2026-09-22),
+[Experiment G](#experiment-g-leverage-times-word-novelty-2026-09-29) and
+[Experiment H](#experiment-h-per-kind-scoring-built-2026-09-29-measured-2026-10-01).
 
-**Open.** Per-kind scoring (queue item 8) is built and waits on the final grid, see
-[Experiment H](#experiment-h-per-kind-scoring-built-2026-09-29-results-pending). Also open: the background prior (see
-[Still open](#still-open--do-not-treat-as-settled)) and downstream task evaluation, which is the
-only thing that could price recall and coverage in one currency; both are after v1, not blocking
-prod (decided 2026-09-29). The quadratic path patterns (item 15) and the argument-key atoms are
-fixed.
-
-**Next: one final grid before prod** (decided 2026-09-29, see
-[Decided 2026-09-29, final grid](#decided-2026-09-29-final-grid)). The item 15 fix bumped
-`ATOMS_VERSION` to 7 and the argument-key atom fix to 8, which moves `segments_digest` and so invalidates every stored record. Every
-table in `docs/results/` predates that bump, including the headline numbers above, and all of them
-will be regenerated by the final grid.
+**Open.** Novelty stacked on `--band` or `--paths` was never measured, which is why both fall back
+to plain leverage. The new default's 2x reading rests on 15 of 18 transcripts. Experiment E's
+predictor table (E3) is still computed for `supersede+band+leverage`, not for the new default.
+The background prior (see [Still open](#still-open--do-not-treat-as-settled)) and downstream task
+evaluation, which is the only thing that could price recall and coverage in one currency, are
+after v1 and do not block prod (decided 2026-09-29).
 
 ## Still open — do not treat as settled
 
@@ -150,9 +176,11 @@ runs. Recorded here so they are not rediscovered as surprises.
 7. ~~Untangle code-trimming depth from compression level (`_band` currently ties quality to the
    keep ratio).~~ Closed 2026-09-29: `--band` is a wash and the depth knob saturates below about
    1/3 (see [Decided 2026-09-29](#decided-2026-09-29)), so there is nothing to untangle for.
-8. Three-way per-kind scoring comparison: separate space, shared normalized, separate budget.
+8. ~~Three-way per-kind scoring comparison: separate space, shared normalized, separate budget.~~
    **Built 2026-09-29, awaiting the final grid:** `kind_select.py` (`KIND_SELECT_VERSION` 1) and
-   Experiment H, four arms, 864 jobs. See [Experiment H](#experiment-h-per-kind-scoring-built-2026-09-29-results-pending).
+   Experiment H, four arms, 864 jobs. **Measured 2026-10-01, closed:** no arm beats
+   `supersede+leverage` on recall at any rate. See
+   [Experiment H](#experiment-h-per-kind-scoring-built-2026-09-29-measured-2026-10-01).
 9. ~~Pipeline-level config object, once there are enough real knobs to justify one.~~ Done:
    `pipeline.PipelineOptions`, 2026-09-16 (commit 79e42a1).
 10. ~~Joint and interaction runs, hypothesis-driven rather than exhaustive.~~ Closed 2026-09-29: no
@@ -941,6 +969,40 @@ whole span equals a table row, which also takes the cost from O(rows × text) to
 independent of table size. Nothing failed loudly while the defect was live, because `expand` still
 restored such text; what was wrong was the scored text and its re-extracted atoms.
 
+## Experiment E: elasticity, per-kind, predictors, cost (2026-10-01)
+
+`experiments/exp_e_analysis.py` over the final grid's exp_d checkpoints, 18 transcripts
+(`docs/results/exp_e_summary.txt`). Every rate is an achieved rate. Experiment E reads exp_d's
+methods only, so the new default (an exp_g arm) is not in it; `supersede+leverage` is the old
+default. All figures below are measured unless marked.
+
+- **E1, elasticity.** Final-state recall at 2x / 3x / 4x / 8x (E1a): `supersede+leverage` 0.837 /
+  0.661 / 0.568 / 0.345, `supersede+band+leverage` 0.823 / 0.669 / 0.573 / 0.347, `leverage`
+  0.796 / 0.641 / 0.553 / 0.328, `tfidf` 0.729 / 0.548 / 0.425 / 0.249. In absolute points (E1b)
+  the steepest band is 1.25–2.0x for every method, and `supersede+leverage` is the cheapest there:
+  0.141 recall per +1x of compression, against 0.207 for `leverage` and 0.219 for `tfidf`. In
+  relative terms (E1c, log-log) the worst band is 4.0–8.0x for 8 of 10 methods (`supersede+leverage`
+  0.252 / 0.559 / 0.721 across the three bands), so E1b's apparent bargain at high compression is
+  mostly the floor effect; the deep end is the expensive end.
+- **E2, per kind.** Recall restricted to atoms first seen in a kind (all-history; `thinking` is
+  omitted, one transcript has it). At 4x every leverage method is weakest on `tool_use`:
+  `supersede+leverage` keeps 0.468 of `tool_use` atoms against 0.721 prose, 0.590 code and 0.628
+  `tool_result`, and `random` keeps 0.608 of them, more than any leverage method (0.461 to
+  0.532). `tfidf` is weakest on code (0.309). Experiment H tested the obvious response, giving
+  `tool_use` more of the budget, and it cost overall recall.
+- **E3, predictors** of how far `supersede+band+leverage` compresses (Spearman over the 17 of 18
+  transcripts with a usable knee; descriptive, n is small). `supersede_ceiling` dominates: +0.873
+  against the knee and −0.831 against final-state recall at 4x, so the transcripts supersession
+  shrinks most compress furthest. Next are `prose_seg_share` (+0.488 / −0.480), `tool_seg_share`
+  (−0.453 / +0.471) and size (`log10_tokens` −0.275 / +0.556, `n_segments` −0.277 / +0.539);
+  `code_seg_share` barely registers (−0.162 / +0.091).
+- **E4, cost**, median seconds per 100k tokens over all sweep points (leans warm; the embedding
+  cache is wiped before any transcript that reuses no records, as decided 2026-09-18): `tfidf` 0.10, `supersede+tfidf` 0.09, `supersede+leverage`
+  0.38, `leverage` 0.40, `supersede+band+leverage` 17.82 (185.9x `tfidf`, about 47x
+  `supersede+leverage`), `band+leverage` 27.25. This convention differs from the exp_f / exp_g /
+  exp_h cost blocks (per-transcript median, then median; `supersede+leverage` 0.32 there), so
+  compare within one table.
+
 ## Experiment F: selection by compressed novelty (set up 2026-09-22)
 
 Delétang et al., *Language Modeling Is Compression* (ICLR 2024), push the prediction–compression
@@ -974,7 +1036,9 @@ Arms (14; each also stacked on supersession): `zlib-greedy`, `zlib-lazy`, `zlib-
 3,024 in all. (Superseded 2026-09-29: after the full run the grid was cut to the four lazy arms,
 `zlib-lazy` and `lzma-lazy` with and without supersession — see
 [Decided 2026-09-29](#decided-2026-09-29). The 14-arm summary is kept in
-`docs/results/exp_f_summary.txt`.)
+`docs/results/exp_f_summary.txt`.) (Superseded 2026-10-02: the final grid overwrote that file with
+the four-arm table; the 14-arm one is at commit 2b98bd2,
+`git show 2b98bd2:docs/results/exp_f_summary.txt`.)
 
 **Stochastic greedy's epsilon was calibrated, not chosen.** Against exact greedy on the
 selector's own objective — f(S), the compressed length of the kept text — never on recall or
@@ -1049,8 +1113,19 @@ recorded; the decision it feeds stays there. The grid is `exp_d_curves.py --grid
   0.931, against raw-gain novelty at 0.5. A per-token control at alpha 0 lands near per-token at
   0.5, so it is dividing by tokens (density), not novelty, that drives the swing. The evidence is
   two transcripts; the smoke output is not a committed file.
+- **Final grid, 2026-10-01** (added 2026-10-02; the two bullets above are the 2026-09-29 record
+  and keep its numbers). Four arms, 864 jobs, 0 failures, `docs/results/exp_g_summary.txt`. The
+  raw-gain arms against `supersede+leverage` at 2x / 3x / 4x: final-state recall +0.011 to +0.013 /
+  +0.038 to +0.039 / +0.030 to +0.041, coverage −0.021 to −0.028 / −0.044 to −0.046 / −0.053 to
+  −0.061; knees 0.601 / 0.601 / 0.617; cost 0.20 to 0.22 s per 100k tokens against 0.32. The same
+  shape as before. The per-token arm at 0.5, on the full grid this time: −0.011 / −0.001 / +0.009
+  recall and +0.026 / +0.066 / +0.076 coverage (2x on 15 of 18 transcripts), knee 0.606 on 15 of
+  18, 0.24 s per 100k tokens. The smoke's large recall drop against raw-gain novelty did not
+  repeat at that size: on 18 transcripts per-token is −0.024 / −0.041 / −0.021 recall and +0.047 /
+  +0.110 / +0.128 coverage against raw-gain at 0.5. It became the default; see
+  [Decided 2026-10-02, after the final grid](#decided-2026-10-02-after-the-final-grid).
 
-## Experiment H: per-kind scoring (built 2026-09-29, results pending)
+## Experiment H: per-kind scoring (built 2026-09-29, measured 2026-10-01)
 
 Queue item 8. Shared-space leverage puts prose, code, `tool_use` and `tool_result` segments in
 one SVD, so whichever kind owns the dominant directions wins the budget. Experiment H takes kind
@@ -1079,7 +1154,38 @@ land close to the pool's segment-count shares, and `kind-space` swings the kind 
 kept sets overlap `supersede+leverage`'s with a Jaccard index of 0.37 to 0.79, so the arms select
 materially different segments.
 
-**Results pending the final grid.** Nothing here yet says whether any arm beats the default.
+**Results, from the final grid** (`docs/results/exp_h_summary.txt`, 864 jobs, 0 failures,
+2026-10-01). Measured: **no arm beats `supersede+leverage` on final-state recall at any rate.**
+Each arm minus `supersede+leverage`, at matched achieved rate:
+
+| arm | recall 2x | coverage 2x | recall 3x | coverage 3x | recall 4x | coverage 4x |
+| --- | --- | --- | --- | --- | --- | --- |
+| `kind-space` | −0.028 | −0.002 | −0.028 | −0.020 | −0.035 | −0.039 |
+| `kind-norm-rank` | −0.024 | −0.006 | −0.036 | −0.009 | −0.035 | −0.025 |
+| `kind-norm-z` | −0.025 | −0.004 | −0.033 | −0.009 | −0.034 | −0.025 |
+| `kind-budget` | −0.025 | +0.009 | −0.036 | +0.011 | −0.035 | +0.002 |
+
+2x cells average the 16 of 18 transcripts that reach 2x, 3x cells 17 of 18. `kind-budget` is the
+only arm that gains coverage, and only by 0.002 to 0.011. Every arm's knee is worse: 0.627
+(`kind-budget`) to 0.642, against 0.598. Cost is about the same, 0.27 to 0.34 s per 100k tokens
+against 0.32. Against plain `leverage` (no supersession) every arm is ahead on both metrics at 2x
+and behind on recall at 4x (−0.019 to −0.020); inferred, the share of supersession's gain they
+keep shrinks as the rate tightens.
+
+Kept-token share per kind, pooled over transcripts at nominal keep ratio (the summary's last
+block), shows what the arms do. The post-supersession pool is 0.216 prose, 0.218 code, 0.276
+`tool_result` and 0.290 `tool_use`. `supersede+leverage` under-keeps `tool_use` against that pool,
+and more so as the rate tightens: 0.176 at keep 0.5, 0.121 at 0.3, 0.091 at 0.25. `kind-budget`
+tracks the pool at every ratio (`tool_use` 0.293 / 0.290 / 0.292), as designed. `kind-space` and
+both `kind-norm` arms overshoot it, keeping 0.305 to 0.389 `tool_use` and cutting prose to 0.137
+to 0.211.
+
+Conclusion. Measured: rebalancing the kept tokens toward `tool_use` costs final-state recall at
+every rate, by 2.4 to 3.6 points, on every arm, including the one that only matches the pool's
+own shares. Inferred, not measured directly: shared-space leverage's tilt away from `tool_use` is
+not a defect on these metrics; the `tool_use` segments it drops carry fewer recall-relevant atoms
+per token than the prose and `tool_result` segments it keeps. Per-kind scoring stays in the repo
+(`kind_select.py`) as a measured, unshipped option. Queue item 8 is closed.
 
 ## Decision log
 
@@ -1350,7 +1456,7 @@ analyses that are not committed scripts, and say so where they appear.
   losing outright. The ten arms cut earlier (exact, one-pass and stochastic greedy) stay cut;
   their table in `docs/results/exp_f_summary.txt` stays as the record.
 - **Queue item 15 is closed; queue item 8 is built** and awaits this grid (see
-  [Experiment H](#experiment-h-per-kind-scoring-built-2026-09-29-results-pending)).
+  [Experiment H](#experiment-h-per-kind-scoring-built-2026-09-29-measured-2026-10-01)).
 - **Argument-key atoms are fixed in the same bump, as option C with masking.** One rule for
   every text-rewriting transform: a rewritten segment's atoms may only be atoms the original
   segment had, and they are read after masking the scaffolding the transform inserted, so an
@@ -1380,6 +1486,38 @@ analyses that are not committed scripts, and say so where they appear.
   segment's atoms a subset of its incoming and original atoms. The key-prefix case never
   actually occurred in either corpus; it is pinned by a constructed test instead.
 - **The background prior and downstream task evaluation are after v1, not blocking prod.**
+
+### Decided 2026-10-02, after the final grid
+
+Read from the final grid (run to 2026-10-01, 0 failed jobs): `docs/results/exp_d_summary.txt`,
+`exp_e_summary.txt`, `exp_f_summary.txt`, `exp_g_summary.txt` and `exp_h_summary.txt`. Every
+default below rests on that evidence and on nothing else.
+
+- **The default selector is `supersede+leverage+novelty-per-token@0.5`.** Against
+  `supersede+leverage`, at matched achieved rate (`exp_g_summary.txt`): final-state recall and
+  coverage −0.011 / +0.026 at 2x (on the 15 of 18 transcripts both reach), −0.001 / +0.066 at 3x,
+  +0.009 / +0.076 at 4x. Knee 0.606 (15 of 18) against 0.598 (16 of 18). Cost 0.24 s per 100k
+  tokens against 0.32. It is the only new arm in the final grid to come out ahead of the old
+  default on both metrics anywhere (at 4x). `--no-novelty` restores `supersede+leverage`.
+  Rejected: keeping `supersede+leverage` as the default with per-token novelty behind an opt-in
+  flag, and recording the result in the docs only with no code change. This supersedes the
+  2026-09-29 decision that `supersede+leverage` stays the default; that decision was taken before
+  the per-token arm had run on the grid.
+- **`--band` and `--paths` fall back to plain leverage selection.** Novelty stacked on banding or
+  on path substitution was never measured. Rejected: applying novelty everywhere, which would ship
+  two unmeasured stacks; and a hard error when either flag is given with the novelty default.
+- **Band and paths stay off by default, on evidence.** Band (`exp_d_summary.txt`): final-state
+  recall 0.823 against 0.837 at 2x, about one point ahead at 3x and 4x (0.665 against 0.656, 0.573
+  against 0.568), and about 47x slower (17.82 against 0.38 s per 100k tokens, `exp_e_summary.txt`
+  E4). The new default without banding beats it at 4x on both metrics (0.577 / 0.872 against
+  0.573 / 0.805). Paths: the full arms gain final-state recall but lose 4 to 9 coverage points on
+  `supersede+leverage`, and `recall_f_earn`, recall on the atoms the table does not guarantee, is
+  negative on every table arm.
+- **Result files are overwritten under the same names; no renames.** The final grid's tables
+  replace the earlier ones in `docs/results/`. The 14-arm Experiment F table is in git history at
+  commit 2b98bd2, and `exp_d_band_recheck_summary.txt` is removed (in history at 9c971fd), since
+  the full exp_d table now covers band. Dated decisions above that cite those files read against
+  the history copies. Rejected: renaming, so that old and new tables sit side by side.
 
 ## Corpus rule, restated
 

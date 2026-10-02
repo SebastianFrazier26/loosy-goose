@@ -37,28 +37,49 @@ is the reason the paper is load-bearing rather than decorative — is
 ## Status
 
 Pre-alpha. The `compress` command works: it runs the measured default pipeline (supersession,
-then leverage scoring, then selection into a token budget) and writes the kept text as JSONL.
-Phase 2 is still open; see [docs/PHASE2.md](docs/PHASE2.md).
+then leverage scoring, then selection into a token budget ranked by novelty-discounted leverage
+per token) and writes the kept text as JSONL. Phase 2 is still open; see
+[docs/PHASE2.md](docs/PHASE2.md).
 
 ### Current results
 
-The shipped default is `supersede+leverage`. Measured on 18 transcripts at matched achieved
-rates (`docs/results/exp_d_band_recheck_summary.txt`, 2026-09-29):
+The default selector is `supersede+leverage+novelty-per-token@0.5`, decided 2026-10-02 from the
+final grid (run to 2026-10-01). Each candidate's leverage is discounted by the share of its plain
+words the kept set does not hold yet, raised to the power 0.5, and candidates are ranked by that
+gain per token. Measured on 18 transcripts at matched achieved rates
+(`docs/results/exp_g_summary.txt`; the old default's rows come from exp_d's records, the same
+numbers as `docs/results/exp_d_summary.txt`):
 
-| Rate | final-state atom recall | semantic coverage |
-| --- | --- | --- |
-| 2x | 0.836 | 0.895 |
-| 3x | 0.654 | 0.821 |
-| 4x | 0.566 | 0.796 |
+| Rate | final-state atom recall | semantic coverage | old default (`supersede+leverage`) recall / coverage |
+| --- | --- | --- | --- |
+| 2x | 0.829 (15 of 18 transcripts reach 2x) | 0.921 | 0.837 / 0.895 (16 of 18) |
+| 3x | 0.655 (17 of 18) | 0.887 | 0.656 / 0.821 (17 of 18) |
+| 4x | 0.577 | 0.872 | 0.568 / 0.796 |
 
-Tried against it, and none of them improved both metrics at once
-([docs/PHASE2.md § Decision log](docs/PHASE2.md#decision-log)):
+Paired on the transcripts both reach, the new default against the old is −0.011 recall and
++0.026 coverage at 2x (15 of 18 transcripts only), −0.001 and +0.066 at 3x, and +0.009 and +0.076
+at 4x. Its knee (lowest rate still holding final-state recall of 0.9) is 0.606 on 15 of 18,
+against 0.598 on 16 of 18. It costs 0.24 s per 100k tokens against 0.32. Of the arms the final
+grid tried against the old default, it is the only one ahead on both metrics at any rate: at 4x,
+with 3x a near tie on recall. Why it was chosen, and what was rejected, is in
+[docs/PHASE2.md § Decision log](docs/PHASE2.md#decision-log).
 
-- Compression-based selection (Experiment F, zlib and lzma) buys coverage and loses recall.
-- Leverage times word novelty (Experiment G) buys recall and loses coverage; ranking it per token
-  swings further toward coverage.
-- `--band` is a wash once the positional tail cuts were removed: every gap at 2x/3x/4x is 0.013
-  or less.
+`--no-novelty` restores the old default, `supersede+leverage` with a plain budget fill.
+`--band` and `--paths` fall back to plain leverage selection, because novelty was never measured
+stacked on either.
+
+Tried against the old default, and left out of the default:
+
+- Compression-based selection (Experiment F, zlib and lzma) buys coverage and loses recall at
+  every rate, at up to ~107x the cost.
+- Raw-gain word novelty (Experiment G, alpha 0.5 / 1 / 2) buys recall and loses coverage.
+- Per-kind scoring (Experiment H) loses recall at every rate on all four arms.
+- `--band` loses at 2x (−0.014 recall), gains about one point at 3x and 4x, and is about 47x
+  slower (`docs/results/exp_e_summary.txt`, E4). The new default without banding beats
+  `supersede+band+leverage` at 4x on both metrics.
+- `--paths` full arms on `supersede+leverage` gain recall but lose 4 to 9 coverage points
+  (`docs/results/exp_d_summary.txt`), and recall on the atoms the table does not guarantee falls
+  on every table arm.
 
 ### Phase 1
 
@@ -66,7 +87,8 @@ Phase 1 experiments are **complete** — see [docs/PHASE1.md](docs/PHASE1.md) fo
 results. Headline findings, stated plainly:
 
 - Supersession dedupe removes **25.9% of tokens losslessly** across a 1.5M-token corpus. This
-  is the clearest win so far and it uses no eigenvectors at all.
+  is the clearest win so far and it uses no eigenvectors at all. (Phase 1 measured that under the
+  older segmenter; the final grid's `exp_c` C2 reads 24.8%.)
 - AST-depth banding of code beats dropping whole code segments at an equal token budget
   (atom recall 0.885 vs 0.854 for TF-IDF drop; coverage 0.973 vs 0.735), but only buys 1.33x on
   its own — it is a quantizer, not a compressor.
@@ -125,8 +147,9 @@ table when `--paths` is on. Every line after that is one kept turn,
 | `--level light\|medium\|heavy` | preset rate: keep 0.50 / 0.33 / 0.25 of input tokens (~2x / ~3x / ~4x). Default `medium` |
 | `--keep R` | keep ratio in [0.10, 0.80], in 0.01 steps (finer values are rounded) |
 | `--target-tokens N` | output token budget; one that implies a ratio outside [0.10, 0.80] is clamped, with a warning |
-| `--band` | AST-depth banding of code and code-shaped tool arguments before scoring. Off by default |
-| `--paths` | name each repeated path once in a leading table and replace mentions with `[P<n>]` markers. Off by default |
+| `--no-novelty` | select by plain leverage (`supersede+leverage`) instead of novelty-discounted leverage per token |
+| `--band` | AST-depth banding of code and code-shaped tool arguments before scoring. Off by default; selection falls back to plain leverage |
+| `--paths` | name each repeated path once in a leading table and replace mentions with `[P<n>]` markers. Off by default; selection falls back to plain leverage |
 | `--min-mentions N` | with `--paths`, tabulate paths mentioned at least N times (default 2; 1 = every path) |
 | `--output PATH` | write here instead of stdout (`-`, the default, is stdout) |
 
@@ -175,8 +198,8 @@ Lint, format check and type check: `uv run ruff check . && uv run ruff format --
 - **Done** — Phase 1: PPMI-SVD vs embedding-SVD vs code channel, on real and public transcripts
 - **In progress** — Phase 2: unified rate-distortion curves, all methods and baselines at matched
   budgets. Plan, decisions and open questions in [docs/PHASE2.md](docs/PHASE2.md)
-- **Done** — core pipeline and CLI: segment → supersede → (band) → leverage score → budget
-  select → emit
+- **Done** — core pipeline and CLI: segment → supersede → (band) → (paths) → leverage score →
+  novelty-per-token select (plain budget select with `--no-novelty`, `--band` or `--paths`) → emit
 - MCP server
 - Claude Code plugin; Codex parity
 - Personalization prior built from the user's own local sessions

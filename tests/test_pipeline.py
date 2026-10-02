@@ -1,20 +1,34 @@
 from __future__ import annotations
 
 import json
+import sys
+from collections.abc import Callable
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-from loosy_goose.budget import token_budget
-from loosy_goose.code import quantize_segment
-from loosy_goose.metrics import atom_recall_final
-from loosy_goose.paths import PathTable, build_table
-from loosy_goose.pipeline import Compressed, PipelineOptions, compress_transcript, to_turns
-from loosy_goose.segment import Segment, SegmentKind, segment
-from loosy_goose.select import CompressConfig
-from loosy_goose.supersede import apply_supersession
-from loosy_goose.tokens import count_tokens
-from loosy_goose.transcript import Block, Transcript, Turn
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from experiments import exp_d_curves as exp_d  # noqa: E402
+from experiments import exp_g_novelty as exp_g  # noqa: E402
+from experiments.exp_d_curves import BASE_VARIANT, KEEP_RATIOS, RunContext  # noqa: E402
+from loosy_goose.budget import token_budget  # noqa: E402
+from loosy_goose.code import quantize_segment  # noqa: E402
+from loosy_goose.metrics import atom_recall_final  # noqa: E402
+from loosy_goose.paths import PathTable, build_table  # noqa: E402
+from loosy_goose.pipeline import (  # noqa: E402
+    Compressed,
+    PipelineOptions,
+    compress_transcript,
+    selector_label,
+    to_turns,
+)
+from loosy_goose.segment import Segment, SegmentKind, segment  # noqa: E402
+from loosy_goose.select import CompressConfig  # noqa: E402
+from loosy_goose.supersede import apply_supersession  # noqa: E402
+from loosy_goose.tokens import count_tokens  # noqa: E402
+from loosy_goose.transcript import Block, Transcript, Turn  # noqa: E402
 
 _CODE = "def f(x):\n    if x:\n        for i in range(3):\n            print(i)\n    return x\n"
 # The read's dump names a path nothing else in the transcript mentions, so whether it reaches
@@ -172,3 +186,60 @@ def test_recall_is_reported_against_final_state_atoms(stub_embed: None) -> None:
     assert with_table.atom_recall_final == atom_recall_final(
         segment(t), with_table.segments, guaranteed=with_table.table.guaranteed_atoms()
     )
+
+
+def _prose_transcript() -> Transcript:
+    texts = [
+        f"Paragraph {i} explains module_{i % 4} and calls helper_{i * 7} with value {i * 13}; "
+        f"{' '.join(['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot'][i % 6 :])}."
+        for i in range(10)
+    ]
+    return Transcript("p", [Turn(i, "assistant", [Block("text", t)]) for i, t in enumerate(texts)])
+
+
+@pytest.mark.parametrize("ratio", KEEP_RATIOS)
+@pytest.mark.parametrize("make", [_transcript, _prose_transcript])
+def test_default_selection_is_the_exp_g_per_token_arm(
+    make: Callable[[], Transcript], ratio: float, tmp_path: Path, stub_embed: None
+) -> None:
+    t = make()
+    original = segment(t)
+    ctx = RunContext(tmp_path, BASE_VARIANT, build_table(original))
+    want = exp_g._run_novelty(0.5, per_token=True)(original, ratio, "none", ctx)
+    got = compress_transcript(t, PipelineOptions(keep=ratio))
+    assert [s.id for s in got.segments] == [s.id for s in want]
+    assert selector_label(PipelineOptions(keep=ratio)) in exp_g.METHODS
+
+
+@pytest.mark.parametrize("ratio", KEEP_RATIOS)
+@pytest.mark.parametrize("make", [_transcript, _prose_transcript])
+def test_no_novelty_is_the_exp_d_supersede_leverage_method(
+    make: Callable[[], Transcript], ratio: float, tmp_path: Path, stub_embed: None
+) -> None:
+    t = make()
+    original = segment(t)
+    ctx = RunContext(tmp_path, BASE_VARIANT, build_table(original))
+    want = exp_d.METHODS["supersede+leverage"](original, ratio, "none", ctx)
+    opts = PipelineOptions(keep=ratio, novelty=False)
+    got = compress_transcript(t, opts)
+    assert [s.id for s in got.segments] == [s.id for s in want]
+    assert selector_label(opts) == "supersede+leverage"
+
+
+@pytest.mark.parametrize(
+    ("band", "paths", "label"),
+    [
+        (True, False, "supersede+band+leverage"),
+        (False, True, "supersede+leverage [paths=full+mm=1]"),
+        (True, True, "supersede+band+leverage [paths=full+mm=1]"),
+    ],
+)
+def test_band_and_paths_ignore_novelty(
+    band: bool, paths: bool, label: str, stub_embed: None
+) -> None:
+    t = _transcript()
+    on = PipelineOptions(keep=0.5, band=band, paths=paths, min_mentions=1)
+    off = PipelineOptions(keep=0.5, band=band, paths=paths, min_mentions=1, novelty=False)
+    assert compress_transcript(t, on) == compress_transcript(t, off)
+    assert selector_label(on) == selector_label(off) == label
+    assert label.split(" [")[0] in exp_d.METHODS

@@ -110,15 +110,23 @@ def build_parser() -> argparse.ArgumentParser:
         "clamped to that range, with a warning",
     )
     compress.add_argument(
+        "--no-novelty",
+        dest="novelty",
+        action="store_false",
+        help="select by plain leverage fill (supersede+leverage) instead of the default leverage "
+        "x word novelty ranked per token (supersede+leverage+novelty-per-token@0.5)",
+    )
+    compress.add_argument(
         "--band",
         action="store_true",
-        help="AST-depth banding of code and tool_use before scoring",
+        help="AST-depth banding of code and tool_use before scoring; selection falls back to "
+        "the plain leverage fill (supersede+band+leverage)",
     )
     compress.add_argument(
         "--paths",
         action="store_true",
         help="path substitution: name each repeated path once in a leading table, replace "
-        "mentions with markers",
+        "mentions with markers; selection falls back to the plain leverage fill",
     )
     compress.add_argument(
         "--min-mentions",
@@ -142,7 +150,12 @@ def _compress(args: argparse.Namespace) -> int:
     # Imported here so `--help` and argument errors never pay for torch/sentence-transformers.
     from loosy_goose.code import TRANSFORMS_VERSION
     from loosy_goose.paths import PATHS_VERSION
-    from loosy_goose.pipeline import PipelineOptions, compress_transcript, to_turns
+    from loosy_goose.pipeline import (
+        PipelineOptions,
+        compress_transcript,
+        selector_label,
+        to_turns,
+    )
     from loosy_goose.segment import ATOMS_VERSION, segment
     from loosy_goose.tokens import count_tokens
 
@@ -168,6 +181,7 @@ def _compress(args: argparse.Namespace) -> int:
         band=args.band,
         paths=args.paths,
         min_mentions=args.min_mentions,
+        novelty=args.novelty,
     )
     result = compress_transcript(transcript, opts)
     header: dict[str, Any] = {
@@ -179,6 +193,8 @@ def _compress(args: argparse.Namespace) -> int:
         "paths": opts.paths,
         "min_mentions": opts.min_mentions,
         "strategy": opts.strategy,
+        "novelty": opts.novelty,
+        "selector": selector_label(opts),
         "budget": result.budget,
         "input_tokens": result.input_tokens,
         "output_tokens": result.output_tokens,

@@ -14,7 +14,7 @@ Read [docs/DESIGN.md](docs/DESIGN.md) before changing the algorithm and
 - `uv run pytest` — tests
 - `uv run ruff check . && uv run ruff format --check .` — lint + format check
 - `uv run mypy src` — type check (strict)
-- `uv run loosy-goose compress <transcript> [--keep 0.5 | --level light|medium|heavy | --target-tokens N] [--band] [--paths --min-mentions 2] [--output out.jsonl]` — CLI: supersede → leverage → budget selection; rate defaults to `--level medium` (0.33); header reports `atom_recall_final` as information only
+- `uv run loosy-goose compress <transcript> [--keep 0.5 | --level light|medium|heavy | --target-tokens N] [--no-novelty] [--band] [--paths --min-mentions 2] [--output out.jsonl]` — CLI: supersede → leverage → per-token novelty selection at alpha 0.5 (default; `--no-novelty` for a plain budget fill; `--band` / `--paths` fall back to plain leverage); rate defaults to `--level medium` (0.33); header reports `atom_recall_final` as information only
 
 The `embed` extra pulls torch CPU + sentence-transformers for the embedding-SVD work, and the CLI
 cannot score without it; CI skips it. Everything is CPU-only. Do not unpin Python 3.12 — 3.13+
@@ -31,7 +31,7 @@ Core:
 - `embed.py` — pinned select/score model pair
 - `budget.py` — token budget, protect policy, greedy score-based selection. **The shared contract**: every method competes at an identical token budget, or results are not comparable
 - `metrics.py` — compression ratio, atom recall, semantic coverage, `evaluate`
-- `pipeline.py` — `compress_transcript`: the shipped supersede → (band) → (paths) → leverage → budget stack, band and paths opt-in, mirroring the Experiment D runner's measured configuration; `PipelineOptions` carries the knobs; `to_turns` regroups kept segments into turns
+- `pipeline.py` — `compress_transcript`: the shipped supersede → (band) → (paths) → leverage → per-token novelty@0.5 stack (exp_g's `supersede+leverage+novelty-per-token@0.5`, default since 2026-10-02), band and paths opt-in; `--no-novelty`, `--band` or `--paths` select by plain leverage budget fill instead, since novelty was never measured with band or paths; `PipelineOptions` carries the knobs; `to_turns` regroups kept segments into turns
 - `cli.py` — argparse entry point
 
 Experiment A (topic basis):
