@@ -24,3 +24,5 @@ experiments/output/*
 !experiments/output/exp_e_v4.out
 !experiments/output/rebaseline_v5.log
 !experiments/output/exp_e_v5.out
+CLAUDE.md
+CLAUDE.md

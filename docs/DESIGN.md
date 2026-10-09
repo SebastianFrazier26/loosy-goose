@@ -194,7 +194,7 @@ own similarity function, which inflates every result.
   as a selector on the strength of its interpretability, which is what the pre-registered
   threshold existed to stop. The IPR distinction the paper contributes is untouched by the
   demotion and is still what justifies stripping top directions. See
-  [PHASE1.md](PHASE1.md); the same result is stated in `README.md` and `CLAUDE.md`.
+  [PHASE1.md](PHASE1.md); the same result is stated in `README.md`.
 - How to drive the whole quality table from a single knob. The shipped CLI sets only the rate —
   `--keep`, `--level` or `--target-tokens` — and the old `--quality` flag is removed (2026-09-29).
   The per-kind quality table remains a design idea, not wired.

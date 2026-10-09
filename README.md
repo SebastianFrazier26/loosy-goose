@@ -107,7 +107,6 @@ results. Headline findings, stated plainly:
 - [docs/PHASE1.md](docs/PHASE1.md) — experiment designs, pre-registered criteria, results, open defects
 - [docs/PHASE2.md](docs/PHASE2.md) — Phase 2 plan, decisions with the option rejected, verified nulls, what is still open
 - [docs/results/](docs/results/) — raw summary tables as emitted by the experiment scripts, with a note on how stale each one is
-- [CLAUDE.md](CLAUDE.md) — repository guide for coding agents
 
 ## Run
 
