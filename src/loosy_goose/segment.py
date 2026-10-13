@@ -139,6 +139,10 @@ class Segment:
     # scaffolding masked, which is what a later rewrite has to read atoms from. None means `text`
     # is its own atom source. Kept out of `text`, `segments_digest` and every emitted output.
     atom_source: str | None = None
+    # Index of the source block within its turn. The session handoff maps kept segments back to
+    # the session records they came from through it. Like `tool_name`, kept out of `text` and
+    # `segments_digest`, so no experiment checkpoint moves.
+    block: int = 0
 
 
 def _json_values(node: Any, out: list[str]) -> None:
@@ -368,7 +372,7 @@ def segment(
     # 600-character line chunking it had, byte for byte.
     segments: list[Segment] = []
     for turn in transcript.turns:
-        for block in turn.blocks:
+        for block_index, block in enumerate(turn.blocks):
             pieces = _segments_for_block(block, max_prose_chars, max_result_chars)
             for kind, text, protected in pieces:
                 if not text.strip():
@@ -383,6 +387,7 @@ def segment(
                         protected=protected,
                         atoms=extract_atoms(text),
                         tool_name=block.meta.get("name") if kind == "tool_use" else None,
+                        block=block_index,
                     )
                 )
     return segments
