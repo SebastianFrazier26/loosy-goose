@@ -22,9 +22,13 @@ embed = [
     "sentence-transformers>=3.0",
     "torch>=2.14.0",
 ]
+mcp = [
+    "mcp>=2.3,<3",
+]
 
 [project.scripts]
 loosy-goose = "loosy_goose.cli:main"
+loosy-goose-mcp = "loosy_goose.mcp_server:main"
 
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13.0"]

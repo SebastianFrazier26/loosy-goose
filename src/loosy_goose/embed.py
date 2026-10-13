@@ -19,6 +19,10 @@ def _model(name: str) -> Any:
     return SentenceTransformer(name, device="cpu")
 
 
+def warm(model_name: str = SELECT_MODEL) -> None:
+    _model(model_name)
+
+
 def embed_texts(
     texts: list[str], model_name: str = SELECT_MODEL, batch_size: int = 32
 ) -> FloatArray:
