@@ -239,14 +239,89 @@ def _corrupt(lines: list[dict[str, Any]], how: str) -> list[dict[str, Any]]:
                 "message": {"role": "user", "content": "stray"},
             },
         )
+    elif how == "empty-content":
+        next(o for o in chain if o.get("type") == "assistant")["message"]["content"] = []
     return lines
 
 
-@pytest.mark.parametrize("how", ["chain", "tool-pairs", "session-id", "coverage"])
+@pytest.mark.parametrize(
+    "how", ["chain", "tool-pairs", "session-id", "coverage", "empty-content", "parse"]
+)
 def test_validate_names_the_failed_check(tmp_path: Path, how: str) -> None:
     _, _, new_id, fork = fork_with(claude, tmp_path)
     bad = write_lines(tmp_path / "bad.jsonl", _corrupt(read_lines(fork), how))
+    if how == "parse":
+        with bad.open("a", encoding="utf-8") as fh:
+            fh.write("{\n")
     assert how in claude.validate(bad, new_id)
+
+
+def _call_and_result(lines: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
+    def has(o: dict[str, Any], kind: str) -> bool:
+        content = o.get("message", {}).get("content")
+        return isinstance(content, list) and any(p.get("type") == kind for p in content)
+
+    call = next(o for o in lines if has(o, "tool_use"))
+    return call, next(o for o in lines if has(o, "tool_result"))
+
+
+def test_validate_rejects_a_result_before_its_call(tmp_path: Path) -> None:
+    _, _, new_id, fork = fork_with(claude, tmp_path)
+    lines = read_lines(fork)
+    call, result = _call_and_result(lines)
+    assert result["parentUuid"] == call["uuid"]
+    after = next(o for o in lines if o.get("parentUuid") == result["uuid"])
+    result["parentUuid"], call["parentUuid"] = call["parentUuid"], result["uuid"]
+    after["parentUuid"] = call["uuid"]
+    bad = write_lines(tmp_path / "swapped.jsonl", lines)
+    assert claude.validate(bad, new_id) == ["tool-pairs"]
+
+
+def test_validate_rejects_a_message_wedged_between_call_and_result(tmp_path: Path) -> None:
+    _, _, new_id, fork = fork_with(claude, tmp_path)
+    lines = read_lines(fork)
+    call, result = _call_and_result(lines)
+    wedge = {
+        "type": "user",
+        "uuid": str(uuid.uuid4()),
+        "parentUuid": call["uuid"],
+        "sessionId": new_id,
+        "message": {"role": "user", "content": "wedged"},
+    }
+    result["parentUuid"] = wedge["uuid"]
+    lines.insert(lines.index(result), wedge)
+    bad = write_lines(tmp_path / "wedged.jsonl", lines)
+    assert claude.validate(bad, new_id) == ["tool-pairs"]
+
+
+def test_write_fork_never_overwrites_an_existing_session(tmp_path: Path) -> None:
+    s, plan, _, _ = fork_with(claude, tmp_path)
+    out = tmp_path / "existing"
+    out.mkdir()
+    victim = out / f"{s.session_id}.jsonl"
+    victim.write_bytes(b"the user's real session\n")
+    with pytest.raises(FileExistsError):
+        claude.write_fork(s, plan, s.session_id, out)
+    assert victim.read_bytes() == b"the user's real session\n"
+
+
+def test_a_message_emptied_by_rewrites_is_skipped_and_relinked(tmp_path: Path) -> None:
+    s, plan, new_id, _ = fork_with(claude, tmp_path)
+    prompt = next(ri for ri in plan.keep if "BETA" in (s.records[ri].prompt or ""))
+    assert isinstance(s.records[prompt].raw["message"]["content"], str)
+    reply = next(
+        ri
+        for ri in plan.keep
+        if s.records[ri].kind == "assistant"
+        and all(p.get("type") == "text" for p in s.records[ri].raw["message"]["content"])
+    )
+    parts = range(len(s.records[reply].raw["message"]["content"]))
+    emptied = dataclasses.replace(plan, rewrites={prompt: {0: ""}, reply: dict.fromkeys(parts, "")})
+    fork = claude.write_fork(s, emptied, new_id, tmp_path / "emptied-messages")
+    assert claude.validate(fork, new_id) == []
+    written = {o.get("uuid") for o in read_lines(fork)}
+    assert s.records[prompt].raw["uuid"] not in written
+    assert s.records[reply].raw["uuid"] not in written
 
 
 def _compacted_lines() -> list[dict[str, Any]]:

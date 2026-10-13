@@ -351,15 +351,24 @@ def _with_session(obj: dict[str, Any], new_id: str) -> dict[str, Any]:
     return obj
 
 
+def _empty(obj: dict[str, Any]) -> bool:
+    if obj.get("type") not in ("user", "assistant"):
+        return False
+    content = _message(obj).get("content")
+    return content == "" or content == []
+
+
 def write_fork(session: Session, plan: ForkPlan, new_id: str, out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     records = session.records
-    kept: list[dict[str, Any]] = []
+    kept: list[tuple[int, dict[str, Any]]] = []
     for ri in plan.keep:
         obj = copy.deepcopy(records[ri].raw)
         _apply_rewrites(obj, plan.rewrites.get(ri, {}))
-        kept.append(obj)
-    template = next((records[ri].raw for ri in plan.keep if records[ri].prompt is not None), {})
+        # The API rejects a message with empty content; the chain re-links over the gap.
+        if not _empty(obj):
+            kept.append((ri, obj))
+    template = next((records[ri].raw for ri, _ in kept if records[ri].prompt is not None), {})
     marker: dict[str, Any] = {k: template[k] for k in _MARKER_KEYS if k in template}
     marker.update(
         {
@@ -370,10 +379,11 @@ def write_fork(session: Session, plan: ForkPlan, new_id: str, out_dir: Path) -> 
     )
     # Claude Code reads history from the last compact boundary on; a marker above it is cut.
     boundary = max(
-        (i for i, ri in enumerate(plan.keep) if records[ri].kind == "system:compact_boundary"),
+        (i for i, (ri, _) in enumerate(kept) if records[ri].kind == "system:compact_boundary"),
         default=-1,
     )
-    chain = kept[: boundary + 1] + [marker] + kept[boundary + 1 :]
+    objs = [obj for _, obj in kept]
+    chain = objs[: boundary + 1] + [marker] + objs[boundary + 1 :]
     parent: str | None = None
     for obj in chain:
         obj["parentUuid"] = parent
@@ -381,9 +391,7 @@ def write_fork(session: Session, plan: ForkPlan, new_id: str, out_dir: Path) -> 
         _with_session(obj, new_id)
         parent = str(obj["uuid"])
     loose = [_with_session(copy.deepcopy(records[ri].raw), new_id) for ri in plan.passthrough]
-    last_prompt = next(
-        (p for ri in reversed(plan.keep) if (p := records[ri].prompt) is not None), ""
-    )
+    last_prompt = next((p for ri, _ in reversed(kept) if (p := records[ri].prompt) is not None), "")
     leaf = {
         "type": "last-prompt",
         "lastPrompt": last_prompt,
@@ -391,7 +399,9 @@ def write_fork(session: Session, plan: ForkPlan, new_id: str, out_dir: Path) -> 
         "sessionId": new_id,
     }
     dest = out_dir / f"{new_id}.jsonl"
-    with dest.open("wb") as fh:
+    # "x", not "w": the destination sits beside the user's own sessions, and an id clash must
+    # never truncate one of them.
+    with dest.open("xb") as fh:
         for obj in [*chain, *loose, leaf]:
             fh.write(dump_line(obj))
     return dest
@@ -424,19 +434,55 @@ def validate(fork: Path, session_id: str) -> list[str]:
         failures.append("chain")
     if seen != set(by_uuid):
         failures.append("coverage")
-    uses: set[str] = set()
-    results: set[str] = set()
-    for obj in walked:
-        content = (
-            obj.get("message", {}).get("content") if isinstance(obj.get("message"), dict) else None
-        )
-        for part in content if isinstance(content, list) else []:
-            if isinstance(part, dict) and part.get("type") == "tool_use":
-                uses.add(str(part.get("id")))
-            if isinstance(part, dict) and part.get("type") == "tool_result":
-                results.add(str(part.get("tool_use_id")))
-    if uses != results:
+    path = list(reversed(walked))
+    if not _tool_pairs_ordered(path):
         failures.append("tool-pairs")
+    if any(_empty_message(obj) for obj in path):
+        failures.append("empty-content")
     if {o.get("sessionId") for o in objs if "sessionId" in o} != {session_id}:
         failures.append("session-id")
     return failures
+
+
+def _parts(obj: dict[str, Any]) -> list[dict[str, Any]]:
+    content = _message(obj).get("content")
+    return [p for p in content if isinstance(p, dict)] if isinstance(content, list) else []
+
+
+def _tool_pairs_ordered(path: list[dict[str, Any]]) -> bool:
+    """The API's rule: an assistant turn's calls are all answered by the very next user
+    message, results first. Consecutive records of one role merge into one message; records
+    of other types (attachments, system) are not messages and are skipped."""
+    pending: set[str] = set()
+    previous: str | None = None
+    for obj in path:
+        role = obj.get("type")
+        if role not in ("user", "assistant"):
+            continue
+        parts = _parts(obj)
+        if role == "assistant":
+            if previous != "assistant":
+                if pending:
+                    return False
+            pending |= {str(p.get("id")) for p in parts if p.get("type") == "tool_use"}
+        else:
+            answered = [str(p.get("tool_use_id")) for p in parts if p.get("type") == "tool_result"]
+            if pending and not answered:
+                return False
+            for cid in answered:
+                if cid not in pending:
+                    return False
+                pending.discard(cid)
+        previous = role
+    return not pending
+
+
+def _empty_message(obj: dict[str, Any]) -> bool:
+    if obj.get("type") not in ("user", "assistant"):
+        return False
+    content = _message(obj).get("content")
+    if isinstance(content, str):
+        return content == ""
+    if not isinstance(content, list) or not content:
+        return True
+    return any(p.get("type") == "text" and not p.get("text") for p in _parts(obj))
