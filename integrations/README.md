@@ -44,6 +44,11 @@ startup_timeout_sec = 120
 tool_timeout_sec = 600
 ```
 
+In `codex exec` (headless), two more keys are needed: `required = true`, or the first turn starts
+before the server is up and the tool is missing, and
+`tools.handoff_session.approval_mode = "approve"`, because under approval policy `never` (what
+`codex exec` ran with in testing) a tool call that needs approval is rejected.
+
 If Claude Code reports a startup timeout, start it with `MCP_TIMEOUT=120000 claude`.
 
 ## 3. Install the command

@@ -69,4 +69,8 @@ files = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: needs the embedding model; skipped when sentence_transformers is missing"]
+addopts = "-m 'not live'"
+markers = [
+    "slow: needs the embedding model; skipped when sentence_transformers is missing",
+    "live: needs logged-in claude and codex CLIs and spends a little API use; run with `uv run pytest -m live`",
+]
