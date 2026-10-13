@@ -88,3 +88,14 @@ def test_scrubbing_committed_fixture_is_idempotent(name: str, scrub: Any, tmp_pa
     out = tmp_path / name
     write_fixture(FIXTURES / name, out, scrub, lambda text: text)
     assert [json.loads(line) for line in out.read_text("utf-8").splitlines()] == fixture_lines(name)
+
+
+@pytest.mark.parametrize(
+    "head", [b"", b"\n", b"{not json\n", b"\xff\n", b"[1, 2]\n", b'{"payload": 3}\n']
+)
+def test_the_live_suites_fork_scan_skips_an_unreadable_rollout(tmp_path: Path, head: bytes) -> None:
+    from test_live_handoff import _forked_from
+
+    path = tmp_path / "rollout.jsonl"
+    path.write_bytes(head)
+    assert _forked_from(path) is None

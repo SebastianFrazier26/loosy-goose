@@ -233,9 +233,15 @@ def test_e2e_claude_handoff_through_the_mcp_tool(tmp_path: Path) -> None:
 
 
 def _forked_from(path: Path) -> str | None:
-    with path.open(encoding="utf-8") as fh:
-        head = json.loads(fh.readline())
-    value = head.get("payload", {}).get("forked_from_id")
+    # Every rollout is scanned, the user's own and ones Codex is still writing: an unreadable
+    # head is not our fork, and raising here would skip the cleanup of the fork we did make.
+    try:
+        with path.open(encoding="utf-8") as fh:
+            head = json.loads(fh.readline())
+    except ValueError:
+        return None
+    payload = head.get("payload") if isinstance(head, dict) else None
+    value = payload.get("forked_from_id") if isinstance(payload, dict) else None
     return value if isinstance(value, str) else None
 
 
