@@ -335,20 +335,28 @@ def plan_fork(
     # The fork ends at `end`; a unit with a record at or after it (parallel calls straddling the
     # trigger) cannot be kept whole, so its in-region half is dropped.
     split = {units[ri] for ri in session.live[region.end :]}
-    # Its reply's other records go too: a fork must not end on a thinking-only assistant turn.
-    orphaned = {
-        r for ri in session.live[: region.end] if units[ri] in split and (r := records[ri].reply)
-    }
-
-    def dropped(ri: int) -> bool:
-        return units[ri] in split or records[ri].reply in orphaned
+    # Its reply's other records go too (a fork must not end on a thinking-only assistant turn),
+    # and with them their own units (a parallel call's result), to a fixed point: reply ids
+    # and call ids each join records the other does not.
+    drop = {ri for ri in session.live[: region.end] if units[ri] in split}
+    while True:
+        replies_out = {r for ri in drop if (r := records[ri].reply) is not None}
+        units_out = {units[ri] for ri in drop}
+        grown = {
+            ri
+            for ri in session.live[: region.end]
+            if records[ri].reply in replies_out or units[ri] in units_out
+        }
+        if grown <= drop:
+            break
+        drop |= grown
 
     selected = {ri for (ri, _), group in pieces.items() if any(k for _, k, _ in group)}
     kept_units = {units[ri] for ri in selected}
     # The whole stretch, not just the turns: a result with no text (an empty output, or one an
     # earlier handoff trimmed to a placeholder) is no turn, yet its kept call needs it.
     chosen = {
-        ri for ri in session.live[: region.tail_from] if units[ri] in kept_units and not dropped(ri)
+        ri for ri in session.live[: region.tail_from] if units[ri] in kept_units and ri not in drop
     }
     rewrites: dict[int, dict[int, str]] = {}
     for (ri, part), group in pieces.items():
@@ -362,7 +370,7 @@ def plan_fork(
     warnings: list[str] = []
     for pos, ri in enumerate(session.live[: region.end]):
         rec = records[ri]
-        if rec.category == "side" or dropped(ri):
+        if rec.category == "side" or ri in drop:
             continue
         if rec.category == "unknown":
             where = f"{rec.kind!r} record at line {rec.line + 1}"

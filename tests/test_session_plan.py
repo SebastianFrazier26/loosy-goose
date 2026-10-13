@@ -345,3 +345,51 @@ def test_siblings_of_a_straddling_call_are_dropped_with_it() -> None:
         plan = plan_fork(session, region, kept_where(region, lambda s: True), date="2026-10-13")
         assert not {3, 4, 5, 7} & set(plan.keep)
         assert {0, 1, 2} <= set(plan.keep)
+
+
+def _straddling_plans(session: Session, protects: tuple[int, ...]) -> list[ForkPlan]:
+    plans = []
+    for protect in protects:
+        trigger = find_trigger(session, DEFAULT_TRIGGERS["claude"])
+        region = split_region(session, trigger, protect_tail_tokens=protect)
+        plans.append(
+            plan_fork(session, region, kept_where(region, lambda s: True), date="2026-10-13")
+        )
+    return plans
+
+
+def test_parallel_calls_straddling_the_trigger_drop_whole_units() -> None:
+    session = build(
+        ("prompt", "a"),  # 0
+        ("reply", "x"),  # 1
+        ("prompt", "b"),  # 2
+        ("reply:r1", "running both"),  # 3
+        ("call:c1", '{"command": "true"}'),  # 4: answered only after the trigger
+        ("call:c2", '{"command": "false"}'),  # 5: same reply as c1
+        ("result:c2", "done"),  # 6: its call goes with c1's reply, so it must go too
+        ("prompt", TRIGGER),  # 7
+        ("result:c1", "late"),  # 8
+    )
+    session.records[4].reply = session.records[5].reply = "r1"
+    (plan,) = _straddling_plans(session, (10_000,))
+    assert plan.keep == (0, 1, 2)
+
+
+def test_a_straddling_reply_in_the_compressible_stretch_drops_whole_units() -> None:
+    session = build(
+        ("prompt", "a"),  # 0
+        ("reply", "x"),  # 1
+        ("prompt", "b"),  # 2
+        ("reply:r1", "running both"),  # 3
+        ("call:c1", '{"command": "true"}'),  # 4
+        ("call:c2", '{"command": "false"}'),  # 5
+        ("result:c2", "done"),  # 6
+        ("prompt", "d"),  # 7: the tail starts here, so 3-6 are compressible
+        ("reply", "y"),  # 8
+        ("prompt", TRIGGER),  # 9
+        ("result:c1", "late"),  # 10
+    )
+    session.records[4].reply = session.records[5].reply = "r1"
+    (plan,) = _straddling_plans(session, (0,))
+    assert plan.tail_from == 7
+    assert plan.keep == (0, 1, 2, 7, 8)
