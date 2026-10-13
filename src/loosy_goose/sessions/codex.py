@@ -8,8 +8,13 @@ is never touched here (probe, 2026-10-12, codex-cli 0.158.0).
 
 from __future__ import annotations
 
+import copy
 import json
 import os
+import shlex
+import time
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,16 +23,30 @@ from loosy_goose.sessions.model import (
     SessionFormatError,
     SessionRecord,
     Tool,
+    dump_line,
     explicit_session,
     read_jsonl,
     same_dir,
     tagged,
     text_blocks,
 )
-from loosy_goose.sessions.plan import MARKER_PREFIX, strip_part
+from loosy_goose.sessions.plan import MARKER_PREFIX, ForkPlan, strip_part
 from loosy_goose.transcript import Block
 
-__all__ = ["Session", "TESTED_VERSIONS", "TOOL", "default_home", "locate", "read"]
+__all__ = [
+    "Session",
+    "TESTED_VERSIONS",
+    "TOOL",
+    "default_home",
+    "fork_destination",
+    "locate",
+    "new_session_id",
+    "read",
+    "resume_command",
+    "validate",
+    "verify_command",
+    "write_fork",
+]
 
 TOOL: Tool = "codex"
 TESTED_VERSIONS: tuple[str, ...] = ("0.158.0",)
@@ -285,3 +304,174 @@ def read(path: Path) -> Session:
         open_exchange=open_exchange,
         warnings=warnings,
     )
+
+
+def new_session_id() -> str:
+    # Codex ids are UUIDv7 (time-ordered); Python 3.12 has no uuid.uuid7.
+    ms = time.time_ns() // 1_000_000
+    rand = int.from_bytes(os.urandom(10), "big")
+    value = (
+        (ms & ((1 << 48) - 1)) << 80
+        | 0x7 << 76
+        | ((rand >> 68) & 0xFFF) << 64
+        | 0b10 << 62
+        | (rand & ((1 << 62) - 1))
+    )
+    return str(uuid.UUID(int=value))
+
+
+def fork_destination(source: Path, new_id: str, home: Path, now: datetime) -> Path:
+    stamp = now.strftime("%Y-%m-%dT%H-%M-%S")
+    return home / "sessions" / now.strftime("%Y/%m/%d") / f"rollout-{stamp}-{new_id}.jsonl"
+
+
+def resume_command(session_id: str, cwd: str) -> str:
+    return f"cd {shlex.quote(cwd)} && codex resume {session_id}"
+
+
+def verify_command(session_id: str) -> list[str]:
+    return ["codex", "exec", "resume", session_id, "Reply with exactly: OK"]
+
+
+def _apply_rewrites(obj: dict[str, Any], rewrite: dict[int, str]) -> None:
+    if not rewrite:
+        return
+    payload = obj["payload"]
+    ptype = payload.get("type")
+    if ptype == "message":
+        content: list[Any] = []
+        for i, part in enumerate(payload.get("content") or []):
+            if i not in rewrite:
+                content.append(part)
+            elif rewrite[i]:
+                content.append({**part, "text": rewrite[i]})
+        payload["content"] = content
+    elif ptype in _OUTPUTS:
+        text = rewrite.get(0, "")
+        out = payload.get("output")
+        if isinstance(out, list):
+            others = [c for c in out if not (isinstance(c, dict) and c.get("type") == "input_text")]
+            payload["output"] = [{"type": "input_text", "text": text}, *others]
+        else:
+            payload["output"] = text
+
+
+def _empty(obj: dict[str, Any]) -> bool:
+    payload = obj.get("payload")
+    if obj.get("type") != "response_item" or not isinstance(payload, dict):
+        return False
+    if payload.get("type") != "message":
+        return False
+    content = payload.get("content")
+    if not isinstance(content, list) or not content:
+        return True
+    return any(isinstance(p, dict) and "text" in p and not p["text"] for p in content)
+
+
+def write_fork(session: Session, plan: ForkPlan, new_id: str, out_dir: Path) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    records = session.records
+    kept: list[tuple[int, dict[str, Any]]] = []
+    for ri in sorted(plan.keep):
+        obj = copy.deepcopy(records[ri].raw)
+        _apply_rewrites(obj, plan.rewrites.get(ri, {}))
+        # Codex sends a message with no content to the model as-is, which the API rejects.
+        if not _empty(obj):
+            kept.append((ri, obj))
+    objs = [obj for _, obj in kept]
+    # After the last compaction, or the compaction would replace it; inside a kept turn, as
+    # every user message Codex writes is.
+    last_compaction = max(
+        (i for i, (ri, _) in enumerate(kept) if records[ri].kind == "compacted"), default=-1
+    )
+    at = next(
+        (
+            i
+            for i, (ri, _) in enumerate(kept)
+            if i > last_compaction and records[ri].kind.startswith("response_item:")
+        ),
+        len(kept),
+    )
+    anchor = objs[at - 1] if at > 0 else objs[0]
+    marker: dict[str, Any] = {
+        "timestamp": anchor.get("timestamp"),
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": plan.marker}],
+        },
+    }
+    if "ordinal" in anchor:
+        marker["ordinal"] = 0
+    objs.insert(at, marker)
+    old = session.session_id
+    dest = out_dir / f"{new_id}.jsonl"
+    # "x", not "w": the destination sits beside the user's own sessions, and an id clash must
+    # never truncate one of them.
+    with dest.open("xb") as fh:
+        for index, obj in enumerate(objs):
+            if "ordinal" in obj:
+                obj["ordinal"] = index
+            line = dump_line(obj).decode("utf-8", errors="surrogateescape")
+            # The marker names the source session on purpose; every other mention is the id.
+            if obj is not marker:
+                line = line.replace(old, new_id)
+            if index == 0:
+                head = json.loads(line)
+                head["payload"]["forked_from_id"] = old
+                line = dump_line(head).decode("utf-8", errors="surrogateescape")
+            fh.write(line.encode("utf-8", errors="surrogateescape"))
+    return dest
+
+
+def validate(fork: Path, session_id: str) -> list[str]:
+    lines, problems = read_jsonl(fork)
+    failures = ["parse"] if problems else []
+    objs = [obj for _, obj in lines]
+    head = objs[0].get("payload", {}) if objs and objs[0].get("type") == "session_meta" else {}
+    if head.get("id") != session_id:
+        failures.append("session-id")
+    old = head.get("forked_from_id")
+    if not isinstance(old, str) or not old:
+        failures.append("forked-from")
+    else:
+        dumped = [json.dumps(o, ensure_ascii=False) for o in objs[1:]]
+        if any(old in d for d in dumped if MARKER_PREFIX not in d):
+            failures.append("stale-id")
+    calls: set[str] = set()
+    outputs: set[str] = set()
+    started: set[str] = set()
+    any_started = False
+    broken_turn = False
+    for obj in objs:
+        payload = obj.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        ptype = payload.get("type")
+        if obj.get("type") == "response_item" and ptype in _CALLS:
+            calls.add(str(payload.get("call_id")))
+        if obj.get("type") == "response_item" and ptype in _OUTPUTS:
+            outputs.add(str(payload.get("call_id")))
+        if obj.get("type") == "event_msg" and ptype == "task_started":
+            any_started = True
+            started.add(str(payload.get("turn_id")))
+        # An end whose start is missing breaks the turn; an end before any start is the tail
+        # of a turn that a compaction cut, which Codex itself writes.
+        if (
+            obj.get("type") == "event_msg"
+            and ptype in ("task_complete", "turn_aborted")
+            and any_started
+            and str(payload.get("turn_id")) not in started
+        ):
+            broken_turn = True
+    if calls != outputs:
+        failures.append("tool-pairs")
+    if broken_turn:
+        failures.append("turns")
+    if any(_empty(o) for o in objs):
+        failures.append("empty-content")
+    numbered = [(i, o["ordinal"]) for i, o in enumerate(objs) if "ordinal" in o]
+    if any(i != ordinal for i, ordinal in numbered):
+        failures.append("ordinals")
+    return failures

@@ -1,3 +1,7 @@
+import dataclasses
+import json
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +13,9 @@ from session_fixtures import (
     FIXTURES,
     SENTINEL,
     fixture_lines,
+    fork_with,
     install_codex,
+    read_lines,
     write_lines,
 )
 
@@ -17,6 +23,7 @@ from loosy_goose.sessions import codex
 from loosy_goose.sessions.model import SessionFormatError
 from loosy_goose.sessions.plan import (
     DEFAULT_TRIGGERS,
+    GAP,
     MARKER_PREFIX,
     TRIMMED_RESULT,
     Trigger,
@@ -146,3 +153,238 @@ def test_a_file_without_session_meta_is_refused(tmp_path: Path) -> None:
     path = write_lines(tmp_path / "bad.jsonl", [{"type": "event_msg", "payload": {}}])
     with pytest.raises(SessionFormatError, match="session_meta"):
         codex.read(path)
+
+
+def _is_marker(o: dict[str, Any]) -> bool:
+    return o.get("type") == "response_item" and MARKER_PREFIX in json.dumps(o, ensure_ascii=False)
+
+
+def test_a_fork_without_beta_validates(tmp_path: Path) -> None:
+    s, _, new_id, fork = fork_with(codex, tmp_path, keep=lambda seg: "BETA" not in seg.text)
+    assert codex.validate(fork, new_id) == []
+    out = read_lines(fork)
+    assert out[0]["payload"]["id"] == new_id
+    assert out[0]["payload"]["forked_from_id"] == s.session_id
+    assert s.session_id not in json.dumps([o for o in out[1:] if not _is_marker(o)])
+    assert f"compressed from session {s.session_id} " in json.dumps(out, ensure_ascii=False)
+    f = codex.read(fork)
+    text = " ".join(f.prompts())
+    assert "BETA" not in text and SENTINEL not in text
+    assert all(w in text for w in ("ALPHA", "GAMMA", "DELTA"))
+    marker = next(i for i, o in enumerate(out) if _is_marker(o))
+    assert all(o["type"] != "response_item" for o in out[:marker])
+    assert "BETA" not in json.dumps(out)
+    assert "BETA" not in fork.read_text(encoding="utf-8")
+
+
+def _with_turn_context(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A context user message after every `turn_context`, which Codex may write (Facts)."""
+    out: list[dict[str, Any]] = []
+    for o in lines:
+        out.append(o)
+        if o["type"] == "turn_context":
+            text = "<environment_context>scrubbed</environment_context>"
+            out.append(
+                {
+                    "timestamp": o["timestamp"],
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": text}],
+                    },
+                }
+            )
+    return out
+
+
+def test_a_dropped_prompt_takes_its_echo_along_even_with_per_turn_context(
+    tmp_path: Path,
+) -> None:
+    lines = _with_turn_context(fixture_lines(CODEX_FIXTURE))
+    _, _, new_id, fork = fork_with(codex, tmp_path, lines, keep=lambda seg: "BETA" not in seg.text)
+    assert codex.validate(fork, new_id) == []
+    assert "BETA" not in fork.read_text(encoding="utf-8")
+    prompts = codex.read(fork).prompts()
+    assert all(w in " ".join(prompts) for w in ("ALPHA", "GAMMA", "DELTA"))
+    assert not any("environment_context" in p for p in prompts)
+
+
+def test_ordinals_are_renumbered(tmp_path: Path) -> None:
+    lines = [{**o, "ordinal": i} for i, o in enumerate(fixture_lines(CODEX_FIXTURE))]
+    _, _, new_id, fork = fork_with(codex, tmp_path, lines, keep=lambda seg: "BETA" not in seg.text)
+    out = read_lines(fork)
+    assert [o.get("ordinal") for o in out if "ordinal" in o] == [
+        i for i, o in enumerate(out) if "ordinal" in o
+    ]
+    assert codex.validate(fork, new_id) == []
+
+
+def test_a_fork_of_a_fork_has_one_marker_and_no_inherited_placeholders(tmp_path: Path) -> None:
+    _, _, first_id, first = fork_with(codex, tmp_path)
+    lines = read_lines(first)
+    out = next(
+        o
+        for o in lines
+        if o["type"] == "response_item"
+        and o["payload"].get("type") in ("function_call_output", "custom_tool_call_output")
+    )
+    out["payload"]["output"] = TRIMMED_RESULT
+    s, _, new_id, second = fork_with(codex, tmp_path / "again", lines)
+    assert s.session_id == first_id
+    assert codex.validate(second, new_id) == []
+    text = second.read_text(encoding="utf-8")
+    assert text.count(MARKER_PREFIX) == 1
+    assert f"compressed from session {first_id} " in text
+    assert GAP not in text and TRIMMED_RESULT not in text
+
+
+def _corrupt(lines: list[dict[str, Any]], how: str, old: str) -> list[dict[str, Any]]:
+    if how == "tool-pairs":
+        out = next(
+            i
+            for i, o in enumerate(lines)
+            if o["type"] == "response_item"
+            and o["payload"].get("type") in ("function_call_output", "custom_tool_call_output")
+        )
+        del lines[out]
+    elif how == "stale-id":
+        lines[-1] = {**lines[-1], "note": old}
+    elif how == "session-id":
+        lines[0]["payload"]["id"] = "someone-else"
+    elif how == "turns":
+        # The first turn's end precedes every start, and an end with no start before it is
+        # excused by design (a compaction can cut a turn's start); so drop the second start.
+        starts = [
+            i
+            for i, o in enumerate(lines)
+            if o["type"] == "event_msg" and o["payload"].get("type") == "task_started"
+        ]
+        del lines[starts[1]]
+    elif how == "ordinals":
+        lines = [{**o, "ordinal": i} for i, o in enumerate(lines)]
+        del lines[2]
+    elif how == "empty-content":
+        msg = next(
+            o
+            for o in lines
+            if o["type"] == "response_item"
+            and o["payload"].get("type") == "message"
+            and o["payload"].get("role") == "assistant"
+        )
+        msg["payload"]["content"] = []
+    return lines
+
+
+@pytest.mark.parametrize(
+    "how", ["tool-pairs", "stale-id", "session-id", "turns", "ordinals", "empty-content"]
+)
+def test_validate_names_the_failed_check(tmp_path: Path, how: str) -> None:
+    s, _, new_id, fork = fork_with(codex, tmp_path)
+    bad = write_lines(tmp_path / "bad.jsonl", _corrupt(read_lines(fork), how, s.session_id))
+    assert how in codex.validate(bad, new_id)
+
+
+def _compacted_lines() -> list[dict[str, Any]]:
+    """The fixture as if Codex had compacted its context just before the GAMMA turn."""
+    lines = fixture_lines(CODEX_FIXTURE)
+    echo = codex.read(FIXTURES / CODEX_FIXTURE)
+    gamma = next(
+        r.line
+        for r in echo.records
+        if r.kind == "event_msg:user_message"
+        and "GAMMA" in (codex._echo_text(r.raw["payload"]) or "")
+    )
+    start = max(
+        i
+        for i in range(gamma)
+        if lines[i]["type"] == "event_msg" and lines[i]["payload"].get("type") == "task_started"
+    )
+    compacted = {
+        "timestamp": lines[start]["timestamp"],
+        "type": "compacted",
+        "payload": {
+            "message": "",
+            "replacement_history": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Earlier: two code words."}],
+                }
+            ],
+        },
+    }
+    return lines[:start] + [compacted] + lines[start:]
+
+
+def test_rf4_a_session_spanning_context_windows_forks_from_its_last_compaction(
+    tmp_path: Path,
+) -> None:
+    lines = _compacted_lines()
+    s = codex.read(write_lines(tmp_path / "compacted.jsonl", lines))
+    first_live = s.records[s.live[1]]
+    assert first_live.kind == "compacted" and first_live.pinned
+    assert len(s.prompts()) == 3 and not any("ALPHA" in p or "BETA" in p for p in s.prompts())
+    _, _, new_id, fork = fork_with(codex, tmp_path, lines)
+    assert codex.validate(fork, new_id) == []
+    out = read_lines(fork)
+    compacted = next(i for i, o in enumerate(out) if o["type"] == "compacted")
+    marker = next(i for i, o in enumerate(out) if _is_marker(o))
+    assert compacted < marker
+    assert all(o["type"] != "response_item" for o in out[compacted + 1 : marker])
+    assert "ALPHA" not in json.dumps(out) and "BETA" not in json.dumps(out)
+
+
+def test_destination_ids_and_commands() -> None:
+    when = datetime(2026, 10, 13, 9, 8, 7)
+    assert codex.fork_destination(Path("/x.jsonl"), "abc", Path("/h"), when) == Path(
+        "/h/sessions/2026/10/13/rollout-2026-10-13T09-08-07-abc.jsonl"
+    )
+    assert uuid.UUID(codex.new_session_id()).version == 7
+    assert codex.resume_command("abc", "/work/my dir") == "cd '/work/my dir' && codex resume abc"
+    assert codex.verify_command("abc") == [
+        "codex",
+        "exec",
+        "resume",
+        "abc",
+        "Reply with exactly: OK",
+    ]
+
+
+def test_writing_onto_an_existing_destination_fails_and_leaves_it_alone(tmp_path: Path) -> None:
+    s, plan, new_id, fork = fork_with(codex, tmp_path)
+    before = fork.read_bytes()
+    with pytest.raises(FileExistsError):
+        codex.write_fork(s, plan, new_id, fork.parent)
+    assert fork.read_bytes() == before
+
+
+def test_a_message_emptied_by_a_rewrite_is_not_written(tmp_path: Path) -> None:
+    s, plan, _, _ = fork_with(codex, tmp_path)
+    target = next(
+        ri
+        for ri in plan.keep
+        if s.records[ri].kind == "response_item:message:assistant"
+        and len(s.records[ri].raw["payload"]["content"]) == 1
+    )
+    ident = s.records[target].raw["payload"]["id"]
+    emptied = dataclasses.replace(plan, rewrites={**plan.rewrites, target: {0: ""}})
+    new_id = codex.new_session_id()
+    fork = codex.write_fork(s, emptied, new_id, tmp_path / "emptied")
+    out = read_lines(fork)
+    assert not [o for o in out if o["type"] == "response_item" and o["payload"].get("id") == ident]
+    assert codex.validate(fork, new_id) == []
+
+
+def test_an_output_rewritten_to_empty_keeps_its_call_paired(tmp_path: Path) -> None:
+    s, plan, _, _ = fork_with(codex, tmp_path)
+    target = next(ri for ri in plan.keep if s.records[ri].call_side == "result")
+    emptied = dataclasses.replace(plan, rewrites={**plan.rewrites, target: {0: ""}})
+    new_id = codex.new_session_id()
+    fork = codex.write_fork(s, emptied, new_id, tmp_path / "emptied")
+    assert codex.validate(fork, new_id) == []
+    assert any(
+        o["payload"].get("call_id") in s.records[target].call_ids
+        for o in read_lines(fork)
+        if o["type"] == "response_item" and o["payload"].get("type", "").endswith("_output")
+    )
