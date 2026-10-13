@@ -26,6 +26,7 @@ __all__ = [
     "fixture_lines",
     "fork_with",
     "install_claude",
+    "install_codex",
     "read_lines",
     "write_lines",
 ]
@@ -92,3 +93,18 @@ def fork_with(
     plan = plan_fork(s, region, kept_where(region, keep), date="2026-10-13")
     new_id = adapter.new_session_id()
     return s, plan, new_id, adapter.write_fork(s, plan, new_id, tmp_path / "out")
+
+
+def install_codex(
+    home: Path,
+    *,
+    lines: list[dict[str, Any]] | None = None,
+    session_id: str | None = None,
+    stamp: str = "2026-10-13T00-00-00",
+) -> Path:
+    body = lines if lines is not None else fixture_lines(CODEX_FIXTURE)
+    old = str(body[0]["payload"]["id"])
+    sid = session_id or old
+    body = [json.loads(json.dumps(o).replace(old, sid)) for o in body]
+    day = stamp[:10].replace("-", "/")
+    return write_lines(home / "sessions" / day / f"rollout-{stamp}-{sid}.jsonl", body)
