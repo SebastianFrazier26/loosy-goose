@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from session_builders import kept_where
 from session_fixtures import (
     CODE_WORDS,
     CODEX_FIXTURE,
@@ -29,6 +30,8 @@ from loosy_goose.sessions.plan import (
     Trigger,
     exchange_starts,
     find_trigger,
+    plan_fork,
+    split_region,
     unit_ids,
 )
 
@@ -388,3 +391,26 @@ def test_an_output_rewritten_to_empty_keeps_its_call_paired(tmp_path: Path) -> N
         for o in read_lines(fork)
         if o["type"] == "response_item" and o["payload"].get("type", "").endswith("_output")
     )
+
+
+def test_a_tail_starting_mid_turn_keeps_that_turns_start(tmp_path: Path) -> None:
+    s = _read()
+    trigger = find_trigger(s, DEFAULT_TRIGGERS["codex"])
+    assert trigger.position is not None
+    starts = exchange_starts(s)
+    last = s.records[s.live[trigger.position - 1]].exchange
+    short = sum(s.tokens(ri) for ri in s.live[starts[last] : trigger.position])
+    region = split_region(s, trigger, protect_tail_tokens=short + 1)
+    cut = s.records[s.live[region.tail_from]].exchange
+    assert cut == last - 1 and region.tail_from > starts[cut]
+    plan = plan_fork(s, region, kept_where(region, lambda g: "ALPHA" in g.text), date="2026-10-13")
+    new_id = codex.new_session_id()
+    fork = codex.write_fork(s, plan, new_id, tmp_path / "out")
+    assert codex.validate(fork, new_id) == []
+    turn = s.records[s.live[starts[cut]]].raw["payload"]["turn_id"]
+    started = [
+        o["payload"].get("turn_id")
+        for o in read_lines(fork)
+        if o["type"] == "event_msg" and o["payload"].get("type") == "task_started"
+    ]
+    assert turn in started

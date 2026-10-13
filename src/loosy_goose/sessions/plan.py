@@ -364,7 +364,10 @@ def plan_fork(
             continue
         rewrites.setdefault(ri, {})[part] = _rebuild(group)
 
-    exchanges = {records[ri].exchange for ri in chosen}
+    # The tail too: it can start mid-exchange, and that exchange's meta records before it (Codex's
+    # task_started) must go where its task_complete in the tail goes.
+    tail_records = session.live[region.tail_from : region.end]
+    exchanges = {records[ri].exchange for ri in [*chosen, *tail_records]}
     replies = {r for ri in chosen if (r := records[ri].reply) is not None}
     keep: list[int] = []
     warnings: list[str] = []
