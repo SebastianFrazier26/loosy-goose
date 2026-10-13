@@ -315,6 +315,29 @@ def _tokens_after(rec: SessionRecord, rewrite: dict[int, str]) -> int:
     return untouched + sum(count_tokens(text) for text in rewrite.values())
 
 
+def _incomplete_calls(session: Session, end: int) -> set[int]:
+    """Calls with no output anywhere in the session (an interrupted call: Codex tolerates one and
+    patches it as aborted on load), plus their reply's thinking if nothing else of it is left.
+
+    Dropped like any incomplete unit, so every call in a fork stays answered."""
+    records, history = session.records, session.live[:end]
+    answered = {
+        c for ri in session.live if records[ri].call_side == "result" for c in records[ri].call_ids
+    }
+    out = {
+        ri
+        for ri in history
+        if records[ri].call_side == "call" and not any(c in answered for c in records[ri].call_ids)
+    }
+    replies = {r for ri in out if (r := records[ri].reply) is not None}
+    for reply in replies:
+        rest = [ri for ri in history if records[ri].reply == reply and ri not in out]
+        # A reply left with only its thinking would be a thinking-only assistant turn.
+        if all(records[ri].thinking for ri in rest):
+            out.update(rest)
+    return out
+
+
 def plan_fork(
     session: Session,
     region: Region,
@@ -350,6 +373,8 @@ def plan_fork(
         if grown <= drop:
             break
         drop |= grown
+    incomplete = _incomplete_calls(session, region.end)
+    drop |= incomplete
 
     selected = {ri for (ri, _), group in pieces.items() if any(k for _, k, _ in group)}
     kept_units = {units[ri] for ri in selected}
@@ -370,7 +395,12 @@ def plan_fork(
     exchanges = {records[ri].exchange for ri in [*chosen, *tail_records]}
     replies = {r for ri in chosen if (r := records[ri].reply) is not None}
     keep: list[int] = []
-    warnings: list[str] = []
+    warnings: list[str] = [
+        f"call {', '.join(records[ri].call_ids)} at line {records[ri].line + 1} never got "
+        "output (interrupted); dropped from the fork, since a fork's calls must all be answered"
+        for ri in session.live[region.tail_from : region.end]
+        if ri in incomplete and records[ri].call_side == "call"
+    ]
     for pos, ri in enumerate(session.live[: region.end]):
         rec = records[ri]
         if rec.category == "side" or ri in drop:

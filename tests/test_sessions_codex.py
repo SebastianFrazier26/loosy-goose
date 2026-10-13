@@ -414,3 +414,22 @@ def test_a_tail_starting_mid_turn_keeps_that_turns_start(tmp_path: Path) -> None
         if o["type"] == "event_msg" and o["payload"].get("type") == "task_started"
     ]
     assert turn in started
+
+
+def test_an_interrupted_call_with_no_output_is_dropped_and_the_fork_validates(
+    tmp_path: Path,
+) -> None:
+    lines = fixture_lines(CODEX_FIXTURE)
+    call = next(o for o in lines if o["payload"].get("type") == "custom_tool_call")
+    orphan = json.loads(json.dumps(call))
+    orphan["payload"]["call_id"] = "call_interrupted"
+    lines.insert(lines.index(call), orphan)
+    for protect in (0, 10_000):
+        s = codex.read(write_lines(tmp_path / "src.jsonl", lines))
+        region = split_region(s, find_trigger(s, DEFAULT_TRIGGERS["codex"]), protect)
+        plan = plan_fork(s, region, kept_where(region, lambda g: True), date="2026-10-13")
+        new_id = codex.new_session_id()
+        fork = codex.write_fork(s, plan, new_id, tmp_path / f"out{protect}")
+        assert codex.validate(fork, new_id) == []
+        text = fork.read_text(encoding="utf-8")
+        assert "call_interrupted" not in text and call["payload"]["call_id"] in text

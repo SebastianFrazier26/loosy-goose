@@ -393,3 +393,28 @@ def test_a_straddling_reply_in_the_compressible_stretch_drops_whole_units() -> N
     (plan,) = _straddling_plans(session, (0,))
     assert plan.tail_from == 7
     assert plan.keep == (0, 1, 2, 7, 8)
+
+
+def test_a_call_that_never_got_output_is_dropped_as_an_incomplete_unit() -> None:
+    session = build(
+        ("prompt", "a"),  # 0
+        ("think:r1", "pondering"),  # 1
+        ("call:c1", '{"command": "sleep 99"}'),  # 2: interrupted, no output anywhere
+        ("prompt", "b"),  # 3
+        ("call:c2", '{"command": "true"}'),  # 4
+        ("result:c2", "ok"),  # 5
+        ("call:c3", '{"command": "sleep 99"}'),  # 6: interrupted inside the tail
+        ("prompt", TRIGGER),  # 7
+    )
+    session.records[2].reply = "r1"  # the builder gives calls no reply id
+    for protect in (0, 10_000):
+        region = split_region(
+            session, find_trigger(session, DEFAULT_TRIGGERS["claude"]), protect_tail_tokens=protect
+        )
+        plan = plan_fork(
+            session, region, kept_where(region, lambda s: True), date="d", keep_thinking=True
+        )
+        assert not {1, 2, 6} & set(plan.keep)
+        assert {0, 3, 4, 5} <= set(plan.keep)
+        assert any("c3" in w and "never got output" in w for w in plan.warnings)
+        assert any("c1" in w for w in plan.warnings) == (protect > 0)
