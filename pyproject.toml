@@ -52,6 +52,8 @@ explicit = true
 
 [tool.ruff]
 line-length = 100
+# Plan and spec docs embed Python snippets that ruff 0.16 would otherwise format-check.
+extend-exclude = ["docs/superpowers"]
 target-version = "py312"
 
 [tool.ruff.lint]
