@@ -8,6 +8,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 from session_recorder import CODE_WORDS, FIXTURE_CWD, FIXTURE_HOME, SENTINEL
 
 if TYPE_CHECKING:
@@ -23,11 +24,13 @@ __all__ = [
     "FIXTURE_CWD",
     "FIXTURE_HOME",
     "SENTINEL",
+    "fake_embeddings",
     "fixture_lines",
     "fork_with",
     "install_claude",
     "install_codex",
     "read_lines",
+    "without_trigger",
     "write_lines",
 ]
 
@@ -108,3 +111,23 @@ def install_codex(
     body = [json.loads(json.dumps(o).replace(old, sid)) for o in body]
     day = stamp[:10].replace("-", "/")
     return write_lines(home / "sessions" / day / f"rollout-{stamp}-{sid}.jsonl", body)
+
+
+_EMBED_DIM = 3
+
+
+def fake_embeddings(texts: list[str], model_name: str) -> np.ndarray:
+    # As tests/test_cli.py: a small dimension keeps leverage scores well separated.
+    rng = np.random.default_rng(11)
+    x = rng.normal(size=(len(texts), _EMBED_DIM))
+    return x / np.linalg.norm(x, axis=1, keepdims=True)
+
+
+def without_trigger(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The Claude fixture cut just before its /loosy turn."""
+    cut = next(
+        i
+        for i, o in enumerate(lines)
+        if o.get("type") == "user" and "<command-name>/loosy</command-name>" in json.dumps(o)
+    )
+    return lines[:cut]
