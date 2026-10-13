@@ -171,10 +171,10 @@ def test_verify_runs_a_throwaway_copy_and_deletes_it(tmp_path: Path) -> None:
     source = install_claude(tmp_path / "claude")
     calls: list[list[str]] = []
 
-    def runner(argv: list[str], cwd: Path) -> str:
+    def runner(argv: list[str], cwd: Path) -> tuple[int, str]:
         calls.append(argv)
         assert (source.parent / f"{argv[-1]}.jsonl").exists()
-        return "OK\n"
+        return 0, " OK\n"
 
     result = handoff(_opts(tmp_path, verify=True), now=NOW, runner=runner)
     assert result.verified is True
@@ -186,7 +186,20 @@ def test_verify_runs_a_throwaway_copy_and_deletes_it(tmp_path: Path) -> None:
 def test_a_failed_live_check_deletes_the_fork(tmp_path: Path) -> None:
     source = install_claude(tmp_path / "claude")
     with pytest.raises(HandoffError, match="live check failed"):
-        handoff(_opts(tmp_path, verify=True), now=NOW, runner=lambda argv, cwd: "nope")
+        handoff(_opts(tmp_path, verify=True), now=NOW, runner=lambda argv, cwd: (0, "nope"))
+    assert _names(source.parent) == [source.name]
+
+
+@pytest.mark.parametrize(
+    ("code", "reply"),
+    [(0, "TOKEN"), (0, "BOOK"), (0, "Error: LOOKUP failed"), (0, "ok"), (1, "OK"), (2, "OK\n")],
+)
+def test_only_exit_zero_and_exactly_ok_pass_the_live_check(
+    tmp_path: Path, code: int, reply: str
+) -> None:
+    source = install_claude(tmp_path / "claude")
+    with pytest.raises(HandoffError, match="live check failed"):
+        handoff(_opts(tmp_path, verify=True), now=NOW, runner=lambda argv, cwd: (code, reply))
     assert _names(source.parent) == [source.name]
 
 
@@ -307,7 +320,7 @@ def test_any_failure_after_staging_leaves_no_fork_behind(
 def test_a_runner_crash_during_verify_deletes_the_fork_and_the_copy(tmp_path: Path) -> None:
     source = install_claude(tmp_path / "claude")
 
-    def runner(argv: list[str], cwd: Path) -> str:
+    def runner(argv: list[str], cwd: Path) -> tuple[int, str]:
         raise RuntimeError("runner crashed")
 
     with pytest.raises(RuntimeError, match="runner crashed"):

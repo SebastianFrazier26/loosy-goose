@@ -54,7 +54,8 @@ CANDIDATES_CHECKED = 3
 CONCURRENT_WINDOW_S = 600
 VERIFY_TIMEOUT_S = 300
 
-Runner = Callable[[list[str], Path], str]
+# (exit code, stdout).
+Runner = Callable[[list[str], Path], tuple[int, str]]
 
 
 class HandoffError(Exception):
@@ -176,14 +177,14 @@ def _total(session: Session) -> int:
     return sum(session.tokens(ri) for ri in session.live)
 
 
-def _run(argv: list[str], cwd: Path) -> str:
+def _run(argv: list[str], cwd: Path) -> tuple[int, str]:
     try:
         done = subprocess.run(
             argv, cwd=cwd, capture_output=True, text=True, timeout=VERIFY_TIMEOUT_S, check=False
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise HandoffError(f"the live check could not run `{argv[0]}`: {exc}") from exc
-    return done.stdout
+    return done.returncode, done.stdout
 
 
 def _place(staged: Path, dest: Path) -> None:
@@ -222,7 +223,9 @@ def _verify(
     copy = p.adapter.fork_destination(p.source, check_id, home, stamp)
     _place(staged, copy)
     try:
-        return "OK" in runner(p.adapter.verify_command(check_id), cwd)
+        code, reply = runner(p.adapter.verify_command(check_id), cwd)
+        # Exact, not a substring: an error message containing "TOKEN" or "BOOK" is no answer.
+        return code == 0 and reply.strip() == "OK"
     finally:
         copy.unlink(missing_ok=True)
 
