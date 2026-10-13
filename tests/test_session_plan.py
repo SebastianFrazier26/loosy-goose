@@ -324,3 +324,24 @@ def test_a_unit_straddling_the_trigger_is_dropped_whole() -> None:
     )
     plan = _plan(lambda seg: True, session=result_first)[2]
     assert plan.keep == (0,)
+
+
+def test_siblings_of_a_straddling_call_are_dropped_with_it() -> None:
+    session = build(
+        ("prompt", "a"),  # 0
+        ("reply", "earlier answer"),  # 1: an unrelated reply
+        ("prompt", "b"),  # 2
+        ("think:r1", "pondering"),  # 3
+        ("reply:r1", "running it"),  # 4
+        ("call:c1", '{"command": "true"}'),  # 5: its result lands after the trigger
+        ("prompt", TRIGGER),  # 6
+        ("result:c1", "late output"),  # 7
+    )
+    session.records[5].reply = "r1"  # the builder gives calls no reply id
+    for protect in (0, 10_000):
+        region = split_region(
+            session, find_trigger(session, DEFAULT_TRIGGERS["claude"]), protect_tail_tokens=protect
+        )
+        plan = plan_fork(session, region, kept_where(region, lambda s: True), date="2026-10-13")
+        assert not {3, 4, 5, 7} & set(plan.keep)
+        assert {0, 1, 2} <= set(plan.keep)

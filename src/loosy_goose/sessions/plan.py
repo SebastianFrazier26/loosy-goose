@@ -335,14 +335,20 @@ def plan_fork(
     # The fork ends at `end`; a unit with a record at or after it (parallel calls straddling the
     # trigger) cannot be kept whole, so its in-region half is dropped.
     split = {units[ri] for ri in session.live[region.end :]}
+    # Its reply's other records go too: a fork must not end on a thinking-only assistant turn.
+    orphaned = {
+        r for ri in session.live[: region.end] if units[ri] in split and (r := records[ri].reply)
+    }
+
+    def dropped(ri: int) -> bool:
+        return units[ri] in split or records[ri].reply in orphaned
+
     selected = {ri for (ri, _), group in pieces.items() if any(k for _, k, _ in group)}
     kept_units = {units[ri] for ri in selected}
     # The whole stretch, not just the turns: a result with no text (an empty output, or one an
     # earlier handoff trimmed to a placeholder) is no turn, yet its kept call needs it.
     chosen = {
-        ri
-        for ri in session.live[: region.tail_from]
-        if units[ri] in kept_units and units[ri] not in split
+        ri for ri in session.live[: region.tail_from] if units[ri] in kept_units and not dropped(ri)
     }
     rewrites: dict[int, dict[int, str]] = {}
     for (ri, part), group in pieces.items():
@@ -356,7 +362,7 @@ def plan_fork(
     warnings: list[str] = []
     for pos, ri in enumerate(session.live[: region.end]):
         rec = records[ri]
-        if rec.category == "side" or units[ri] in split:
+        if rec.category == "side" or dropped(ri):
             continue
         if rec.category == "unknown":
             where = f"{rec.kind!r} record at line {rec.line + 1}"
