@@ -8,7 +8,7 @@ from typing import Any
 
 from loosy_goose.segment import Segment, segment
 from loosy_goose.sessions.model import Session, SessionRecord, Tool, tagged, text_blocks
-from loosy_goose.sessions.plan import Region
+from loosy_goose.sessions.plan import Region, strip_part
 
 
 def words(n: int, word: str = "alpha") -> str:
@@ -21,8 +21,10 @@ def build(
     open_exchange: int | None = None,
     loose: tuple[str, ...] = (),
 ) -> Session:
-    """Shapes: prompt, reply[:reply-id], think[:reply-id], call:<call-id>, handoff:<call-id>,
-    result:<call-id>, summary, meta, side, unknown."""
+    """Shapes: prompt[:unit-id], reply[:reply-id], think[:reply-id], call:<call-id>,
+    handoff:<call-id>, result:<call-id>, summary, marker, echo:<unit-id> (a meta record tied
+    to the prompt carrying the same unit id, as Codex's `user_message` event), meta, side,
+    unknown."""
     records: list[SessionRecord] = []
     exchange = 0
     for n, (shape, text) in enumerate(specs):
@@ -51,6 +53,21 @@ def build(
 
 
 def _record(n: int, head: str, arg: str, text: str) -> SessionRecord:
+    if head == "marker":
+        return SessionRecord(n, {"n": n}, "user:loosy-marker", "side", marker=text)
+    if head == "echo":
+        return SessionRecord(n, {"n": n}, "event_msg:user_message", "meta", call_ids=(arg,))
+    cleaned: dict[int, str] = {}
+    # As the adapters: tool input and thinking are never rewritten, so never stripped.
+    body = text if head in ("call", "handoff", "think") else strip_part(text, 0, cleaned)
+    rec = _shaped(n, head, arg, body)
+    rec.cleaned = cleaned
+    if head == "prompt" and arg:
+        rec.call_ids = (arg,)
+    return rec
+
+
+def _shaped(n: int, head: str, arg: str, text: str) -> SessionRecord:
     raw: dict[str, Any] = {"n": n}
     if head == "prompt":
         return SessionRecord(
