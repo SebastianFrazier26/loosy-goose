@@ -2,7 +2,8 @@
 
 Undocumented, and the format changes between releases. History is rebuilt by walking
 `parentUuid` back from the leaf, not by line order. A gap that is not re-linked loads without
-error but silently truncates history (probe, 2026-10-12, Claude Code 2.1.296).
+error but silently truncates history (probe, 2026-10-12, Claude Code 2.1.296). Parallel tool
+calls are the exception: their records branch, and the walk alone misses some (see `_splice`).
 """
 
 from __future__ import annotations
@@ -265,7 +266,63 @@ def _chain(records: list[SessionRecord], by_uuid: dict[str, int], warnings: list
                 "history before it is not loaded"
             )
     chain.reverse()
-    return chain
+    return _splice(records, chain)
+
+
+def _splice(records: list[SessionRecord], chain: list[int]) -> list[int]:
+    """`chain` with the parallel tool calls and results that hang off it put back.
+
+    Claude Code writes one reply's parallel calls as a parentUuid fork: a sibling call record
+    (same message id) and its result, or just a call's result, can sit on a side branch parented
+    on a record of that reply; both shapes were recorded live (Claude Code 2.1.296, 2026-10-13).
+    The model saw them, so they are history. The writer relinks them into one line, which a
+    resumed fork loads with every result (live check, same date)."""
+    on_chain = set(chain)
+    uuid_of = {i: str(records[i].raw.get("uuid")) for i in range(len(records))}
+    reply_uuids: dict[str, set[str]] = {}
+    for i in chain:
+        if (reply := records[i].reply) is not None:
+            reply_uuids.setdefault(reply, set()).add(uuid_of[i])
+
+    def off_chain(j: int) -> bool:
+        rec = records[j]
+        return j not in on_chain and "uuid" in rec.raw and not rec.raw.get("isSidechain")
+
+    sibling_calls: dict[str, list[int]] = {}
+    for j, rec in enumerate(records):
+        if not off_chain(j) or rec.call_side != "call" or rec.reply not in reply_uuids:
+            continue
+        siblings = reply_uuids[str(rec.reply)]
+        if str(rec.raw.get("parentUuid")) in siblings:
+            sibling_calls.setdefault(str(rec.reply), []).append(j)
+            siblings.add(uuid_of[j])
+    call_reply: dict[str, str] = {}
+    issuer: dict[str, str] = {}
+    for i in [*chain, *(j for js in sibling_calls.values() for j in js)]:
+        rec = records[i]
+        if rec.call_side == "call" and rec.reply is not None:
+            for cid in rec.call_ids:
+                call_reply[cid], issuer[cid] = rec.reply, uuid_of[i]
+    answered = {c for i in chain if records[i].call_side == "result" for c in records[i].call_ids}
+    side_results: dict[str, list[int]] = {}
+    for j, rec in enumerate(records):
+        if not off_chain(j) or rec.call_side != "result":
+            continue
+        ids = [c for c in rec.call_ids if c in call_reply and c not in answered]
+        if ids and all(str(rec.raw.get("parentUuid")) == issuer[c] for c in ids):
+            side_results.setdefault(call_reply[ids[0]], []).append(j)
+            answered.update(ids)
+    if not sibling_calls and not side_results:
+        return chain
+    last_of = {reply: pos for pos, i in enumerate(chain) if (reply := records[i].reply)}
+    out: list[int] = []
+    for pos, i in enumerate(chain):
+        out.append(i)
+        reply = records[i].reply
+        # After the reply's last record: the results answer all its calls, so they follow them.
+        if reply is not None and last_of[reply] == pos:
+            out += sibling_calls.get(reply, []) + side_results.get(reply, [])
+    return out
 
 
 def _mark_exchanges(records: list[SessionRecord], live: list[int]) -> None:

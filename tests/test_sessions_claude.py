@@ -1,3 +1,4 @@
+import copy
 import dataclasses
 import json
 import os
@@ -394,3 +395,50 @@ def test_destination_and_commands() -> None:
         "abc",
     ]
     assert uuid.UUID(claude.new_session_id()).version == 4
+
+
+def _parallel_lines(on_chain: str) -> list[dict[str, Any]]:
+    """The fixture's GAMMA echo as two parallel calls of one reply, A then B (B parented on A),
+    with the result named by `on_chain` on the walked path and the other result on a side
+    branch parented on its own call, as Claude Code writes them."""
+    lines = fixture_lines(CLAUDE_FIXTURE)
+    call_a, result_a = _call_and_result(lines)
+    call_b = copy.deepcopy(call_a)
+    call_b["uuid"], call_b["parentUuid"] = str(uuid.uuid4()), call_a["uuid"]
+    call_b["message"]["content"][0]["id"] = "toolu_parallel_b"
+    call_b["message"]["content"][0]["input"] = {"command": "echo EPSILON"}
+    result_b = copy.deepcopy(result_a)
+    result_b["uuid"], result_b["parentUuid"] = str(uuid.uuid4()), call_b["uuid"]
+    result_b["sourceToolAssistantUUID"] = call_b["uuid"]
+    result_b["message"]["content"][0].update(tool_use_id="toolu_parallel_b", content="EPSILON")
+    child = next(o for o in lines if o.get("parentUuid") == result_a["uuid"])
+    at = lines.index(call_a) + 1
+    if on_chain == "B":
+        child["parentUuid"] = result_b["uuid"]
+        lines.remove(result_a)
+        lines[at:at] = [call_b, result_a, result_b]
+    else:
+        lines.remove(result_a)
+        lines[at:at] = [call_b, result_b, result_a]
+    return lines
+
+
+@pytest.mark.parametrize("on_chain", ["A", "B"])
+def test_parallel_results_off_the_walked_path_are_spliced_in(tmp_path: Path, on_chain: str) -> None:
+    lines = _parallel_lines(on_chain)
+    s = claude.read(write_lines(tmp_path / "parallel.jsonl", lines))
+    path = [s.records[ri].raw for ri in s.live]
+    kinds = [
+        (o["type"], o["message"]["content"][0].get("type"))
+        for o in path
+        if o.get("type") in ("user", "assistant") and isinstance(o["message"]["content"], list)
+    ]
+    start = kinds.index(("assistant", "tool_use"))
+    assert (
+        kinds[start : start + 4] == [("assistant", "tool_use")] * 2 + [("user", "tool_result")] * 2
+    )
+    assert claude._tool_pairs_ordered(path)
+    _, _, new_id, fork = fork_with(claude, tmp_path, lines)
+    assert claude.validate(fork, new_id) == []
+    text = fork.read_text(encoding="utf-8")
+    assert "GAMMA" in text and "EPSILON" in text
