@@ -17,9 +17,10 @@ Read [docs/DESIGN.md](docs/DESIGN.md) before changing the algorithm and
 - `uv run loosy-goose compress <transcript> [--keep 0.5 | --level light|medium|heavy | --target-tokens N] [--no-novelty] [--band] [--paths --min-mentions 2] [--output out.jsonl]` — CLI: supersede → leverage → per-token novelty selection at alpha 0.5 (default; `--no-novelty` for a plain budget fill; `--band` / `--paths` fall back to plain leverage); rate defaults to `--level medium` (0.33); header reports `atom_recall_final` as information only
 
 The `embed` extra pulls torch + sentence-transformers for the embedding-SVD work, and the CLI
-cannot score without it; CI installs it. torch resolves from PyPI, so Linux x86_64/aarch64 gets the
-CUDA wheels (~3 GB) while macOS/Windows get CPU builds; the code itself runs CPU-only. Do not unpin Python 3.12 — 3.13+
-lacks torch wheels.
+cannot score without it; CI installs it. `[tool.uv.sources]` pins torch to the PyTorch CPU index on Linux, so
+`uv sync --extra embed` avoids the ~3 GB of nvidia-*/triton CUDA wheels; macOS/Windows still resolve from PyPI. The code is
+CPU-only (`embed.py` hardcodes `device="cpu"`). uv sources are not in wheel metadata, so pip installs of the published package
+still get PyPI torch (CUDA on Linux). Do not unpin Python 3.12 — 3.13+ lacks torch wheels.
 
 ## Layout
 
