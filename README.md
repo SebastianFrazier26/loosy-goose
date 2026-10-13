@@ -165,6 +165,7 @@ a marker, and you resume it in place of built-in `/compact`. The original sessio
 modified. Install, registration and the `/loosy` / `$loosy` commands:
 [integrations/README.md](integrations/README.md). The same server's `compress` tool returns
 compressed turns for any transcript and writes nothing.
+Releases: each `v*` tag publishes a GitHub Release with the wheel, the sdist and the integrations files; its notes carry the install command.
 
 ## Continuing on another machine
 
