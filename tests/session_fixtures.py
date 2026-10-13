@@ -17,6 +17,7 @@ __all__ = [
     "FIXTURE_HOME",
     "SENTINEL",
     "fixture_lines",
+    "install_claude",
     "write_lines",
 ]
 
@@ -37,3 +38,22 @@ def write_lines(path: Path, lines: list[dict[str, Any]]) -> Path:
     )
     path.write_text(body, encoding="utf-8", newline="\n")
     return path
+
+
+def install_claude(
+    home: Path,
+    *,
+    lines: list[dict[str, Any]] | None = None,
+    session_id: str | None = None,
+    project_dir: str | None = None,
+) -> Path:
+    from loosy_goose.sessions import claude
+
+    body = [dict(o) for o in (lines if lines is not None else fixture_lines(CLAUDE_FIXTURE))]
+    sid = session_id or next(str(o["sessionId"]) for o in body if "sessionId" in o)
+    for obj in body:
+        for key in ("sessionId", "session_id"):
+            if key in obj:
+                obj[key] = sid
+    folder = project_dir or claude.project_slug(str(Path(FIXTURE_CWD)))
+    return write_lines(home / "projects" / folder / f"{sid}.jsonl", body)
