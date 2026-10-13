@@ -15,38 +15,36 @@ without building it:
 The third effect — whether replacing paths with placeholders makes the embeddings better or
 worse at ranking segments — cannot be measured here and needs the sweep.
 
+Paths are found with `paths.find_paths` over `scannable` text, exactly as `paths.build_table`
+finds them, so the survey measures what the shipped table would actually hold.
+
+Public corpora only (trace-commons, SWE-Gym), so anyone can regenerate the output after
+`fetch_public.py`. Figures in docs/PHASE2.md dated before 2026-09-29 also counted local sessions
+and used the v1 path patterns; this script does not reproduce them.
+
 Usage: uv run python experiments/survey_paths.py [--public-sample 8] [--swe-gym-sample 5]
-Writes experiments/output/survey/path_mass.txt. Example paths are printed for PUBLIC transcripts
-only; local sessions contribute counts alone.
+Writes experiments/output/survey/path_mass.txt.
 """
 
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from experiments.exp_d_curves import _iter_sources  # noqa: E402
+from experiments.exp_d_curves import iter_swe_gym, iter_trace_commons  # noqa: E402
 from loosy_goose.metrics import final_state_atoms  # noqa: E402
-from loosy_goose.segment import segment  # noqa: E402
+from loosy_goose.paths import find_paths  # noqa: E402
+from loosy_goose.segment import scannable, segment  # noqa: E402
 from loosy_goose.tokens import count_tokens  # noqa: E402
+from loosy_goose.transcript import Transcript  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "experiments" / "output" / "survey"
-
-# Mirrors the two path-shaped patterns in segment._ATOM_PATTERNS. Kept as separate literals
-# rather than imported by index: the survey has to be readable on its own, and if the substituter
-# ends up using a different definition of "path" than atom extraction does, the metric split
-# stops meaning what it says — a difference worth seeing rather than hiding behind an import.
-_PATH_SLASH = re.compile(r"(?<![\w.])(?:[A-Za-z]:)?(?:[\w.-]+[\\/])+[\w.-]+")
-_PATH_BARE = re.compile(
-    r"(?<![\w./\\])[\w-]+\.(?:py|js|ts|tsx|jsx|json|md|txt|yml|yaml|toml|cs|rs|go|"
-    r"java|sql|sh|ps1|csv|ipynb|html|css|xml|cfg|ini|lock|pdf|png|jpg|jsonl)\b"
-)
 
 # Candidate placeholder spellings. The winner has to be cheap, absent from real text, and safe
 # inside a JSON string (tool_use payloads are parsed as JSON downstream), which rules out
@@ -54,18 +52,11 @@ _PATH_BARE = re.compile(
 PLACEHOLDERS: tuple[str, ...] = ("[P12]", "<P12>", "{P12}", "«P12»", "P12", "@P12")
 
 
-def find_paths(text: str) -> list[str]:
-    """Every path-shaped run in the text, in order, longest-pattern-first so a slash path is not
-    double-counted by the bare-filename pattern matching its last component."""
-    spans: list[tuple[int, int, str]] = []
-    taken: list[tuple[int, int]] = []
-    for pat in (_PATH_SLASH, _PATH_BARE):
-        for m in pat.finditer(text):
-            if any(a < m.end() and m.start() < b for a, b in taken):
-                continue
-            spans.append((m.start(), m.end(), m.group(0)))
-            taken.append((m.start(), m.end()))
-    return [s for _, _, s in sorted(spans)]
+def _iter_public(public_sample: int, swe_gym_sample: int) -> Iterator[tuple[str, Transcript]]:
+    for label, _, t in iter_trace_commons(public_sample):
+        yield label, t
+    for label, _, t in iter_swe_gym(swe_gym_sample):
+        yield label, t
 
 
 def _placeholder_cost() -> dict[str, int]:
@@ -75,17 +66,19 @@ def _placeholder_cost() -> dict[str, int]:
 def survey(public_sample: int, swe_gym_sample: int) -> dict[str, Any]:
     per_transcript: list[dict[str, Any]] = []
     samples: list[str] = []
-    for label, public, t in _iter_sources(public_sample, swe_gym_sample):
+    for label, t in _iter_public(public_sample, swe_gym_sample):
         segs = segment(t)
         counts: Counter[str] = Counter()
         for s in segs:
-            counts.update(find_paths(s.text))
+            # Decoded as `paths.build_table` decodes it: in raw tool_use JSON an escaped newline
+            # reads as the path `n\n`, which inflated mentions by a third on trace-commons.
+            counts.update(find_paths(scannable(s.text)))
         total_tokens = sum(count_tokens(s.text) for s in segs)
         path_tokens = {p: count_tokens(p) for p in counts}
         occ_tokens = sum(path_tokens[p] * n for p, n in counts.items())
         all_atoms = {a for s in segs for a in s.atoms}
         final_atoms = final_state_atoms(segs)
-        path_atoms = {a for a in all_atoms if _PATH_SLASH.fullmatch(a) or _PATH_BARE.fullmatch(a)}
+        path_atoms = {a for a in all_atoms if find_paths(a) == [a]}
         per_transcript.append(
             {
                 "label": label,
@@ -106,7 +99,7 @@ def survey(public_sample: int, swe_gym_sample: int) -> dict[str, Any]:
                 "max_repeat": max(counts.values(), default=0),
             }
         )
-        if public and len(samples) < 6:
+        if len(samples) < 6:
             top = counts.most_common(1)
             if top:
                 samples.append(f"[{label}] x{top[0][1]:<4} {top[0][0][:80]}")
@@ -192,7 +185,7 @@ def report(data: dict[str, Any]) -> list[str]:
         )
 
     if data["samples"]:
-        out += ["", "== most-repeated path, public transcripts only =="]
+        out += ["", "== most-repeated path, first six transcripts =="]
         out += [f"  {s}" for s in data["samples"]]
     return out
 

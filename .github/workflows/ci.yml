@@ -15,10 +15,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          # Explicit: setup-uv's "auto" skips the cache on tag and release events.
+          enable-cache: true
       - run: uv python install 3.12
-      # TODO(ci): the `embed` extra (sentence-transformers/torch) is skipped until the
-      # embedding path exists; add `--extra embed` on a separate job then.
-      - run: uv sync --dev
+      - run: uv sync --dev --extra embed
+      # uv's cache does not cover models that sentence-transformers fetches into the HF hub cache.
+      - id: hf
+        shell: pwsh
+        run: |
+          $dir = if ($env:HF_HOME) { $env:HF_HOME } else { Join-Path $HOME '.cache/huggingface' }
+          "dir=$dir" >> $env:GITHUB_OUTPUT
+      - uses: actions/cache@v6.1.0
+        with:
+          path: ${{ steps.hf.outputs.dir }}
+          key: hf-${{ runner.os }}-bge-small-en-v1.5-all-MiniLM-L6-v2
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy src

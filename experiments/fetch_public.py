@@ -20,6 +20,7 @@ class Source:
     key: str
     repo_id: str
     license: str
+    revision: str
     allow_patterns: tuple[str, ...]
 
 
@@ -28,18 +29,21 @@ SOURCES: tuple[Source, ...] = (
         "trace-commons",
         "trace-commons/agent-traces",
         "CC-BY-4.0",
+        "112ebd4d03ce852b00e935d523107c3d0c9a65bf",
         ("sessions/claude_code/*", "README.md", "LICENSE*"),
     ),
     Source(
         "swe-gym",
         "SWE-Gym/OpenHands-SFT-Trajectories",
         "MIT",
+        "4aaa5a4a4b5861f4799d2336908760c190ac3b17",
         ("*.parquet", "README.md"),
     ),
     Source(
         "oasst2",
         "OpenAssistant/oasst2",
         "Apache-2.0",
+        "179dd21fc55192153d94adb0e0ce8f69e222bf75",
         ("data/validation-*.parquet", "README.md"),
     ),
 )
@@ -51,10 +55,11 @@ def fetch(src: Source) -> str:
     local = snapshot_download(
         repo_id=src.repo_id,
         repo_type="dataset",
+        revision=src.revision,
         local_dir=str(target),
         allow_patterns=list(src.allow_patterns),
     )
-    info = HfApi().dataset_info(src.repo_id)
+    info = HfApi().dataset_info(src.repo_id, revision=src.revision)
     sha = info.sha or "unknown"
     print(f"{src.key}: {src.repo_id} @ {sha} -> {local}")
     return sha

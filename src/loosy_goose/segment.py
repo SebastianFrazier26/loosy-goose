@@ -21,7 +21,19 @@ SegmentKind = Literal["prose", "code", "tool_result", "tool_use", "thinking"]
 #    and `env` is gone. Landed in two passes — the path requirement first scoped by extension
 #    length, then narrowed to the seven, and double extensions exempted from the chain rule — but
 #    nothing was swept between them, so the whole rule set ships under this one stamp.
-ATOMS_VERSION = 4
+# 5: no extractor change — line-number prefixes are stripped before `looks_like_code_dump`, so a
+#    numbered file read routes on its body and lands in `code` instead of `tool_result`. That moves
+#    segment kinds and texts, hence `segments_digest`, so every stored record has to go anyway.
+# 6: no extractor change — prose and thinking blocks are segmented as whole paragraphs (bound 600
+#    to 12,000 characters; tool_result keeps 600). That moves segment texts, hence
+#    `segments_digest`, so every stored record has to go.
+# 7: neither path pattern may start right after `-` (the drive branch excepted). Removes a
+#    quadratic re-scan, and drops fragment atoms such as the `set.js` tail of a hyphenated name.
+# 8 (2026-09-29): no extractor change — a rewritten segment's atoms are now a subset of its
+#    original's, with the rewrite's own scaffolding masked first (code.TRANSFORMS_VERSION 5,
+#    paths.PATHS_VERSION 5, then 6). Those two stamps protect the affected records; this bump is
+#    the safe extra, free because nothing has been recorded at 7.
+ATOMS_VERSION = 8
 
 # File extensions the bare-filename pattern recognises, shared verbatim with `paths.py` so the
 # path table and the recall metric agree on what a filename is. An allowlist rather than a general
@@ -62,9 +74,16 @@ _ATOM_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"https?://[^\s)\]>\"']+"),
     # Two branches, not one optional drive prefix: the single-branch form required a word
     # character before its first separator, so `C:\repo\src\budget.py` matched only from `repo`
-    # onward and every Windows path lost its drive.
-    re.compile(r"(?<![\w.])(?:[A-Za-z]:[\\/](?:[\w.-]+[\\/])*[\w.-]+|(?:[\w.-]+[\\/])+[\w.-]+)"),
-    re.compile(r"(?<![\w./\\])[\w-]+\.(?:" + _FILE_EXTENSIONS + r")\b"),
+    # onward and every Windows path lost its drive. The relative branch also refuses to start
+    # after `-`: otherwise every position inside a run like `a.-a.-…` is a fresh start that
+    # re-scans the rest of the run, quadratic in its length. The drive branch keeps the old
+    # lookbehind so `-C:\x` still yields `C:\x`.
+    re.compile(
+        r"(?<![\w.])[A-Za-z]:[\\/](?:[\w.-]+[\\/])*[\w.-]+|(?<![\w.-])(?:[\w.-]+[\\/])+[\w.-]+"
+    ),
+    # `-` in the lookbehind for the same quadratic re-scan (`a-a-…`); it also stops a hyphenated
+    # name after a slash or dot yielding its tail as a fragment atom.
+    re.compile(r"(?<![\w./\\-])[\w-]+\.(?:" + _FILE_EXTENSIONS + r")\b"),
     re.compile(r"\b[a-z0-9]+(?:_[a-z0-9]+)+\b"),
     # CONSTANT_CASE. The snake pattern above accepts lowercase only, so env vars, config keys and
     # constants — TRAIN_RATIO, API_CHANGES — were invisible to the metric entirely.
@@ -97,6 +116,9 @@ _CODE_LINE = re.compile(
     r"|static |void |int |string |\$|>|\w+\s*[=:(]\s*|\w+\.\w+\()"
 )
 
+# Claude Code's Read tool prints `cat -n` style: right-aligned number, U+2192 arrow, content.
+_NUMBERED_LINE = re.compile(r"^\s*\d+(→|\t)")
+
 
 @dataclass
 class Segment:
@@ -107,11 +129,16 @@ class Segment:
     text: str
     protected: bool
     atoms: list[str] = field(default_factory=list)
-    # The tool's name, for `tool_use` segments only. Carried because the shrinker has to say
-    # which operation a call was, and inferring it from payload shape (as supersede.py must)
-    # cannot classify a call that fits no known shape. Deliberately not part of `text`, so it
-    # changes no segment's content and no experiment checkpoint's `segments_digest`.
+    # The tool's name, for `tool_use` segments only. Carried because supersede.py has to know
+    # which operation a call was, and payload shape alone cannot classify a call that fits no
+    # known shape. Deliberately not part of `text`, so it changes no segment's content and no
+    # experiment checkpoint's `segments_digest`.
     tool_name: str | None = None
+    # Set by a transform that rewrites `text` with scaffolding of its own (banded call key
+    # prefixes, elision markers, path markers): the decoded content of the new text with that
+    # scaffolding masked, which is what a later rewrite has to read atoms from. None means `text`
+    # is its own atom source. Kept out of `text`, `segments_digest` and every emitted output.
+    atom_source: str | None = None
 
 
 def _json_values(node: Any, out: list[str]) -> None:
@@ -179,8 +206,16 @@ def _backtick_atoms(scan: str) -> Iterator[str]:
 
 
 def extract_atoms(text: str) -> list[str]:
+    return atoms_in_decoded(scannable(text))
+
+
+def atoms_in_decoded(scan: str) -> list[str]:
+    """`extract_atoms` minus the JSON decode, for text that is already a payload's decoded values.
+
+    Running `scannable` over such text again is not a no-op: a lone value that happens to be a
+    JSON object would be decoded a second time and lose its own keys' atoms.
+    """
     seen: dict[str, None] = {}
-    scan = scannable(text)
     # No pattern in _ATOM_PATTERNS captures a group; backticks are handled separately because
     # what they need is tokenisation, not a match.
     candidates = chain(
@@ -264,6 +299,17 @@ def split_prose(text: str, max_chars: int) -> list[str]:
     return chunks
 
 
+def strip_line_numbers(text: str) -> tuple[list[str], list[str]] | None:
+    lines = text.split("\n")
+    matches = [_NUMBERED_LINE.match(ln) for ln in lines]
+    hits = sum(1 for m in matches if m)
+    if hits < 3 or hits < 0.8 * sum(1 for ln in lines if ln.strip()):
+        return None
+    prefixes = [m.group(0) if m else "" for m in matches]
+    bodies = [ln[len(p) :] for ln, p in zip(lines, prefixes, strict=True)]
+    return prefixes, bodies
+
+
 def looks_like_code_dump(text: str) -> bool:
     lines = [ln for ln in text.splitlines() if ln.strip()]
     if len(lines) < 3:
@@ -293,25 +339,38 @@ def _chunk_lines(text: str, max_chars: int) -> list[str]:
     return out
 
 
-def _segments_for_block(block: Block, max_chars: int) -> list[tuple[SegmentKind, str, bool]]:
+def _segments_for_block(
+    block: Block, max_prose_chars: int, max_result_chars: int
+) -> list[tuple[SegmentKind, str, bool]]:
     if block.kind == "text":
-        return [("prose", c, False) for c in split_prose(block.text, max_chars)]
+        return [("prose", c, False) for c in split_prose(block.text, max_prose_chars)]
     if block.kind == "code":
         return [("code", block.text, True)]
     if block.kind == "tool_use":
         return [("tool_use", block.text, True)]
     if block.kind == "thinking":
-        return [("thinking", c, False) for c in split_prose(block.text, max_chars)]
-    if looks_like_code_dump(block.text):
+        return [("thinking", c, False) for c in split_prose(block.text, max_prose_chars)]
+    # Classified on the stripped body: `1→def f():` fails the code-line regex and a right-aligned
+    # number pads any line out to the indentation fallback, so the tool's padding width decided
+    # the route. The stored text keeps its prefixes; `quantize_code` strips and restores them.
+    numbered = strip_line_numbers(block.text)
+    probe = "\n".join(numbered[1]) if numbered else block.text
+    if looks_like_code_dump(probe):
         return [("code", block.text, True)]
-    return [("tool_result", c, False) for c in _chunk_lines(block.text, max_chars)]
+    return [("tool_result", c, False) for c in _chunk_lines(block.text, max_result_chars)]
 
 
-def segment(transcript: Transcript, *, max_prose_chars: int = 600) -> list[Segment]:
+def segment(
+    transcript: Transcript, *, max_prose_chars: int = 12_000, max_result_chars: int = 600
+) -> list[Segment]:
+    # A prose or thinking paragraph is one unit up to a safety cap (decided 2026-09-18; the cap
+    # exists for the unpunctuated paragraph `_hard_split` describes). tool_result keeps the
+    # 600-character line chunking it had, byte for byte.
     segments: list[Segment] = []
     for turn in transcript.turns:
         for block in turn.blocks:
-            for kind, text, protected in _segments_for_block(block, max_prose_chars):
+            pieces = _segments_for_block(block, max_prose_chars, max_result_chars)
+            for kind, text, protected in pieces:
                 if not text.strip():
                     continue
                 segments.append(

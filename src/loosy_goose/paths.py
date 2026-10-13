@@ -29,7 +29,13 @@ from bisect import bisect_right
 from dataclasses import dataclass, replace
 from typing import Any
 
-from loosy_goose.segment import _FILE_EXTENSIONS, Segment, extract_atoms, scannable
+from loosy_goose.segment import (
+    _FILE_EXTENSIONS,
+    Segment,
+    atoms_in_decoded,
+    extract_atoms,
+    scannable,
+)
 from loosy_goose.tokens import count_tokens
 
 DEFAULT_MARKER = "[P"
@@ -39,16 +45,36 @@ DEFAULT_MARKER = "[P"
 # arms are keyed on it, for the same reason `code.TRANSFORMS_VERSION` exists: `segments_digest`
 # fingerprints the segmenter's output and stops there, so a rewritten `paths.py` would otherwise
 # leave stored arm records looking valid while describing behaviour that no longer exists.
-PATHS_VERSION = 2
+# 3 (2026-09-16): a sentence-final path no longer keeps its full stop, so it is keyed as the
+# extractor keys it and substitutes.
+# 4 (2026-09-29): the path patterns no longer start after `-` (segment.ATOMS_VERSION 7), so the
+# tail of a hyphenated name after a slash or dot is no longer tabulated as its own path.
+# 5 (2026-09-29): a substituted segment's atoms are restricted to the incoming segment's, read
+# with markers masked, so substitution never adds an atom.
+# 6 (2026-09-29): those atoms are read from the segment's `atom_source`, substituted in step,
+# instead of from its text, so a banded call's key prefixes can no longer keep an atom credited.
+PATHS_VERSION = 6
 
 # The two path-shaped patterns from segment._ATOM_PATTERNS, sharing that module's extension list
 # rather than restating it. They must stay identical: the table guarantees whatever it names, and
 # the recall metric only credits what the extractor recognises, so any divergence would let the
 # table claim atoms the metric never counts.
+# The `-` in each lookbehind stops a quadratic re-scan of hyphen runs; see segment.py.
 _PATH_SLASH = re.compile(
-    r"(?<![\w.])(?:[A-Za-z]:[\\/](?:[\w.-]+[\\/])*[\w.-]+|(?:[\w.-]+[\\/])+[\w.-]+)"
+    r"(?<![\w.])[A-Za-z]:[\\/](?:[\w.-]+[\\/])*[\w.-]+|(?<![\w.-])(?:[\w.-]+[\\/])+[\w.-]+"
 )
-_PATH_BARE = re.compile(r"(?<![\w./\\])[\w-]+\.(?:" + _FILE_EXTENSIONS + r")\b")
+_PATH_BARE = re.compile(r"(?<![\w./\\-])[\w-]+\.(?:" + _FILE_EXTENSIONS + r")\b")
+# The same trailing punctuation `extract_atoms` strips from every candidate. The slash pattern
+# accepts `.` inside a component, so in `edit src/alpha.py.` it swallows the full stop; the
+# extractor then strips it and the metric counts `src/alpha.py`, so the table must key on that
+# too. Applied to the span rather than the pattern so the patterns stay identical to the
+# extractor's and the two agree on every edge the strip touches, not only the sentence-final one.
+_ATOM_TRAILING = ".,;:"
+
+
+def _trimmed(text: str, span: tuple[int, int]) -> tuple[int, int]:
+    start, end = span
+    return start, start + len(text[start:end].rstrip(_ATOM_TRAILING))
 
 
 def _path_spans(text: str) -> list[tuple[int, int]]:
@@ -60,7 +86,7 @@ def _path_spans(text: str) -> list[tuple[int, int]]:
     spans, which `finditer` already yields sorted and disjoint — scanning them per bare match was
     quadratic, and this now runs over every segment of the corpus, not only over table building.
     """
-    slash = [m.span() for m in _PATH_SLASH.finditer(text)]
+    slash = [_trimmed(text, m.span()) for m in _PATH_SLASH.finditer(text)]
     starts = [a for a, _ in slash]
     spans = list(slash)
     for m in _PATH_BARE.finditer(text):
@@ -88,6 +114,11 @@ class PathTable:
 
     def placeholder(self, index: int) -> str:
         return f"{self.marker}{index}]"
+
+    def mask(self, text: str) -> str:
+        """`text` with every placeholder blanked, so no atom is read out of a marker. A space
+        rather than nothing, so the text either side cannot join into a new token."""
+        return re.sub(re.escape(self.marker) + r"\d+\]", " ", text)
 
     def mapping(self) -> dict[str, str]:
         return {p: self.placeholder(i) for i, p in enumerate(self.paths)}
@@ -200,6 +231,12 @@ def substitute(segments: list[Segment], table: PathTable) -> list[Segment]:
     Atoms are recomputed rather than carried over: a substituted segment genuinely no longer
     holds the path, and the table is what preserves it. Passing the table's `guaranteed_atoms()`
     to `metrics.evaluate` is what puts it back on the credit side of the ledger.
+
+    Restricted to the incoming segment's atoms, and read from the segment's atom source rather
+    than its text (decided 2026-09-29): a banded call's text carries key prefixes that no mask
+    here could tell from content, so a key-named atom whose only content occurrence sat inside a
+    substituted path would stay credited. The source is substituted the same way, and markers are
+    masked in it, so substitution only ever removes atoms and the next rewrite reads it in turn.
     """
     mapping = table.mapping()
     if not mapping:
@@ -207,7 +244,16 @@ def substitute(segments: list[Segment], table: PathTable) -> list[Segment]:
     out: list[Segment] = []
     for s in segments:
         text = substitute_text(s.text, mapping)
-        out.append(s if text == s.text else replace(s, text=text, atoms=extract_atoms(text)))
+        if text == s.text:
+            out.append(s)
+            continue
+        source = s.atom_source if s.atom_source is not None else scannable(s.text)
+        # Decoded plain text, so substituted as a string: the JSON branch of `substitute_text`
+        # would re-encode a source that happens to parse as an object.
+        source = table.mask(_sub_in_string(source, mapping))
+        had = set(s.atoms)
+        atoms = [a for a in atoms_in_decoded(source) if a in had]
+        out.append(replace(s, text=text, atoms=atoms, atom_source=source))
     return out
 
 

@@ -824,7 +824,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
-    { name = "scikit-learn" },
     { name = "scipy" },
     { name = "tiktoken" },
     { name = "tree-sitter" },
@@ -844,13 +843,13 @@ dev = [
     { name = "pyarrow" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "scikit-learn" },
     { name = "scipy-stubs" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=2.5.3" },
-    { name = "scikit-learn", specifier = ">=1.9.0" },
     { name = "scipy", specifier = ">=1.18.1" },
     { name = "sentence-transformers", marker = "extra == 'embed'", specifier = ">=3.0" },
     { name = "tiktoken", specifier = ">=0.14.0" },
@@ -867,6 +866,7 @@ dev = [
     { name = "pyarrow", specifier = ">=25.0.1" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.16.6" },
+    { name = "scikit-learn", specifier = ">=1.9.0" },
     { name = "scipy-stubs", specifier = ">=1.18.1.0" },
 ]
 

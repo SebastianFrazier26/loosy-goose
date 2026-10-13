@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from experiments.exp_e_analysis import (  # noqa: E402
     BASE_VARIANT_KEY,
     KNEE_FLOOR,
+    METHODS,
     MIN_KIND_TRANSCRIPTS,
     _reported_kinds,
     build_curves,
@@ -71,6 +72,14 @@ def test_base_variant_key_matches_the_one_exp_d_writes() -> None:
     from experiments.exp_d_curves import BASE_VARIANT
 
     assert BASE_VARIANT_KEY == BASE_VARIANT.key()
+
+
+def test_method_rows_match_the_runners_planned_grid() -> None:
+    # Same literal-for-cheapness tradeoff as BASE_VARIANT_KEY: drawn from this tuple so records
+    # kept for a method no longer planned (topics) do not print, so it must track exp_d.
+    from experiments import exp_d_curves
+
+    assert METHODS == tuple(exp_d_curves.METHODS)
 
 
 def test_build_curves_sorts_and_drops_repeated_rates() -> None:

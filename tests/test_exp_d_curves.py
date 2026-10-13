@@ -13,11 +13,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from experiments import exp_d_curves as exp_d  # noqa: E402
+from experiments import exp_f_compress as exp_f  # noqa: E402
+from experiments import exp_g_novelty as exp_g  # noqa: E402
+from experiments import exp_h_kinds as exp_h  # noqa: E402
 from experiments.baselines import tfidf as baseline_tfidf  # noqa: E402
 from experiments.exp_d_curves import (  # noqa: E402
     BAND_QUALITY_VERSION,
     BASE_VARIANT,
+    EXP_D,
     FLUSH_EVERY,
+    GRIDS,
     KEEP_RATIOS,
     METHODS,
     PATH_METHODS,
@@ -26,12 +31,15 @@ from experiments.exp_d_curves import (  # noqa: E402
     PROTECT_CODE_ONLY_METHODS,
     SCHEMA_VERSION,
     SPECTRAL_SCORED,
+    SUPERSEDING_METHODS,
     TRANSFORMING_METHODS,
     VARIANTS,
+    Grid,
     Job,
     RunContext,
     Variant,
     _band,
+    _clear_cache,
     _interp_at,
     _is_path_key,
     _knee,
@@ -41,7 +49,6 @@ from experiments.exp_d_curves import (  # noqa: E402
     _path_table_cost_table,
     _pool,
     _record_identity,
-    _select_with_budget,
     _tfidf_scores,
     _weighted_at_rate,
     analyse,
@@ -51,9 +58,15 @@ from experiments.exp_d_curves import (  # noqa: E402
     paths_stamp,
     plan_jobs,
     segments_digest,
+    supersede_stamp,
     transforms_stamp,
 )
-from loosy_goose.budget import ProtectPolicy, select_by_score, token_budget  # noqa: E402
+from loosy_goose.budget import (  # noqa: E402
+    ProtectPolicy,
+    select_by_score,
+    select_with_budget,
+    token_budget,
+)
 from loosy_goose.code import TRANSFORMS_VERSION  # noqa: E402
 from loosy_goose.paths import PATHS_VERSION, PathTable, build_table, expand  # noqa: E402
 from loosy_goose.segment import (  # noqa: E402
@@ -62,6 +75,7 @@ from loosy_goose.segment import (  # noqa: E402
     SegmentKind,
     extract_atoms,
 )
+from loosy_goose.supersede import SUPERSEDE_VERSION  # noqa: E402
 from loosy_goose.tokens import count_tokens  # noqa: E402
 from loosy_goose.transcript import Block, Transcript, Turn  # noqa: E402
 
@@ -87,7 +101,7 @@ def test_select_with_budget_never_exceeds_explicit_budget() -> None:
     rng = np.random.default_rng(0)
     scores = rng.uniform(size=len(segs))
     budget = 20
-    kept = _select_with_budget(segs, scores, budget, protect="none")
+    kept = select_with_budget(segs, scores, budget, protect="none")
     assert sum(count_tokens(s.text) for s in kept) <= budget
     assert [s.id for s in kept] == sorted(s.id for s in kept)
 
@@ -95,7 +109,7 @@ def test_select_with_budget_never_exceeds_explicit_budget() -> None:
 def test_select_with_budget_forces_protected_kinds() -> None:
     segs = _corpus()
     scores = np.zeros(len(segs))
-    kept = _select_with_budget(segs, scores, budget=1_000_000, protect="code_only")
+    kept = select_with_budget(segs, scores, budget=1_000_000, protect="code_only")
     assert {8} <= {s.id for s in kept}
 
 
@@ -108,7 +122,7 @@ def test_select_with_budget_uses_the_budget_passed_in_not_the_list() -> None:
     shared_budget = token_budget(full, 0.5)
     shrunk = full[:4]  # far fewer tokens than the full corpus
     scores = np.arange(len(shrunk), dtype=np.float64)
-    kept = _select_with_budget(shrunk, scores, shared_budget, protect="none")
+    kept = select_with_budget(shrunk, scores, shared_budget, protect="none")
     assert kept == shrunk  # small enough that the shared budget covers all of it
     assert sum(count_tokens(s.text) for s in kept) < shared_budget
 
@@ -166,6 +180,9 @@ def test_methods_respect_the_shared_token_budget(
 def test_variant_key_is_base_only_for_the_default_configuration() -> None:
     assert BASE_VARIANT.key() == "base"
     assert Variant(drop_top=2).key() == "drop_top=2"
+    # The depth knob at its default must leave every existing record's key alone.
+    assert Variant(tool_depth="follow").key() == "base"
+    assert Variant(tool_depth="half").key() == "tool_depth=half"
 
 
 def test_variant_applies_only_to_the_methods_it_names() -> None:
@@ -178,6 +195,80 @@ def test_variant_applies_only_to_the_methods_it_names() -> None:
 def test_variant_threads_drop_top_into_the_compress_config() -> None:
     assert BASE_VARIANT.compress_config("leverage").drop_top == 0
     assert Variant(drop_top=3).compress_config("ridge").drop_top == 3
+
+
+def test_tool_quality_follows_the_depth_setting() -> None:
+    assert BASE_VARIANT.tool_quality(0.3) is None
+    assert Variant(tool_depth="flat0.5").tool_quality(0.3) == 0.5
+    assert Variant(tool_depth="flat0.5").tool_quality(0.9) == 0.5
+    assert Variant(tool_depth="flat0.25").tool_quality(0.05) == 0.25
+    assert Variant(tool_depth="half").tool_quality(0.3) == pytest.approx(0.15)
+    assert Variant(tool_depth="half").tool_quality(0.9) == pytest.approx(0.45)
+
+
+def test_band_threads_the_tool_depth_override_into_the_shrinker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    segs = _corpus()
+    seen: list[tuple[str, float, float | None]] = []
+    real = exp_d.quantize_segment
+
+    def watched(seg: Segment, quality: float, **kwargs: Any) -> Segment:
+        seen.append((seg.kind, quality, kwargs.get("tool_quality")))
+        return real(seg, quality, **kwargs)
+
+    monkeypatch.setattr(exp_d, "quantize_segment", watched)
+    _band(segs, 0.4)
+    assert seen and all(tq is None for _, _, tq in seen)
+    seen.clear()
+    _band(segs, 0.4, 0.2)
+    # The override reaches every shrunk segment; `quantize_segment` itself scopes it to tool_use.
+    assert {(q, tq) for _, q, tq in seen} == {(0.4, 0.2)}
+    assert {kind for kind, _, _ in seen} == {"code", "tool_use"}
+
+
+@pytest.mark.parametrize("name", sorted(TRANSFORMING_METHODS))
+def test_band_methods_hand_the_variants_depth_to_the_shrinker(
+    name: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    segs = _corpus()
+
+    def fake_embed(texts: list[str], model_name: str) -> np.ndarray:
+        rng = np.random.default_rng(0)
+        x = rng.normal(size=(len(texts), 8))
+        return x / np.where((n := np.linalg.norm(x, axis=1, keepdims=True)) > 0, n, 1.0)
+
+    monkeypatch.setattr("loosy_goose.select.embed_texts", fake_embed)
+    seen: set[float | None] = set()
+    real = exp_d.quantize_segment
+
+    def watched(seg: Segment, quality: float, **kwargs: Any) -> Segment:
+        seen.add(kwargs.get("tool_quality"))
+        return real(seg, quality, **kwargs)
+
+    monkeypatch.setattr(exp_d, "quantize_segment", watched)
+    variant = Variant(tool_depth="half", applies_to=TRANSFORMING_METHODS)
+    METHODS[name](segs, 0.5, "none", _ctx(tmp_path, variant, segs))
+    assert seen == {0.25}
+    seen.clear()
+    METHODS[name](segs, 0.5, "none", _ctx(tmp_path, BASE_VARIANT, segs))
+    assert seen == {None}
+
+
+def test_depth_variants_are_swept_on_the_band_methods_only() -> None:
+    depth = [j for j in plan_jobs() if j.variant.tool_depth != "follow"]
+    assert len(depth) == 72
+    assert {j.variant.key() for j in depth} == {
+        "tool_depth=flat0.5",
+        "tool_depth=flat0.25",
+        "tool_depth=half",
+    }
+    assert {j.method for j in depth} == set(TRANSFORMING_METHODS)
+    assert {j.protect for j in depth} == {"none"}
+    for key in ("tool_depth=flat0.5", "tool_depth=flat0.25", "tool_depth=half"):
+        for method in TRANSFORMING_METHODS:
+            ratios = [j.ratio for j in depth if j.variant.key() == key and j.method == method]
+            assert sorted(ratios) == sorted(KEEP_RATIOS)
 
 
 def test_plan_jobs_covers_every_method_ratio_and_variant_exactly_once() -> None:
@@ -200,16 +291,34 @@ def test_protect_code_only_is_measured_on_the_base_variant_only() -> None:
 
 
 def test_plan_jobs_totals_the_grid_the_run_is_budgeted_for() -> None:
-    # The grid is a multi-hour run, so its size is pinned rather than inferred: 156 base (11
+    # The grid is a multi-hour run, so its size is pinned rather than inferred: 144 base (10
     # methods + 2 protect=code_only rows, x 12 ratios) + 144 drop_top (3 settings x 4 scored
-    # methods x 12) + 300 path (5 arms x 5 methods x 12).
+    # methods x 12) + 300 path (5 arms x 5 methods x 12) + 72 depth (3 settings x 2 band
+    # methods x 12).
     jobs = plan_jobs()
     base = (len(METHODS) + len(PROTECT_CODE_ONLY_METHODS)) * len(KEEP_RATIOS)
     drop_top = len([v for v in VARIANTS if v.drop_top]) * len(SPECTRAL_SCORED) * len(KEEP_RATIOS)
     path = len([v for v in VARIANTS if v.paths != "off"]) * len(PATH_METHODS) * len(KEEP_RATIOS)
-    assert (base, drop_top, path) == (156, 144, 300)
-    assert len(jobs) == base + drop_top + path == 600
+    depth = (
+        len([v for v in VARIANTS if v.tool_depth != "follow"])
+        * len(TRANSFORMING_METHODS)
+        * len(KEEP_RATIOS)
+    )
+    assert (base, drop_top, path, depth) == (144, 144, 300, 72)
+    assert len(jobs) == base + drop_top + path + depth == 660
     assert len({j.identity() for j in jobs}) == len(jobs)
+
+
+def test_the_default_plan_is_the_exp_d_grids_plan_job_for_job() -> None:
+    # The Grid refactor must not move a single exp_d job or its position: identity decides reuse
+    # and eviction, and order decides what an interrupted run leaves behind.
+    assert plan_jobs() == plan_jobs(grid=EXP_D)
+    assert EXP_D.methods is METHODS
+    assert EXP_D.variants is VARIANTS
+    assert EXP_D.protect_code_only is PROTECT_CODE_ONLY_METHODS
+    assert EXP_D.ratios is KEEP_RATIOS
+    assert EXP_D.out == exp_d.OUT
+    assert GRIDS["exp_d"] is EXP_D
 
 
 def test_plan_jobs_puts_the_baseline_first_so_an_interrupted_run_is_still_usable() -> None:
@@ -226,12 +335,28 @@ def test_segments_digest_tracks_text_and_kind_but_not_ordering_of_unrelated_runs
     assert segments_digest(a) != segments_digest([_seg(0, "alpha", kind="code"), _seg(1, "beta")])
 
 
+def test_segments_digest_ignores_the_atom_source() -> None:
+    # A transform's bookkeeping, not segmenter output: in the digest it would evict variants.
+    plain = [_seg(0, "alpha")]
+    tagged = [Segment(0, 0, "assistant", "prose", "alpha", False, [], atom_source="beta")]
+    assert segments_digest(plain) == segments_digest(tagged)
+
+
 def test_segments_digest_covers_the_atom_extractor_version() -> None:
     # Atoms are the recall metric's denominator, so a changed extractor invalidates stored
     # records exactly as a changed segmenter does, even though no segment text moves.
     segs = [_seg(0, "alpha"), _seg(1, "beta")]
     before = segments_digest(segs)
     with mock.patch.object(exp_d, "ATOMS_VERSION", ATOMS_VERSION + 1):
+        assert segments_digest(segs) != before
+
+
+def test_segments_digest_covers_the_supersession_version() -> None:
+    # apply_supersession builds final_atoms, the denominator of atom_recall_final on every
+    # record, so a changed pass invalidates the whole checkpoint, not only supersede+* records.
+    segs = [_seg(0, "alpha"), _seg(1, "beta")]
+    before = segments_digest(segs)
+    with mock.patch.object(exp_d, "SUPERSEDE_VERSION", SUPERSEDE_VERSION + 1):
         assert segments_digest(segs) != before
 
 
@@ -245,6 +370,7 @@ def test_record_identity_defaults_a_variantless_record_to_the_baseline() -> None
     # either version stays valid rather than being needlessly recomputed.
     assert identity.transforms_version == 0
     assert identity.paths_version == 0
+    assert identity.supersede_version == 0
 
 
 def test_record_identity_is_read_by_name_not_position() -> None:
@@ -259,7 +385,10 @@ def test_record_identity_is_read_by_name_not_position() -> None:
         "transforms_version",
         "paths_version",
         "band_quality_version",
+        "supersede_version",
+        "select_version",
     )
+    assert identity.select_version == 0
 
 
 def test_a_paths_rewrite_invalidates_only_the_arm_records() -> None:
@@ -394,12 +523,12 @@ def test_plain_baselines_respect_protect_policy(
 
 @pytest.mark.parametrize("ratio", [0.1, 0.3, 0.5, 0.9])
 def test_select_with_budget_agrees_with_the_shared_selector(ratio: float) -> None:
-    # Every method now routes through _select_with_budget so the path arms can score one list and
+    # Every method now routes through select_with_budget so the path arms can score one list and
     # emit another. That is only safe if it picks exactly what budget.select_by_score picks —
     # otherwise the base records already on disk would no longer describe what the code does.
     segs = _corpus()
     scores = np.random.default_rng(7).uniform(size=len(segs))
-    assert _select_with_budget(segs, scores, token_budget(segs, ratio), "none") == select_by_score(
+    assert select_with_budget(segs, scores, token_budget(segs, ratio), "none") == select_by_score(
         segs, scores, ratio, "none"
     )
 
@@ -632,8 +761,8 @@ def test_write_summary_renders_every_section_for_a_full_grid(tmp_path: Path) -> 
     """
     results = _full_grid_results(tmp_path)
 
-    with mock.patch.object(exp_d, "OUT", tmp_path), contextlib.redirect_stdout(io.StringIO()):
-        exp_d._write_summary(results)
+    with contextlib.redirect_stdout(io.StringIO()):
+        exp_d._write_summary(results, tmp_path)
     text = (tmp_path / "summary.txt").read_text(encoding="utf-8")
     for section in (
         "aggressive rates",
@@ -646,6 +775,38 @@ def test_write_summary_renders_every_section_for_a_full_grid(tmp_path: Path) -> 
         "path table cost",
     ):
         assert section in text, section
+
+
+def _every_grids_methods() -> dict[str, Any]:
+    """Every method any registered grid runs. The stamp lists are keyed on method name across
+    grids, so their observation guards must see every grid's methods, not only exp_d's."""
+    out: dict[str, Any] = {}
+    for grid in exp_d.grids().values():
+        for name, fn in grid.methods.items():
+            assert out.setdefault(name, fn) is fn, f"{name} means two things in two grids"
+    return out
+
+
+def _patch_everywhere(monkeypatch: pytest.MonkeyPatch, name: str, value: object) -> None:
+    # Each grid module binds the helper under its own name, so patching one module alone would
+    # let the other grid's calls slip past the watcher.
+    for module in (exp_d, exp_f, exp_g, exp_h):
+        if hasattr(module, name):
+            monkeypatch.setattr(module, name, value)
+
+
+def test_every_grid_is_registered_and_the_stamp_lists_cover_exp_f_exp_g_and_exp_h() -> None:
+    registry = exp_d.grids()
+    assert registry["exp_d"] is EXP_D
+    assert registry["exp_f"] is exp_f.EXP_F
+    assert registry["exp_g"] is exp_g.EXP_G
+    assert registry["exp_h"] is exp_h.EXP_H
+    assert tuple(exp_f.METHODS) == exp_d.COMPRESS_SELECT_METHODS
+    assert tuple(exp_g.METHODS) == exp_d.NOVELTY_METHODS + exp_d.NOVELTY_PER_TOKEN_METHODS
+    assert tuple(exp_h.METHODS) == exp_d.KIND_METHODS
+    assert set(_every_grids_methods()) == (
+        set(METHODS) | set(exp_f.METHODS) | set(exp_g.METHODS) | set(exp_h.METHODS)
+    )
 
 
 def test_transforming_methods_lists_every_method_that_shrinks(
@@ -673,8 +834,8 @@ def test_transforming_methods_lists_every_method_that_shrinks(
         called.add(current[0])
         return real(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(exp_d, "quantize_segment", watched)
-    for name, fn in METHODS.items():
+    _patch_everywhere(monkeypatch, "quantize_segment", watched)
+    for name, fn in _every_grids_methods().items():
         current[:] = [name]
         fn(segs, 0.5, "none", _ctx(tmp_path, BASE_VARIANT, segs))
     assert called == set(TRANSFORMING_METHODS)
@@ -682,7 +843,36 @@ def test_transforming_methods_lists_every_method_that_shrinks(
 
 def test_transforms_stamp_is_zero_for_methods_that_never_shrink() -> None:
     assert transforms_stamp("tfidf") == 0
+    assert transforms_stamp("leverage") == 0
     assert transforms_stamp("band+leverage") == TRANSFORMS_VERSION
+
+
+def test_a_base_leverage_record_carries_no_shrinker_stamp(tmp_path: Path) -> None:
+    job = next(j for j in plan_jobs() if j.method == "leverage" and j.variant == BASE_VARIANT)
+    ctx = RunContext(tmp_path, job.variant, PathTable(()))
+    rec = exp_d._record(job.method, job.protect, job.ratio, ctx, 100, [], [], None, set(), 0.0)
+    assert _record_identity(rec) == job.identity()
+    assert rec["transforms_version"] == 0
+    # A shrinker rewrite leaves the base rows alone.
+    before = job.identity()
+    with mock.patch.object(exp_d, "TRANSFORMS_VERSION", TRANSFORMS_VERSION + 1):
+        assert job.identity() == before
+
+
+def test_base_leverage_identity_is_what_the_stored_records_already_carry() -> None:
+    # Built the way records on disk were built before any variant existed: no variant fields,
+    # every stamp absent. Adding a variant must not evict a single one of them.
+    old = {"method": "leverage", "protect": "none", "keep_ratio": 0.5}
+    assert _record_identity(old) == Job("leverage", "none", 0.5, BASE_VARIANT).identity()
+    literal = exp_d.RecordIdentity("leverage", "none", 0.5, "base", 0, 0, 0, 0, 0)
+    assert _record_identity(old) == literal
+    old_stacked = {
+        "method": "supersede+leverage",
+        "protect": "none",
+        "keep_ratio": 0.5,
+        "supersede_version": SUPERSEDE_VERSION,
+    }
+    assert _record_identity(old_stacked) in {j.identity() for j in plan_jobs()}
 
 
 def test_a_shrinker_rewrite_invalidates_only_the_records_that_depend_on_it() -> None:
@@ -727,6 +917,76 @@ def test_the_banding_stamp_is_folded_into_the_stored_records_identity(tmp_path: 
     assert _record_identity(old) not in {j.identity() for j in plan_jobs()}
 
 
+def test_superseding_methods_lists_every_method_that_supersedes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Same guard as the shrinker list: SUPERSEDING_METHODS is hand-written and decides whose
+    # records a supersession change invalidates, so the true set is observed, not trusted.
+    segs = _corpus()
+
+    def fake_embed(texts: list[str], model_name: str) -> np.ndarray:
+        rng = np.random.default_rng(0)
+        x = rng.normal(size=(len(texts), 8))
+        return x / np.where((n := np.linalg.norm(x, axis=1, keepdims=True)) > 0, n, 1.0)
+
+    monkeypatch.setattr("loosy_goose.select.embed_texts", fake_embed)
+    called: set[str] = set()
+    real = exp_d.apply_supersession
+    current: list[str] = []
+
+    def watched(*args: object, **kwargs: object) -> object:
+        called.add(current[0])
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    _patch_everywhere(monkeypatch, "apply_supersession", watched)
+    for name, fn in _every_grids_methods().items():
+        current[:] = [name]
+        fn(segs, 0.5, "none", _ctx(tmp_path, BASE_VARIANT, segs))
+    assert called == set(SUPERSEDING_METHODS)
+
+
+def test_supersede_stamp_is_zero_for_methods_that_never_supersede() -> None:
+    assert supersede_stamp("leverage") == 0
+    assert supersede_stamp("band+leverage") == 0
+    for name in SUPERSEDING_METHODS:
+        assert supersede_stamp(name) == SUPERSEDE_VERSION
+
+
+def test_a_supersession_change_invalidates_only_the_superseding_methods() -> None:
+    # The pass runs downstream of segmentation, so a changed rule moves no other stamp: without
+    # one of its own, a stored supersede+* record would keep loading as valid while describing
+    # an elision policy that no longer exists (segments_digest also carries it, for final_atoms).
+    stacked = Job("supersede+leverage", "none", 0.5, BASE_VARIANT)
+    plain = Job("leverage", "none", 0.5, BASE_VARIANT)
+    before_stacked, before_plain = stacked.identity(), plain.identity()
+    with mock.patch.object(exp_d, "SUPERSEDE_VERSION", SUPERSEDE_VERSION + 1):
+        assert stacked.identity() != before_stacked
+        assert plain.identity() == before_plain
+
+
+def test_the_supersession_stamp_is_folded_into_the_stored_records_identity(
+    tmp_path: Path,
+) -> None:
+    job = next(j for j in plan_jobs() if j.method == "supersede+leverage")
+    ctx = RunContext(tmp_path, job.variant, PathTable(()))
+    rec = exp_d._record(job.method, job.protect, job.ratio, ctx, 100, [], [], None, set(), 0.0)
+    assert rec["supersede_version"] == SUPERSEDE_VERSION
+    assert _record_identity(rec) == job.identity()
+    # A record written under supersession version 1 (or before the stamp existed) is stale for a
+    # supersede+* method and still valid for a plain one.
+    planned = {j.identity() for j in plan_jobs()}
+    old_stacked = {
+        "method": "supersede+leverage",
+        "protect": "none",
+        "keep_ratio": 0.5,
+        "transforms_version": 0,
+        "supersede_version": 1,
+    }
+    old_plain = {"method": "leverage", "protect": "none", "keep_ratio": 0.5}
+    assert _record_identity(old_stacked) not in planned
+    assert _record_identity(old_plain) in planned
+
+
 def test_metric_backfills_the_earned_fields_of_a_pre_arm_record() -> None:
     # Exact, not approximate: a record written before any table existed guaranteed nothing, so
     # its earned recall IS its recall. This is what lets the arms land without a schema bump.
@@ -760,16 +1020,23 @@ def stub_embed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("loosy_goose.select.embed_texts", fake_embed)
 
 
-def _fake_grid(monkeypatch: pytest.MonkeyPatch, fn: Any, ratios: tuple[float, ...]) -> None:
-    """One synthetic method over `ratios`, so analyse()'s job loop is exercised without paying
-    for real selection."""
-    monkeypatch.setattr(exp_d, "METHODS", {"fake": fn})
-    jobs = [Job("fake", "none", r, BASE_VARIANT) for r in ratios]
-    monkeypatch.setattr(exp_d, "plan_jobs", lambda: list(jobs))
+def _fake_grid(out: Path, methods: dict[str, Any], ratios: tuple[float, ...]) -> Grid:
+    """Synthetic methods over `ratios`, base variant only, so analyse()'s job loop is exercised
+    without paying for real selection."""
+    return Grid(
+        name="fake",
+        out=out,
+        methods=methods,
+        variants=(BASE_VARIANT,),
+        protect_code_only=(),
+        write_summary=lambda results, out: None,
+        plots=False,
+        ratios=ratios,
+    )
 
 
 def test_a_job_that_raises_is_isolated_and_the_grid_keeps_going(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_embed: None
+    tmp_path: Path, stub_embed: None
 ) -> None:
     # Before isolation a single unhandled exception killed a multi-hour grid AND discarded every
     # completed job for the in-flight transcript.
@@ -781,8 +1048,8 @@ def test_a_job_that_raises_is_isolated_and_the_grid_keeps_going(
             raise RuntimeError("boom in the middle of the grid")
         return segs[:2]
 
-    _fake_grid(monkeypatch, flaky, (0.5, 0.25, 0.1))
-    r = analyse("t", True, _transcript(), tmp_path)
+    grid = _fake_grid(tmp_path, {"fake": flaky}, (0.5, 0.25, 0.1))
+    r = analyse("t", True, _transcript(), tmp_path, grid=grid)
 
     assert seen == [0.5, 0.25, 0.1]
     assert sorted(rec["keep_ratio"] for rec in r["records"]) == [0.1, 0.5]
@@ -796,7 +1063,7 @@ def test_a_job_that_raises_is_isolated_and_the_grid_keeps_going(
 
 
 def test_a_failed_job_is_not_a_record_so_nothing_reads_it_as_a_low_score(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_embed: None
+    tmp_path: Path, stub_embed: None
 ) -> None:
     # The dangerous shape of this bug is the silent one: a failure stored as a record with zeroed
     # metrics would be averaged into every table, curve and plot as a genuine measurement.
@@ -807,8 +1074,8 @@ def test_a_failed_job_is_not_a_record_so_nothing_reads_it_as_a_low_score(
         # the curve builder does not dedupe one of them away.
         return segs[: max(1, int(len(segs) * ratio))]
 
-    _fake_grid(monkeypatch, flaky, (0.5, 0.25, 0.1))
-    r = analyse("t", True, _transcript(), tmp_path)
+    grid = _fake_grid(tmp_path, {"fake": flaky}, (0.5, 0.25, 0.1))
+    r = analyse("t", True, _transcript(), tmp_path, grid=grid)
 
     assert ("fake", "none", 0.25) not in exp_d._index_records([r])
     curve = exp_d._curves_by_method([r])[("fake", "none")][0]
@@ -820,7 +1087,7 @@ def test_a_failed_job_is_not_a_record_so_nothing_reads_it_as_a_low_score(
 
 
 def test_an_incremental_checkpoint_survives_a_mid_transcript_abort_and_resumes(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_embed: None
+    tmp_path: Path, stub_embed: None
 ) -> None:
     # Previously the checkpoint was written only once analyse() returned all 600 jobs, so a kill
     # part-way through a transcript threw away everything it had done (up to ~19 min).
@@ -842,9 +1109,9 @@ def test_an_incremental_checkpoint_survives_a_mid_transcript_abort_and_resumes(
     def flush(payload: dict[str, Any]) -> None:
         exp_d._write_checkpoint(out_path, payload)
 
-    _fake_grid(monkeypatch, fn, ratios)
+    grid = _fake_grid(tmp_path, {"fake": fn}, ratios)
     with pytest.raises(Killed):
-        analyse("t", True, _transcript(), tmp_path, checkpoint=flush)
+        analyse("t", True, _transcript(), tmp_path, checkpoint=flush, grid=grid)
 
     prior, reason = _load_checkpoint(out_path, force=False)
     assert reason is None
@@ -853,11 +1120,142 @@ def test_an_incremental_checkpoint_survives_a_mid_transcript_abort_and_resumes(
     assert len(prior["records"]) == FLUSH_EVERY
 
     budget["left"] = 1_000
-    resumed = analyse("t", True, _transcript(), tmp_path, prior=prior, checkpoint=flush)
+    resumed = analyse("t", True, _transcript(), tmp_path, prior=prior, checkpoint=flush, grid=grid)
 
     assert sorted(rec["keep_ratio"] for rec in resumed["records"]) == sorted(ratios)
     # Only the jobs the checkpoint did not already hold were paid for a second time.
     assert ran[12:] == list(ratios[FLUSH_EVERY:])
+
+
+def test_a_prior_record_no_planned_job_carries_is_evicted_not_averaged(
+    tmp_path: Path, stub_embed: None
+) -> None:
+    # Found on the first stamp bump that did not also move segments_digest (TRANSFORMS_VERSION
+    # 2 to 3, 2026-09-21): the re-run added fresh records but the stale ones stayed in the
+    # checkpoint, so 96 reused + 36 to run wrote 132 records and the tables averaged both.
+    fn = lambda segs, ratio, protect, ctx: segs[:2]  # noqa: E731
+    grid = _fake_grid(tmp_path, {"fake": fn, "other": fn}, (0.5, 0.25))
+    prior = analyse("t", True, _transcript(), tmp_path, grid=grid)
+    assert len(prior["records"]) == 4
+    stale = dict(
+        prior["records"][0], transforms_version=prior["records"][0]["transforms_version"] + 1
+    )
+    prior["records"].append(stale)
+    prior["records"].append(dict(prior["records"][1], method="retired"))
+
+    seen: list[str] = []
+    r = analyse(
+        "t",
+        True,
+        _transcript(),
+        tmp_path,
+        prior=prior,
+        methods=["fake"],
+        progress=seen.append,
+        grid=grid,
+    )
+
+    assert any("2 stale records evicted" in m for m in seen)
+    assert any("4 records reused, 0 to run" in m for m in seen)
+    # The partial filter did not evict the other arm's records.
+    assert sorted(rec["method"] for rec in r["records"]) == ["fake", "fake", "other", "other"]
+    assert all(
+        rec["transforms_version"] == exp_d.transforms_stamp(rec["method"]) for rec in r["records"]
+    )
+
+
+def test_each_grid_keeps_its_own_checkpoints_because_a_shared_folder_would_evict(
+    tmp_path: Path, stub_embed: None
+) -> None:
+    # Why Grid.out exists: eviction is against the analysing grid's full plan, so records of a
+    # method only another grid plans are "stale" to it and deleted on its next pass.
+    fn = lambda segs, ratio, protect, ctx: segs[:2]  # noqa: E731
+    grid_a = _fake_grid(tmp_path / "a", {"x": fn}, (0.5, 0.25))
+    grid_b = _fake_grid(tmp_path / "b", {"y": fn}, (0.5, 0.25))
+
+    def run(grid: Grid, prior: dict[str, Any] | None, seen: list[str]) -> dict[str, Any]:
+        # The checkpoint path main() derives from the grid, so each grid writes its own file.
+        path = grid.out / "t.json"
+        grid.out.mkdir(parents=True, exist_ok=True)
+        r = analyse(
+            "t",
+            True,
+            _transcript(),
+            tmp_path / "cache",
+            prior=prior,
+            progress=seen.append,
+            grid=grid,
+        )
+        exp_d._write_checkpoint(path, r)
+        return r
+
+    run(grid_a, None, [])
+    run(grid_b, None, [])
+    for grid, method in ((grid_a, "x"), (grid_b, "y")):
+        stored, _ = _load_checkpoint(grid.out / "t.json", force=False)
+        assert stored is not None
+        assert {rec["method"] for rec in stored["records"]} == {method}
+
+    seen: list[str] = []
+    prior_a, _ = _load_checkpoint(grid_a.out / "t.json", force=False)
+    run(grid_a, prior_a, seen)
+    assert not any("evicted" in m for m in seen)
+    assert any("2 records reused, 0 to run" in m for m in seen)
+    prior_b, _ = _load_checkpoint(grid_b.out / "t.json", force=False)
+    assert {rec["method"] for rec in prior_b["records"]} == {"y"}  # type: ignore[index]
+
+    # The failure the split prevents: grid B analysing grid A's checkpoint evicts every x record.
+    seen.clear()
+    prior_a, _ = _load_checkpoint(grid_a.out / "t.json", force=False)
+    shared = analyse(
+        "t",
+        True,
+        _transcript(),
+        tmp_path / "cache",
+        prior=prior_a,
+        progress=seen.append,
+        grid=grid_b,
+    )
+    assert any("2 stale records evicted" in m for m in seen)
+    assert {rec["method"] for rec in shared["records"]} == {"y"}
+
+
+def test_clear_cache_empties_the_directory_but_keeps_it(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "a.npy").write_bytes(b"x")
+    (cache / "b.npy").write_bytes(b"y")
+    _clear_cache(cache)
+    assert cache.is_dir()
+    assert list(cache.iterdir()) == []
+    # A missing directory is created, not an error: main() creates it, but analyse() is also
+    # called directly.
+    _clear_cache(tmp_path / "absent")
+    assert (tmp_path / "absent").is_dir()
+
+
+def test_a_transcript_reusing_nothing_starts_from_a_cold_cache(
+    tmp_path: Path, stub_embed: None
+) -> None:
+    # Warm entries left by an earlier RUN made supersede+band+leverage report ~1s where a cold
+    # job is ~45s, corrupting E4's timing column; a resumed transcript keeps its cache.
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    stale = cache / "stale.npy"
+    stale.write_bytes(b"x")
+    fn = lambda segs, ratio, protect, ctx: segs[:2]  # noqa: E731
+    seen: list[str] = []
+    grid = _fake_grid(tmp_path, {"fake": fn}, (0.5, 0.25))
+    r = analyse("t", True, _transcript(), cache, progress=seen.append, grid=grid)
+    assert not stale.exists()
+    assert any("embedding cache cleared" in m for m in seen)
+
+    stale.write_bytes(b"x")
+    grid = _fake_grid(tmp_path, {"fake": fn}, (0.5, 0.25, 0.1))
+    seen.clear()
+    analyse("t", True, _transcript(), cache, prior=r, progress=seen.append, grid=grid)
+    assert stale.exists()
+    assert not any("embedding cache cleared" in m for m in seen)
 
 
 def test_checkpoint_writes_are_atomic_so_a_kill_leaves_no_truncated_json(
@@ -924,12 +1322,8 @@ def test_trace_commons_sampling_breaks_size_ties_on_name_not_glob_order(
     assert labels == ["trace-commons_aaa00000", "trace-commons_ccc00000"]
 
 
-def test_failure_report_names_every_failed_and_missing_cell(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        exp_d, "plan_jobs", lambda: [Job("fake", "none", r, BASE_VARIANT) for r in (0.5, 0.25)]
-    )
+def test_failure_report_names_every_failed_and_missing_cell(tmp_path: Path) -> None:
+    grid = _fake_grid(tmp_path, {"fake": lambda segs, ratio, protect, ctx: segs}, (0.5, 0.25))
     result = {
         "label": "t0",
         "total_tokens": 100,
@@ -944,7 +1338,7 @@ def test_failure_report_names_every_failed_and_missing_cell(
             }
         ],
     }
-    text = "\n".join(failure_report([result]))
+    text = "\n".join(failure_report([result], grid=grid))
     assert "INCOMPLETE RUN" in text
     assert "RuntimeError: boom" in text
     assert "t0" in text
@@ -970,9 +1364,32 @@ def test_write_summary_puts_failures_above_the_tables(tmp_path: Path) -> None:
             "error": "MemoryError: out of memory",
         }
     ]
-    with mock.patch.object(exp_d, "OUT", tmp_path), contextlib.redirect_stdout(io.StringIO()):
-        exp_d._write_summary(results)
+    with contextlib.redirect_stdout(io.StringIO()):
+        exp_d._write_summary(results, tmp_path)
     text = (tmp_path / "summary.txt").read_text(encoding="utf-8")
     assert "INCOMPLETE RUN" in text
     assert "MemoryError: out of memory" in text
     assert text.index("INCOMPLETE RUN") < text.index("aggressive rates")
+
+
+def test_plan_filters_narrow_methods_and_variants_without_reordering() -> None:
+    full = exp_d.plan_jobs()
+    part = exp_d.plan_jobs(
+        methods=("tfidf", "leverage", "supersede+leverage", "supersede+band+leverage"),
+        variants=("base", "drop_top=2"),
+    )
+    assert {j.method for j in part} == {
+        "tfidf",
+        "leverage",
+        "supersede+leverage",
+        "supersede+band+leverage",
+    }
+    assert {j.variant.key() for j in part} == {"base", "drop_top=2"}
+    # 4 methods x 12 ratios + code_only for tfidf/leverage (24) + drop_top=2 on the two of
+    # SPECTRAL_SCORED that are in the filter, leverage and supersede+leverage (24).
+    assert len(part) == 48 + 24 + 24
+    identities = [j.identity() for j in full]
+    assert [identities.index(j.identity()) for j in part] == sorted(
+        identities.index(j.identity()) for j in part
+    )
+    assert exp_d.plan_jobs(None, None) == full

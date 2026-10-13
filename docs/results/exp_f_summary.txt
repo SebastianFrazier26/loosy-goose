@@ -1,0 +1,73 @@
+exp_f: compression-based selectors. 18 transcripts checkpointed, 18 with exp_d references (tfidf, leverage, supersede+leverage).
+
+method                      planned  present   failed  missing
+--------------------------------------------------------------
+zlib-lazy                       216      216        0        0
+lzma-lazy                       216      216        0        0
+supersede+zlib-lazy             216      216        0        0
+supersede+lzma-lazy             216      216        0        0
+
+
+== distortion at achieved rate 0.5 / 0.33 / 0.25 ==
+*n/N = only n of N transcripts reached that rate; n/a = none did.
+method                          recall@0.5    recall_f@0.5    coverage@0.5     recall@0.33   recall_f@0.33   coverage@0.33     recall@0.25   recall_f@0.25   coverage@0.25
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+zlib-lazy                      0.751*17/18     0.758*17/18     0.924*17/18           0.595           0.610           0.886           0.500           0.516           0.859
+lzma-lazy                      0.777*17/18     0.781*17/18     0.914*17/18           0.614           0.628           0.864           0.518           0.531           0.836
+supersede+zlib-lazy            0.729*16/18     0.807*16/18     0.929*16/18     0.554*17/18     0.616*17/18     0.880*17/18           0.478           0.528           0.856
+supersede+lzma-lazy            0.751*16/18     0.829*16/18     0.923*16/18     0.568*17/18     0.630*17/18     0.861*17/18           0.495           0.546           0.840
+tfidf                          0.703*16/18     0.729*16/18     0.961*16/18           0.510           0.543           0.914           0.394           0.425           0.879
+leverage                       0.784*17/18     0.796*17/18     0.882*17/18           0.614           0.637           0.820           0.529           0.553           0.781
+supersede+leverage             0.759*16/18     0.837*16/18     0.895*16/18     0.592*17/18     0.656*17/18     0.821*17/18           0.517           0.568           0.796
+
+== each arm minus leverage and minus supersede+leverage (shipped default), matched achieved rate ==
+Positive = the arm keeps more. *n/N = transcripts where both curves reach the rate.
+pair                                             d recall_f@2x   d coverage@2x   d recall_f@3x   d coverage@3x   d recall_f@4x   d coverage@4x
+----------------------------------------------------------------------------------------------------------------------------------------------
+zlib-lazy - leverage                              -0.038*17/18    +0.043*17/18          -0.027          +0.065          -0.037          +0.078
+lzma-lazy - leverage                              -0.015*17/18    +0.033*17/18          -0.009          +0.043          -0.022          +0.055
+supersede+zlib-lazy - leverage                    +0.021*16/18    +0.051*16/18    -0.004*17/18    +0.067*17/18          -0.025          +0.075
+supersede+lzma-lazy - leverage                    +0.044*16/18    +0.045*16/18    +0.011*17/18    +0.049*17/18          -0.007          +0.059
+zlib-lazy - supersede+leverage                    -0.091*16/18    +0.026*16/18    -0.066*17/18    +0.060*17/18          -0.052          +0.063
+lzma-lazy - supersede+leverage                    -0.067*16/18    +0.015*16/18    -0.046*17/18    +0.037*17/18          -0.037          +0.040
+supersede+zlib-lazy - supersede+leverage          -0.030*16/18    +0.034*16/18    -0.041*17/18    +0.059*17/18          -0.040          +0.060
+supersede+lzma-lazy - supersede+leverage          -0.008*16/18    +0.028*16/18    -0.026*17/18    +0.041*17/18          -0.022          +0.044
+
+== window length: lzma-lazy minus zlib-lazy ==
+Whole-transcript dictionary against zlib's 32 KiB window, same selector otherwise.
+pair                                             d recall_f@2x   d coverage@2x   d recall_f@3x   d coverage@3x   d recall_f@4x   d coverage@4x
+----------------------------------------------------------------------------------------------------------------------------------------------
+lzma-lazy - zlib-lazy                             +0.023*17/18    -0.010*17/18          +0.018          -0.022          +0.015          -0.023
+supersede+lzma-lazy - supersede+zlib-lazy         +0.023*16/18    -0.007*16/18    +0.015*17/18    -0.018*17/18          +0.017          -0.016
+
+== effect of supersession per scorer: supersede+X minus X ==
+pair                                             d recall_f@2x   d coverage@2x   d recall_f@3x   d coverage@3x   d recall_f@4x   d coverage@4x
+----------------------------------------------------------------------------------------------------------------------------------------------
+supersede+zlib-lazy - zlib-lazy                   +0.061*16/18    +0.009*16/18    +0.025*17/18    -0.001*17/18          +0.012          -0.003
+supersede+lzma-lazy - lzma-lazy                   +0.059*16/18    +0.013*16/18    +0.020*17/18    +0.004*17/18          +0.015          +0.004
+
+== knee: lowest achieved rate still at atom_recall_final >= 0.9 ==
+Token-weighted mean over transcripts that reach the floor; lower is better. n = those
+transcripts / transcripts with the method.
+method                        knee       n
+------------------------------------------
+zlib-lazy                    0.739   17/18
+lzma-lazy                    0.685   17/18
+supersede+zlib-lazy          0.629   17/18
+supersede+lzma-lazy          0.613   17/18
+tfidf                        0.806   11/18
+leverage                     0.680   16/18
+supersede+leverage           0.598   16/18
+
+== cost: median seconds per 100k tokens ==
+Per transcript: median elapsed_seconds over its ratios; then the median over
+transcripts. References are exp_d's own timings.
+method                        s/100k    n
+-----------------------------------------
+zlib-lazy                       0.10   18
+lzma-lazy                      36.88   18
+supersede+zlib-lazy             0.07   18
+supersede+lzma-lazy            34.30   18
+tfidf                           0.09   18
+leverage                        0.34   18
+supersede+leverage              0.32   18

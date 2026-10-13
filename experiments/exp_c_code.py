@@ -30,7 +30,7 @@ from loosy_goose.budget import select_by_score
 from loosy_goose.code import quantize_segment
 from loosy_goose.segment import Segment, segment
 from loosy_goose.select import embed_segments, leverage_scores, rank_for_energy, svd_energy
-from loosy_goose.supersede import find_superseded, tool_names_from_transcript
+from loosy_goose.supersede import find_superseded
 from loosy_goose.tokens import count_tokens
 from loosy_goose.transcript import Transcript, load_claude_code_jsonl, load_messages_json
 
@@ -105,8 +105,7 @@ def _lang_hints(t: Transcript, segs: list[Segment]) -> dict[int, str]:
 
 def run_c2(label: str, t: Transcript, segs: list[Segment]) -> dict[str, Any]:
     total = _tokens(segs)
-    names = tool_names_from_transcript(t, segs)
-    gone = find_superseded(segs, tool_names=names)
+    gone = find_superseded(segs)
     by_reason_tokens: Counter[str] = Counter()
     by_reason_count: Counter[str] = Counter()
     by_id = {s.id: s for s in segs}

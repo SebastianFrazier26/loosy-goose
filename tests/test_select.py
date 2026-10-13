@@ -14,10 +14,8 @@ from loosy_goose.select import (
     cur_residual_order,
     cur_residual_scores,
     embed_segments,
-    greedy_cur_select,
     label_directions,
     leverage_scores,
-    make_compress,
     rank_for_energy,
     ridge_leverage_scores,
     score_segments,
@@ -127,14 +125,6 @@ def test_cur_residual_scores_rank_pivots_above_tail_and_cover_all_rows() -> None
     assert np.all(scores[tail] >= 0)
 
 
-def test_greedy_cur_select_respects_budget_and_skips_rather_than_stops() -> None:
-    z = np.array([[4.0, 0.0, 0.0], [0.0, 3.0, 0.0], [1.0, 1.0, 1.0]])
-    costs = {0: 10, 1: 5, 2: 1}
-    # Pivot order is 0, 1, 2; row 1 does not fit the budget after row 0 but row 2 still does.
-    picks = greedy_cur_select(z, 3, lambda idx: sum(costs[i] for i in idx) <= 11)
-    assert picks == [0, 2]
-
-
 def _corpus() -> list[Segment]:
     return [
         _seg(0, "Parsing the transcript loader and jsonl records for the session file."),
@@ -179,10 +169,6 @@ def test_compress_respects_budget_order_and_forced_protected(
     none_kept = compress(segs, 0.3, protect="none")
     assert sum(count_tokens(s.text) for s in none_kept) <= -(-total * 0.3 // 1)
     assert compress([], 0.5) == []
-    fn = make_compress(CompressConfig(strategy="cur_residual"))
-    assert [s.id for s in fn(segs, 0.5)] == [
-        s.id for s in compress(segs, 0.5, config=CompressConfig(strategy="cur_residual"))
-    ]
 
 
 def test_score_segments_strategies_disagree_but_share_shape() -> None:

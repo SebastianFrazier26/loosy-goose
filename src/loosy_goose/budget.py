@@ -66,3 +66,41 @@ def select_by_score(
                 keep[i] = True
                 used += costs[i]
     return [s for s, k in zip(segments, keep, strict=True) if k]
+
+
+def select_with_budget(
+    segments: list[Segment],
+    scores: npt.ArrayLike,
+    budget: int,
+    protect: ProtectPolicy = "none",
+    emit: list[Segment] | None = None,
+) -> list[Segment]:
+    """`select_by_score`'s greedy rule, but against an explicit token budget rather than one
+    re-derived from `segments`. Stacked pipelines hand this a segment list that has already
+    shrunk (supersession) or changed token cost (banding); re-deriving the budget from that
+    smaller/cheaper list would give each stage of a stack a smaller budget than a single-stage
+    method gets on the full transcript, which breaks the shared-budget contract.
+
+    `emit` is the parallel list actually written out, when it differs from the one scored: a
+    caller that scores substituted text but emits the original must be charged the original's
+    token costs, or it would be handed free budget it never earned.
+    """
+    n = len(segments)
+    if n == 0:
+        return []
+    raw = np.asarray(scores, dtype=np.float64).reshape(-1)
+    if raw.shape[0] != n:
+        raise ValueError("scores must have one entry per segment")
+    out = emit if emit is not None else segments
+    if len(out) != n:
+        raise ValueError("emit must have one entry per scored segment")
+    costs = [count_tokens(s.text) for s in out]
+    keep = forced_mask(out, protect)
+    used = sum(c for c, k in zip(costs, keep, strict=True) if k)
+    if used < budget:
+        order = sorted((i for i in range(n) if not keep[i]), key=lambda i: (-raw[i], i))
+        for i in order:
+            if used + costs[i] <= budget:
+                keep[i] = True
+                used += costs[i]
+    return [s for s, k in zip(out, keep, strict=True) if k]

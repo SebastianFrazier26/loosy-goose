@@ -24,7 +24,7 @@ KINDS = ("prose", "code", "tool_result", "tool_use", "thinking")
 
 def iter_local() -> Iterator[tuple[str, Transcript]]:
     for p in sorted((DATA / "local" / "sessions").glob("*.jsonl")):
-        yield f"local/{p.name}", load_claude_code_jsonl(p)
+        yield f"local_{p.stem.split('_')[0]}", load_claude_code_jsonl(p)
 
 
 def iter_trace_commons() -> Iterator[tuple[str, Transcript]]:

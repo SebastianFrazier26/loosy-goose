@@ -1,7 +1,14 @@
-# Phase 1 experiment scripts
+# Experiment scripts
 
 Outputs go to `experiments/output/` (gitignored). Committed result tables live in
-`docs/results/`; the write-up is `docs/PHASE1.md`.
+`docs/results/`; the write-ups are `docs/PHASE1.md` and `docs/PHASE2.md`.
+
+Every script here needs the dev dependency group as well as the `embed` extra, because the
+TF-IDF baselines use scikit-learn:
+
+```
+uv sync --dev --extra embed
+```
 
 ## Corpus setup
 
@@ -16,7 +23,7 @@ so the public half of the corpus is reproducible on any machine. `pick_local.py`
 and machine-specific — it reads `~/.claude/projects/*/*.jsonl`, and its output is never
 committed.
 
-## The three tracks
+## Phase 1: the three tracks
 
 | Script | Question | Verdict |
 | --- | --- | --- |
@@ -27,3 +34,69 @@ committed.
 `baselines.py` provides the comparison methods every track is scored against: random drop,
 recency-only, and TF-IDF. All of them, and every experimental method, are forced through the
 same token budget in `budget.py` — that shared budget is what makes the numbers comparable.
+
+## Phase 2: rate-distortion grids
+
+**`exp_d_curves.py`** — the runner. Every method on one curve per transcript at matched token
+budgets, checkpointed per transcript, so an interrupted run resumes and a later run reuses what
+an earlier one wrote. It also holds the grid registry:
+
+```
+uv run python experiments/exp_d_curves.py                         # Experiment D, the main grid
+uv run python experiments/exp_d_curves.py --grid exp_f            # Experiment F
+uv run python experiments/exp_d_curves.py --grid exp_g            # Experiment G
+uv run python experiments/exp_d_curves.py --grid exp_h            # Experiment H
+uv run python experiments/exp_d_curves.py --methods supersede+band+leverage --variants base
+```
+
+`--methods` and `--variants` narrow the plan to a partial run; cells left out are reported as
+missing, never averaged. For a partial exp_d run pass both: `--methods` alone also runs that
+method on every variant that covers it. `--only NAME` restricts to transcripts whose label
+contains NAME, `--limit N` stops after N transcripts, and `--force` discards the checkpoints. A
+full exp_d run takes 6–24 hours.
+
+**`exp_e_analysis.py`** — Experiment E: elasticity, per-kind loss, predictors and cost, read from
+the exp_d checkpoints alone (no transcripts, no embedding model). **It has no argparse: any
+invocation, `--help` included, runs the full analysis and rewrites
+`experiments/output/exp_e/summary.txt` and `elasticity.png`.**
+
+**`exp_f_compress.py`** — Experiment F: selection by compressed novelty (`compress_select`, lazy
+greedy with zlib or lzma, each with and without supersession). Run through
+`exp_d_curves.py --grid exp_f`; reads `tfidf`, `leverage` and `supersede+leverage` from the exp_d
+checkpoints rather than re-running them.
+
+**`exp_g_novelty.py`** — Experiment G: leverage times word novelty (`novelty_select`) on the
+supersession pool at alpha 0.5 / 1 / 2, plus a per-token arm at 0.5 (ranked by gain per token).
+The per-token arm was first left off the grid deliberately; since 2026-09-29 it is part of the
+final grid. Run through `exp_d_curves.py --grid exp_g`; reads `leverage` and `supersede+leverage`
+from exp_d.
+
+**`exp_h_kinds.py`** — Experiment H: per-kind scoring on the supersession pool (`kind_select`),
+four arms that each take segment kind out of the shared-space competition: leverage in each
+kind's own space (`kind-space`), shared leverage rank-percentiled or z-scored within kind
+(`kind-norm-rank`, `kind-norm-z`), and the budget split into per-kind slices by pool-token share
+with one global spill pass (`kind-budget`). Run through `exp_d_curves.py --grid exp_h`; reads
+`leverage` and `supersede+leverage` from exp_d, and adds a kept-token share per kind table beside
+the pool's own shares.
+
+**`grid_status.py`** — a read-only progress view for a second terminal beside a running grid. It
+reads the checkpoints (and the runner's log with `--log`), never the transcripts, and writes
+nothing:
+
+```
+uv run python experiments/grid_status.py --grid exp_d --methods A,B --variants base --log PATH --watch --interval 10
+```
+
+## Surveys
+
+**`survey_paths.py`** — how much of a transcript is file paths, and what a substitution table
+would cost. Writes `experiments/output/survey/path_mass.txt`. Paths are counted with
+`paths.find_paths` over decoded text, exactly as `paths.build_table` counts them.
+
+**`survey_tool_output.py`** — what shapes sit inside `tool_result` blocks and how many tokens
+each accounts for, surveyed per block rather than per segment. Writes
+`experiments/output/survey/tool_output_shapes.txt`.
+
+Both take `--public-sample` and `--swe-gym-sample` and read the public corpora only (since
+2026-09-29, queue item 13), so their output is regenerable from `fetch_public.py` alone. Figures
+in `docs/PHASE2.md` dated earlier also counted local sessions.

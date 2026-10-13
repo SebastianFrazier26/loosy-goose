@@ -10,10 +10,9 @@ import hashlib
 import math
 import re
 from collections import Counter, defaultdict
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal
 
 import numpy as np
 import scipy.linalg
@@ -28,18 +27,6 @@ Strategy = Literal["leverage", "ridge", "cur_residual"]
 # so anything beyond roughly 2000 characters never reaches the model. Truncating up front keeps
 # the cache key honest about what was actually embedded.
 EMBED_MAX_CHARS = 2000
-
-
-class CompressFn(Protocol):
-    def __call__(
-        self,
-        segments: list[Segment],
-        keep_ratio: float,
-        *,
-        protect: ProtectPolicy = "all",
-        recency: float = 0.0,
-        seed: int = 0,
-    ) -> list[Segment]: ...
 
 
 @dataclass(frozen=True)
@@ -217,20 +204,6 @@ def cur_residual_scores(u: FloatArray, s: FloatArray, k: int, drop_top: int = 0)
     return scores
 
 
-def greedy_cur_select(z: FloatArray, k: int, budget_fn: Callable[[list[int]], bool]) -> list[int]:
-    """Direct CUR selection: walk the residual pivot order and keep a pick while
-    `budget_fn(picks_so_far + [candidate])` stays true; skip (do not stop at) candidates that do
-    not fit so smaller segments deeper in the order can still be used."""
-    if k < 1:
-        raise ValueError("k must be positive")
-    order, _ = cur_residual_order(np.asarray(z, dtype=np.float64)[:, :k])
-    picks: list[int] = []
-    for i in order:
-        if budget_fn([*picks, i]):
-            picks.append(i)
-    return picks
-
-
 def score_segments(x: FloatArray, config: CompressConfig) -> FloatArray:
     n = x.shape[0]
     if n == 0:
@@ -254,40 +227,15 @@ def compress(
     *,
     protect: ProtectPolicy = "all",
     recency: float = 0.0,
-    seed: int = 0,
     config: CompressConfig | None = None,
     cache_dir: Path | None = None,
 ) -> list[Segment]:
-    # `seed` is part of the shared compress contract; this method is deterministic and ignores it.
-    del seed
     cfg = config or CompressConfig()
     if not segments:
         return []
     x = embed_segments(segments, cfg.model_name, cache_dir)
     scores = score_segments(x, cfg)
     return select_by_score(segments, scores, keep_ratio, protect, recency)
-
-
-def make_compress(config: CompressConfig, cache_dir: Path | None = None) -> CompressFn:
-    def _compress(
-        segments: list[Segment],
-        keep_ratio: float,
-        *,
-        protect: ProtectPolicy = "all",
-        recency: float = 0.0,
-        seed: int = 0,
-    ) -> list[Segment]:
-        return compress(
-            segments,
-            keep_ratio,
-            protect=protect,
-            recency=recency,
-            seed=seed,
-            config=config,
-            cache_dir=cache_dir,
-        )
-
-    return _compress
 
 
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")

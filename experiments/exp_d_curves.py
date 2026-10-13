@@ -1,12 +1,14 @@
 """Phase 2 / Experiment D: the unified rate-distortion runner.
 
-Puts every method — baselines, Experiment A (as a labeller falsification check), Experiment B
-selection strategies, and the Experiment C stacked variants — on one rate-distortion curve per
-transcript, all competing at the identical token budget. This is the experiment that decides
-whether the eigen-machinery stays in the design (see docs/PHASE1.md, "Honest overall read").
+Puts every method — baselines, Experiment B selection strategies, and the Experiment C stacked
+variants — on one rate-distortion curve per transcript, all competing at the identical token
+budget. This is the experiment that decides whether the eigen-machinery stays in the design (see
+docs/PHASE1.md, "Honest overall read").
 
 Usage: uv run python experiments/exp_d_curves.py [--public-sample 8] [--swe-gym-sample 5]
                                                   [--only NAME_SUBSTR] [--limit N] [--force]
+                                                  [--grid exp_d|exp_f|exp_g|exp_h] [--methods A,B]
+                                                  [--variants K]
 Per transcript writes experiments/output/exp_d/<label>.json (checkpoint, skipped on rerun unless
 --force) and <label>.png, plus experiments/output/exp_d/summary.txt aggregated across whatever
 has been checkpointed so far. Local sessions are private: only aggregate numbers and the
@@ -23,7 +25,7 @@ import sys
 import time
 import traceback
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
@@ -32,15 +34,14 @@ import matplotlib
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-from loosy_goose import embed, metrics
-from loosy_goose.budget import ProtectPolicy, forced_mask, token_budget
+from loosy_goose import compress_select, embed, kind_select, metrics, novelty_select
+from loosy_goose.budget import ProtectPolicy, select_with_budget, token_budget
 from loosy_goose.code import TRANSFORMS_VERSION, quantize_segment
 from loosy_goose.paths import PATHS_VERSION, PathTable, build_table, substitute
 from loosy_goose.segment import ATOMS_VERSION, Segment, segment
 from loosy_goose.select import CompressConfig, Strategy, embed_segments, score_segments
-from loosy_goose.supersede import apply_supersession
+from loosy_goose.supersede import SUPERSEDE_VERSION, apply_supersession
 from loosy_goose.tokens import count_tokens
-from loosy_goose.topics import compress as topics_compress
 from loosy_goose.transcript import Transcript, load_claude_code_jsonl, load_messages_json
 
 matplotlib.use("Agg")
@@ -86,7 +87,6 @@ SPECTRAL_METHODS = (
     "leverage",
     "ridge",
     "cur_residual",
-    "topics",
     "supersede+leverage",
     "band+leverage",
     "supersede+band+leverage",
@@ -94,15 +94,55 @@ SPECTRAL_METHODS = (
 PROTECT_CODE_ONLY_METHODS = ("tfidf", "leverage")
 # Methods that put segment text through `code.quantize_segment`, and so depend on the shrinker's
 # behaviour rather than only on the segmenter's output. Their records carry TRANSFORMS_VERSION,
-# so rewriting the shrinker recomputes them and leaves the other nine methods' records valid.
+# so rewriting the shrinker recomputes them and leaves the other eight methods' records valid.
 # The list is hand-written, which is a real risk — `test_transforming_methods_lists_every_method_
 # that_shrinks` detects the true set by observation and fails if this drifts from it.
 TRANSFORMING_METHODS = ("band+leverage", "supersede+band+leverage")
+# Experiment F's compression-based selectors (experiments/exp_f_compress.py). Named here rather
+# than there because every stamp below is keyed on method name and this module cannot import that
+# one; a test pins the two lists together.
+COMPRESS_SCORERS = ("zlib-lazy", "lzma-lazy")
+COMPRESS_SELECT_METHODS = COMPRESS_SCORERS + tuple(f"supersede+{n}" for n in COMPRESS_SCORERS)
+# Experiment G's leverage + word-novelty selector (experiments/exp_g_novelty.py), one method name
+# per alpha rather than a Variant field: a method name leaves Variant keys, the record's `variant`
+# fields and the base-variant reference matching exactly as they are. Named here for the same
+# reason as COMPRESS_SCORERS.
+NOVELTY_ALPHAS = (0.5, 1.0, 2.0)
+NOVELTY_METHODS = tuple(f"supersede+leverage+novelty@{a:g}" for a in NOVELTY_ALPHAS)
+# The same selector ranked by gain per token (`novelty_select(per_token=True)`). Its own names
+# rather than a stamp change, so the raw arms' stored records keep their identities.
+NOVELTY_PER_TOKEN_ALPHAS = (0.5,)
+NOVELTY_PER_TOKEN_METHODS = tuple(
+    f"supersede+leverage+novelty-per-token@{a:g}" for a in NOVELTY_PER_TOKEN_ALPHAS
+)
+# Experiment H's per-kind scoring arms (experiments/exp_h_kinds.py, `loosy_goose.kind_select`).
+# Named here for the same reason as COMPRESS_SCORERS.
+KIND_METHODS = (
+    "supersede+leverage+kind-space",
+    "supersede+leverage+kind-norm-rank",
+    "supersede+leverage+kind-norm-z",
+    "supersede+leverage+kind-budget",
+)
+# Methods that run `supersede.apply_supersession` on their candidate pool, so their records
+# carry SUPERSEDE_VERSION the way the shrinking methods carry TRANSFORMS_VERSION. Hand-written
+# like that list and guarded the same way, by `test_superseding_methods_lists_every_method_
+# that_supersedes`.
+SUPERSEDING_METHODS = (
+    "supersede+tfidf",
+    "supersede+leverage",
+    "supersede+band+leverage",
+    *(f"supersede+{n}" for n in COMPRESS_SCORERS),
+    *NOVELTY_METHODS,
+    *NOVELTY_PER_TOKEN_METHODS,
+    *KIND_METHODS,
+)
 # Version of the runner's own transform: `_band` hands quantize_segment the sweep's keep
 # ratio as its fidelity knob, so trimming depth follows the global ratio. That mapping lives
 # here and not in code.py, so changing it moves neither segments_digest nor
 # TRANSFORMS_VERSION — stored band records would keep loading as valid while describing a
 # depth policy that no longer exists. Bump on any change to what `_band` passes as `quality`.
+# A `tool_depth` variant's override travels in its variant key, not here: the base mapping is
+# what this stamps, and the base variant still passes no override.
 BAND_QUALITY_VERSION = 1
 # Methods whose selection runs through CompressConfig, so a scoring knob such as drop_top can
 # change their behaviour. The band+ stacks are deliberately excluded from the drop_top variants:
@@ -111,10 +151,11 @@ BAND_QUALITY_VERSION = 1
 # expect. See docs/PHASE1.md on measuring one thing at a time.
 SPECTRAL_SCORED = ("leverage", "ridge", "cur_residual", "supersede+leverage")
 # Methods the path-substitution arms are swept on. Deliberately a subset: three arms across all
-# eleven methods would more than double a grid that already takes ~2h, and the question the arms
+# ten methods would more than double a grid that already takes ~2h, and the question the arms
 # ask ("does naming each file once help?") is answered by the strongest non-spectral control plus
-# the spectral methods that currently lead. `random`/`recency` cannot be helped by better scoring,
-# and `topics` was cut in Phase 1.
+# the spectral methods that currently lead. `random`/`recency` cannot be helped by better scoring.
+# (`topics`, cut as a selector in Phase 1, left the grid entirely on 2026-09-18; it stays the
+# Phase 1 labeller.)
 PATH_METHODS = ("tfidf", "leverage", "ridge", "supersede+leverage", "supersede+band+leverage")
 # A genuine tradeoff rather than a tuning constant, so it is measured rather than picked: at 2
 # the table holds only paths that repeat, which is token-optimal, and at 1 it holds every path,
@@ -125,14 +166,20 @@ PATH_METHODS = ("tfidf", "leverage", "ridge", "supersede+leverage", "supersede+b
 PATH_MIN_MENTIONS = 2
 PATH_MIN_MENTIONS_ALT = 1
 # Jobs between incremental checkpoint writes. A job in this grid costs ~1-2s (the largest
-# transcript spends ~19 min on its 600), while a full checkpoint dump is ~500 KB and tens of
-# milliseconds — two orders of magnitude apart. So 10 keeps the write overhead under ~0.5% of run
-# time while capping what a kill can destroy at ~20s of work instead of a whole transcript.
+# transcript spent ~19 min on the 600-job grid), while a full checkpoint dump is ~500 KB and
+# tens of milliseconds — two orders of magnitude apart. So 10 keeps the write overhead under
+# ~0.5% of run time while capping what a kill can destroy at ~20s of work instead of a whole
+# transcript.
 FLUSH_EVERY = 10
 
 # Which of path substitution's three separable effects an arm turns on. See docs/PHASE2.md,
 # "The path arms": the base variant is arm A.
 PathArm = Literal["off", "score_only", "table_only", "full"]
+# How deep `_band` trims `tool_use` relative to the sweep's keep ratio. `follow` is the base
+# mapping (the override stays None, so `quantize_segment` uses the global ratio); the others test
+# PHASE2's "Decided 2026-09-10" argument that this channel should be shrunk hard whatever the
+# rate — two flat depths, and one that follows the ratio but twice as steeply.
+ToolDepth = Literal["follow", "flat0.5", "flat0.25", "half"]
 
 
 @dataclass(frozen=True)
@@ -145,7 +192,8 @@ class Variant:
     drop_top: int = 0
     paths: PathArm = "off"
     path_min_mentions: int = PATH_MIN_MENTIONS
-    # Methods this variant is meaningful for; None means every method in METHODS. A scoring knob
+    tool_depth: ToolDepth = "follow"
+    # Methods this variant is meaningful for; None means every method in the grid. A scoring knob
     # applied to `random` would just duplicate the baseline record at twice the cost.
     applies_to: tuple[str, ...] | None = None
 
@@ -157,6 +205,7 @@ class Variant:
             f"drop_top={self.drop_top}" if self.drop_top else "",
             f"paths={self.paths}" if self.paths != "off" else "",
             f"mm={self.path_min_mentions}" if mentions else "",
+            f"tool_depth={self.tool_depth}" if self.tool_depth != "follow" else "",
         ]
         return "+".join(p for p in parts if p) or "base"
 
@@ -165,6 +214,18 @@ class Variant:
 
     def compress_config(self, strategy: Strategy) -> CompressConfig:
         return CompressConfig(strategy=strategy, drop_top=self.drop_top)
+
+    def tool_quality(self, ratio: float) -> float | None:
+        """The `tool_use` depth `_band` hands `quantize_segment` at this keep ratio; None means
+        no override, so the channel follows the global ratio as the base mapping has always
+        done."""
+        if self.tool_depth == "flat0.5":
+            return 0.5
+        if self.tool_depth == "flat0.25":
+            return 0.25
+        if self.tool_depth == "half":
+            return ratio / 2
+        return None
 
     @property
     def substitutes(self) -> bool:
@@ -191,6 +252,11 @@ VARIANTS: tuple[Variant, ...] = (
     Variant(paths="table_only", path_min_mentions=PATH_MIN_MENTIONS_ALT, applies_to=PATH_METHODS),
     Variant(paths="full", applies_to=PATH_METHODS),
     Variant(paths="full", path_min_mentions=PATH_MIN_MENTIONS_ALT, applies_to=PATH_METHODS),
+    # Only the banding methods route `tool_use` through `quantize_segment`, so the depth knob
+    # can change nothing else's output.
+    Variant(tool_depth="flat0.5", applies_to=TRANSFORMING_METHODS),
+    Variant(tool_depth="flat0.25", applies_to=TRANSFORMING_METHODS),
+    Variant(tool_depth="half", applies_to=TRANSFORMING_METHODS),
 )
 
 
@@ -262,48 +328,10 @@ def _iter_sources(
     yield from iter_swe_gym(swe_gym_sample)
 
 
-def _select_with_budget(
-    segments: list[Segment],
-    scores: np.ndarray,
-    budget: int,
-    protect: ProtectPolicy = "none",
-    emit: list[Segment] | None = None,
-) -> list[Segment]:
-    """`budget.select_by_score`'s greedy rule, but against an explicit token budget rather than
-    one re-derived from `segments`. The stacked methods hand this a segment list that has already
-    shrunk (supersession) or changed token cost (banding); re-deriving the budget from that
-    smaller/cheaper list would give each stage of a stack a smaller budget than the single-stage
-    methods get on the full transcript, which breaks the one contract this experiment depends on.
-
-    `emit` is the parallel list actually written out, when it differs from the one scored: arm B
-    scores substituted text but emits the original, so its token costs must be the original's
-    too, or the arm would be handed free budget it never earned.
-    """
-    n = len(segments)
-    if n == 0:
-        return []
-    raw = np.asarray(scores, dtype=np.float64).reshape(-1)
-    if raw.shape[0] != n:
-        raise ValueError("scores must have one entry per segment")
-    out = emit if emit is not None else segments
-    if len(out) != n:
-        raise ValueError("emit must have one entry per scored segment")
-    costs = [count_tokens(s.text) for s in out]
-    keep = forced_mask(out, protect)
-    used = sum(c for c, k in zip(costs, keep, strict=True) if k)
-    if used < budget:
-        order = sorted((i for i in range(n) if not keep[i]), key=lambda i: (-raw[i], i))
-        for i in order:
-            if used + costs[i] <= budget:
-                keep[i] = True
-                used += costs[i]
-    return [s for s, k in zip(out, keep, strict=True) if k]
-
-
 def _tfidf_scores(segments: list[Segment]) -> np.ndarray:
     # Duplicates experiments/baselines.py's tfidf vectorizer config rather than importing it,
     # because that function returns selected Segments (via select_by_score's own budget), and the
-    # stacked supersede+tfidf method needs bare scores to feed _select_with_budget instead.
+    # stacked supersede+tfidf method needs bare scores to feed select_with_budget instead.
     if not segments:
         return np.zeros(0)
     vec = TfidfVectorizer(token_pattern=r"[A-Za-z_][\w./-]+|\d+", sublinear_tf=True)
@@ -322,10 +350,15 @@ def _leverage_scores(segments: list[Segment], ctx: RunContext) -> np.ndarray:
     return score_segments(x, ctx.variant.compress_config("leverage"))
 
 
-def _band(segments: list[Segment], quality: float) -> list[Segment]:
+def _band(
+    segments: list[Segment], quality: float, tool_quality: float | None = None
+) -> list[Segment]:
     # quality == keep_ratio: the quantity available at each sweep point is exactly the fidelity
     # knob quantize_segment expects, and both already live on [0, 1].
-    return [quantize_segment(s, quality) if s.kind in CODE_KINDS else s for s in segments]
+    return [
+        quantize_segment(s, quality, tool_quality=tool_quality) if s.kind in CODE_KINDS else s
+        for s in segments
+    ]
 
 
 def _pool(segs: list[Segment], ctx: RunContext) -> tuple[list[Segment], list[Segment] | None]:
@@ -360,7 +393,7 @@ def _run_tfidf(
     # path arms need the scored list and the emitted list to be separable, which the shared
     # `compress` contract does not expose.
     scoring, emit = _pool(segs, ctx)
-    return _select_with_budget(
+    return select_with_budget(
         scoring, _tfidf_scores(scoring), token_budget(segs, ratio), protect, emit
     )
 
@@ -372,16 +405,9 @@ def _run_spectral(strategy: Strategy) -> MethodFn:
         scoring, emit = _pool(segs, ctx)
         x = embed_segments(scoring, embed.SELECT_MODEL, cache_dir=ctx.cache_dir)
         scores = score_segments(x, ctx.variant.compress_config(strategy))
-        return _select_with_budget(scoring, scores, token_budget(segs, ratio), protect, emit)
+        return select_with_budget(scoring, scores, token_budget(segs, ratio), protect, emit)
 
     return run
-
-
-def _run_topics(
-    segs: list[Segment], ratio: float, protect: ProtectPolicy, ctx: RunContext
-) -> list[Segment]:
-    del ctx
-    return topics_compress(segs, ratio, protect=protect)
 
 
 def _run_supersede_tfidf(
@@ -389,7 +415,7 @@ def _run_supersede_tfidf(
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
     scoring, emit = _pool(apply_supersession(segs), ctx)
-    return _select_with_budget(scoring, _tfidf_scores(scoring), budget, protect, emit)
+    return select_with_budget(scoring, _tfidf_scores(scoring), budget, protect, emit)
 
 
 def _run_supersede_leverage(
@@ -397,23 +423,24 @@ def _run_supersede_leverage(
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
     scoring, emit = _pool(apply_supersession(segs), ctx)
-    return _select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
+    return select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
 
 
 def _run_band_leverage(
     segs: list[Segment], ratio: float, protect: ProtectPolicy, ctx: RunContext
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
-    scoring, emit = _pool(_band(segs, ratio), ctx)
-    return _select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
+    scoring, emit = _pool(_band(segs, ratio, ctx.variant.tool_quality(ratio)), ctx)
+    return select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
 
 
 def _run_supersede_band_leverage(
     segs: list[Segment], ratio: float, protect: ProtectPolicy, ctx: RunContext
 ) -> list[Segment]:
     budget = token_budget(segs, ratio)
-    scoring, emit = _pool(_band(apply_supersession(segs), ratio), ctx)
-    return _select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
+    banded = _band(apply_supersession(segs), ratio, ctx.variant.tool_quality(ratio))
+    scoring, emit = _pool(banded, ctx)
+    return select_with_budget(scoring, _leverage_scores(scoring, ctx), budget, protect, emit)
 
 
 METHODS: dict[str, MethodFn] = {
@@ -423,12 +450,32 @@ METHODS: dict[str, MethodFn] = {
     "leverage": _run_spectral("leverage"),
     "ridge": _run_spectral("ridge"),
     "cur_residual": _run_spectral("cur_residual"),
-    "topics": _run_topics,
     "supersede+tfidf": _run_supersede_tfidf,
     "supersede+leverage": _run_supersede_leverage,
     "band+leverage": _run_band_leverage,
     "supersede+band+leverage": _run_supersede_band_leverage,
 }
+
+
+@dataclass(frozen=True)
+class Grid:
+    """One sweep: which jobs it plans and where its checkpoints and summary live.
+
+    `out` must differ between grids, not for tidiness: analyse() evicts every prior record whose
+    identity is outside the grid's full plan, so a second grid sharing a folder would delete the
+    first grid's records on its next run, and the first would return the favour.
+    """
+
+    name: str
+    out: Path
+    methods: Mapping[str, MethodFn]
+    variants: tuple[Variant, ...]
+    # Swept at protect=code_only as well, on the base variant only.
+    protect_code_only: tuple[str, ...]
+    write_summary: Callable[[list[dict[str, Any]], Path], None]
+    plots: bool
+    ratios: tuple[float, ...] = KEEP_RATIOS
+
 
 # Bump only when a record's FIELDS change shape or meaning — that is the one thing a checkpoint
 # cannot recover from, so it discards the file. Adding a method, a ratio or a variant does not
@@ -439,20 +486,25 @@ SCHEMA_VERSION = 3
 
 
 def segments_digest(segments: list[Segment]) -> str:
-    """Fingerprint of the segmenter's output for a transcript.
+    """Fingerprint of the segmenter's OUTPUT for a transcript (each segment's kind and text),
+    folded with ATOMS_VERSION and SUPERSEDE_VERSION.
 
-    This is the checkpoint's *input* identity, and it is the only thing that can invalidate a
-    whole file: if the loader or segmenter changes, every record was scored against text that no
-    longer exists. Downstream text transformations (banding, and later path substitution and the
-    per-kind shrinkers) are deliberately NOT in here — they belong to the variant that produced a
-    record, so a run with substitution on and a run with it off coexist in one checkpoint rather
-    than evicting each other.
+    This is the checkpoint's input identity, and the only thing that can invalidate a whole file:
+    if the loader, segmenter, atom extractor or supersession pass changes, every record was scored
+    against a text or denominator that no longer exists. Downstream text transforms (banding, path
+    substitution) are deliberately NOT in here — they belong to the variant and stamps that
+    produced a record, so a run with substitution on and a run with it off coexist in one
+    checkpoint rather than evicting each other.
     """
     h = hashlib.sha256()
     # The atom extractor is part of the input identity even though it changes no segment text:
     # atoms are the recall metric's denominator, so a changed extractor makes old records
-    # incomparable to new ones in exactly the way a changed segmenter does.
+    # incomparable to new ones in exactly the way a changed segmenter does. Supersession is in
+    # here for the same reason: `apply_supersession` builds `final_atoms`, which is every
+    # record's denominator for `atom_recall_final`, not only the supersede+* methods'.
     h.update(f"atoms={ATOMS_VERSION}".encode())
+    h.update(b"\x02")
+    h.update(f"supersede={SUPERSEDE_VERSION}".encode())
     h.update(b"\x02")
     for s in segments:
         h.update(s.kind.encode("utf-8"))
@@ -478,26 +530,46 @@ class Job:
             transforms_stamp(self.method),
             paths_stamp(self.variant),
             band_quality_stamp(self.method),
+            supersede_stamp(self.method),
+            select_stamp(self.method),
         )
 
 
-def plan_jobs() -> list[Job]:
-    """Every (method, protect, ratio, variant) combination the current configuration asks for.
-    Order puts the base variant first so an interrupted run still leaves a usable baseline."""
+def plan_jobs(
+    methods: Collection[str] | None = None,
+    variants: Collection[str] | None = None,
+    *,
+    grid: Grid | None = None,
+) -> list[Job]:
+    """Every (method, protect, ratio, variant) combination `grid` (default EXP_D) asks for.
+    Order puts the base variant first so an interrupted run still leaves a usable baseline.
+
+    `methods` and `variants` (variant keys) narrow the plan for a partial run — the way to
+    measure one question in hours instead of re-running the whole grid for a day. Records it
+    leaves out are reported as missing cells, never averaged, and a later full run reuses what
+    this one wrote."""
+    # None rather than an EXP_D default: EXP_D holds the summary writer, which is defined below.
+    g = EXP_D if grid is None else grid
     jobs: list[Job] = []
-    for variant in VARIANTS:
-        for name in METHODS:
+    for variant in g.variants:
+        if variants is not None and variant.key() not in variants:
+            continue
+        for name in g.methods:
+            if methods is not None and name not in methods:
+                continue
             if variant.covers(name):
-                jobs += [Job(name, "none", r, variant) for r in KEEP_RATIOS]
+                jobs += [Job(name, "none", r, variant) for r in g.ratios]
         # protect=code_only exists to price the old binary protect flag against protect=none.
         # That is a question about the baseline, not about any knob a variant turns, so it is
         # swept on the base variant alone. Guarding only the path arms left 36 drop_top x
         # code_only records that every table, curve and plot filtered back out again.
         if variant.key() != BASE_VARIANT.key():
             continue
-        for name in PROTECT_CODE_ONLY_METHODS:
+        for name in g.protect_code_only:
+            if methods is not None and name not in methods:
+                continue
             if variant.covers(name):
-                jobs += [Job(name, "code_only", r, variant) for r in KEEP_RATIOS]
+                jobs += [Job(name, "code_only", r, variant) for r in g.ratios]
     return jobs
 
 
@@ -521,10 +593,33 @@ def band_quality_stamp(method: str) -> int:
     return BAND_QUALITY_VERSION if method in TRANSFORMING_METHODS else 0
 
 
+def supersede_stamp(method: str) -> int:
+    """The supersession-pass version a method's results depend on; 0 for methods that never
+    run it."""
+    return SUPERSEDE_VERSION if method in SUPERSEDING_METHODS else 0
+
+
+def select_stamp(method: str) -> int:
+    """The version of the selector module a method's results depend on, compress_select's,
+    novelty_select's or kind_select's; 0 for every other method. They share one identity field
+    because no method uses more than one, which leaves RecordIdentity, and so every exp_d
+    identity, unchanged.
+
+    Read off the module at call time rather than bound at import, so the constant a bump edits
+    is the one identity sees."""
+    if method in COMPRESS_SELECT_METHODS:
+        return compress_select.SELECT_VERSION
+    if method in NOVELTY_METHODS or method in NOVELTY_PER_TOKEN_METHODS:
+        return novelty_select.NOVELTY_VERSION
+    if method in KIND_METHODS:
+        return kind_select.KIND_SELECT_VERSION
+    return 0
+
+
 class RecordIdentity(NamedTuple):
     """What makes a stored result the answer to a specific question.
 
-    A NamedTuple rather than a bare tuple on purpose: this grew from four fields to seven, and
+    A NamedTuple rather than a bare tuple on purpose: this grew from four fields to nine, and
     the positional unpack left behind by the five-field version crashed `_write_summary`
     — the last step of a multi-hour run. Fields are read by name so adding one cannot do that
     again.
@@ -537,10 +632,12 @@ class RecordIdentity(NamedTuple):
     # Every stamp is absent on records written before it existed, and defaults to 0. That is what
     # makes the scoping work: a method that never shrinks carries stamp 0 too, so its old records
     # stay valid, while a shrinking method's old record is recomputed. Same for the path arms,
-    # and for the banding-depth mapping this file owns itself.
+    # for the banding-depth mapping this file owns itself, and for the supersession pass.
     transforms_version: int
     paths_version: int
     band_quality_version: int
+    supersede_version: int
+    select_version: int
 
 
 def _record_identity(rec: dict[str, Any]) -> RecordIdentity:
@@ -552,6 +649,8 @@ def _record_identity(rec: dict[str, Any]) -> RecordIdentity:
         int(rec.get("transforms_version", 0)),
         int(rec.get("paths_version", 0)),
         int(rec.get("band_quality_version", 0)),
+        int(rec.get("supersede_version", 0)),
+        int(rec.get("select_version", 0)),
     )
 
 
@@ -609,6 +708,9 @@ def _record(
         extra_tokens=table_tokens,
     )
     kept_tokens = sum(count_tokens(s.text) for s in kept)
+    kept_by_kind: Counter[str] = Counter()
+    for s in kept:
+        kept_by_kind[s.kind] += count_tokens(s.text)
     return {
         "method": method,
         "protect": protect,
@@ -616,6 +718,9 @@ def _record(
         "budget_tokens": budget,
         "kept_segments": len(kept),
         "kept_tokens": kept_tokens,
+        # Additive, so no SCHEMA_VERSION bump: records written before it simply lack the key, and
+        # readers treat that as "not measured" (exp_h's per-kind share table).
+        "kept_tokens_by_kind": dict(kept_by_kind),
         "table_tokens": table_tokens,
         # A stacked method's candidate pool (post-supersession and/or post-banding) can be
         # smaller than the requested budget, so the greedy selector keeps everything it has and
@@ -627,10 +732,13 @@ def _record(
         "paths_version": paths_stamp(variant),
         "transforms_version": transforms_stamp(method),
         "band_quality_version": band_quality_stamp(method),
+        "supersede_version": supersede_stamp(method),
+        "select_version": select_stamp(method),
         "variant": {
             "drop_top": variant.drop_top,
             "paths": variant.paths,
             "path_min_mentions": variant.path_min_mentions,
+            "tool_depth": variant.tool_depth,
         },
         "compression_ratio": ev["compression_ratio"],
         "atom_recall": ev["atom_recall"],
@@ -650,22 +758,32 @@ def _job_desc(job: Job) -> str:
     return f"{job.method} [{job.variant.key()}] protect={job.protect} r={job.ratio}"
 
 
+def _clear_cache(cache_dir: Path) -> None:
+    if cache_dir.is_dir():
+        for p in cache_dir.iterdir():
+            if p.is_file():
+                p.unlink()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+
 def analyse(
     label: str,
     public: bool,
     t: Transcript,
     cache_dir: Path,
     prior: dict[str, Any] | None = None,
+    methods: Collection[str] | None = None,
+    variants: Collection[str] | None = None,
     progress: Callable[[str], None] | None = None,
     checkpoint: Callable[[dict[str, Any]], None] | None = None,
+    grid: Grid | None = None,
 ) -> dict[str, Any]:
-    """Run every planned job that `prior` does not already hold, and merge the two.
+    """Run every job `grid` (default EXP_D) plans that `prior` does not already hold, and merge
+    the two.
 
     `prior` is a checkpoint whose segments_digest already matched, so its records were scored
     against the same segmenter output this run produces. Records it holds for jobs still in the
-    plan are reused verbatim; records for jobs no longer planned are kept too, since a variant
-    that has been commented out of VARIANTS is cheaper to leave on disk than to re-measure if it
-    comes back.
+    grid's full plan are reused verbatim; records for jobs no longer planned are dropped.
 
     `checkpoint` is called with the partially-filled result every FLUSH_EVERY jobs and after every
     failure, so a kill mid-transcript costs seconds rather than everything this transcript has
@@ -707,15 +825,35 @@ def analyse(
         if progress is not None:
             progress("segments digest changed, discarding all prior records")
         prior = None
-    kept_records = list(prior.get("records", [])) if prior else []
+    # Eviction is against the FULL plan, not this run's filter, so a partial run leaves the other
+    # arms' records alone. What it does evict is a record whose stamps no job carries any more:
+    # a bumped TRANSFORMS_VERSION re-runs the job, but without this the stale record stayed in
+    # the checkpoint beside the fresh one and every table averaged both.
+    g = EXP_D if grid is None else grid
+    planned = {j.identity() for j in plan_jobs(grid=g)}
+    prior_records = list(prior.get("records", [])) if prior else []
+    kept_records = [r for r in prior_records if _record_identity(r) in planned]
     have = {_record_identity(r) for r in kept_records}
-    todo = [j for j in plan_jobs() if j.identity() not in have]
+    todo = [j for j in plan_jobs(methods, variants, grid=g) if j.identity() not in have]
     if progress is not None:
+        if len(kept_records) < len(prior_records):
+            progress(f"{len(prior_records) - len(kept_records)} stale records evicted")
         progress(f"{len(kept_records)} records reused, {len(todo)} to run")
     if not todo:
         result["records"] = kept_records
         result["supersede_ceiling"] = prior.get("supersede_ceiling", 1.0) if prior else 1.0
+        if prior and "pool_tokens_by_kind" in prior:
+            result["pool_tokens_by_kind"] = prior["pool_tokens_by_kind"]
         return result
+    if not kept_records:
+        # The embedding cache outlives the run, and a text-transforming method whose pool happens
+        # to be byte-identical to an earlier run's reads its vectors back in ~1s where a cold job
+        # is ~45s — which corrupted E4's elapsed_seconds column. A transcript starting from
+        # nothing therefore starts cold: timing is then cold-then-warm within this run only. The
+        # wipe is per transcript and safe because no two transcripts share a text list.
+        _clear_cache(cache_dir)
+        if progress is not None:
+            progress("embedding cache cleared (no records reused)")
 
     # The supersession pass does not depend on keep_ratio, so its ceiling is one number per
     # transcript: the largest achievable compression_ratio any supersede+* method can reach
@@ -723,6 +861,10 @@ def analyse(
     superseded = apply_supersession(segs)
     superseded_tokens = sum(count_tokens(s.text) for s in superseded)
     result["supersede_ceiling"] = superseded_tokens / total_tokens if total_tokens else 1.0
+    pool_by_kind: Counter[str] = Counter()
+    for s in superseded:
+        pool_by_kind[s.kind] += count_tokens(s.text)
+    result["pool_tokens_by_kind"] = dict(pool_by_kind)
     # Computed once from the ORIGINAL segments (not from whatever a given method kept), so every
     # method/ratio is scored against the identical final-state atom set — see metrics.py.
     final_atoms = {a for s in superseded for a in s.atoms}
@@ -742,7 +884,7 @@ def analyse(
             checkpoint(result)
 
     for n, job in enumerate(todo, start=1):
-        fn = METHODS[job.method]
+        fn = g.methods[job.method]
         ctx = RunContext(
             cache_dir=cache_dir,
             variant=job.variant,
@@ -796,12 +938,12 @@ def analyse(
     return result
 
 
-def _plot(label: str, records: list[dict[str, Any]]) -> None:
+def _plot(label: str, records: list[dict[str, Any]], grid: Grid) -> None:
     by_method: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in records:
         if r["protect"] == "none":
             by_method[r["method"]].append(r)
-    names = list(METHODS)
+    names = list(grid.methods)
     cmap = plt.get_cmap("tab20")
     colors = {name: cmap(i / max(len(names) - 1, 1)) for i, name in enumerate(names)}
 
@@ -832,7 +974,7 @@ def _plot(label: str, records: list[dict[str, Any]]) -> None:
     axes[2].legend(fontsize=7, ncols=1, frameon=False, loc="lower right")
     fig.suptitle(f"{label}  (protect=none)")
     fig.tight_layout()
-    fig.savefig(OUT / f"{label}.png", dpi=110)
+    fig.savefig(grid.out / f"{label}.png", dpi=110)
     plt.close(fig)
 
 
@@ -1232,7 +1374,7 @@ def _variant_table(results: list[dict[str, Any]]) -> list[str]:
     ]
     if not keys:
         return []
-    header = f"{'method / variant':<34}" + "".join(
+    header = f"{'method / variant':<48}" + "".join(
         f"{'d recall_f@' + f'{1 / r:.0f}x':>16}" for r in AGGRESSIVE_RATES
     )
     out = [
@@ -1257,7 +1399,7 @@ def _variant_table(results: list[dict[str, Any]]) -> list[str]:
                 bv = _weighted_at_rate(base, rate, "recall_final")
                 vv = _weighted_at_rate(variant, rate, "recall_final")
                 cells.append("n/a" if bv is None or vv is None else f"{vv - bv:+.3f}")
-            out.append(f"{method + '  ' + key:<34}" + "".join(f"{c:>16}" for c in cells))
+            out.append(f"{method + '  ' + key:<48}" + "".join(f"{c:>16}" for c in cells))
     return out
 
 
@@ -1453,7 +1595,7 @@ def _path_table_cost_table(results: list[dict[str, Any]]) -> list[str]:
     return out
 
 
-def failure_report(results: list[dict[str, Any]]) -> list[str]:
+def failure_report(results: list[dict[str, Any]], grid: Grid | None = None) -> list[str]:
     """Failed and missing cells, first thing in the summary.
 
     Counts both, because they are different holes: a failure is a job that raised this run, while
@@ -1462,7 +1604,7 @@ def failure_report(results: list[dict[str, Any]]) -> list[str]:
     cells exist, so a silent hole reads as a normal curve measured on fewer points — which is why
     this is loud and at the top rather than a footnote.
     """
-    planned = {j.identity() for j in plan_jobs()}
+    planned = {j.identity() for j in plan_jobs(grid=grid)}
     rows: list[str] = []
     errors: Counter[tuple[str, str, str]] = Counter()
     total_failed = 0
@@ -1501,12 +1643,14 @@ def failure_report(results: list[dict[str, Any]]) -> list[str]:
     return out
 
 
-def _write_summary(results: list[dict[str, Any]]) -> None:
+def _write_summary(results: list[dict[str, Any]], out: Path) -> None:
+    """Experiment D's summary. Its tables read METHODS, VARIANTS and the method subsets above
+    directly: they are exp_d's report, not a generic one, and another grid writes its own."""
     base_results = _base_only(results)
     idx = _index_records(base_results)
     curves = _curves_by_method(base_results)
     lines = [f"{len(results)} transcripts checkpointed.", ""]
-    lines += failure_report(results)
+    lines += failure_report(results, grid=EXP_D)
     lines += _aggressive_rate_table(curves)
     lines += _knee_table(curves)
     lines += _aggregate_table(idx)
@@ -1518,8 +1662,33 @@ def _write_summary(results: list[dict[str, Any]]) -> None:
     lines += _path_arm_table(results)
     lines += _path_table_cost_table(results)
     text = "\n".join(lines)
-    (OUT / "summary.txt").write_text(text + "\n", encoding="utf-8")
+    (out / "summary.txt").write_text(text + "\n", encoding="utf-8")
     print("\n" + text)
+
+
+EXP_D = Grid(
+    name="exp_d",
+    out=OUT,
+    methods=METHODS,
+    variants=VARIANTS,
+    protect_code_only=PROTECT_CODE_ONLY_METHODS,
+    write_summary=_write_summary,
+    plots=True,
+)
+GRIDS: dict[str, Grid] = {"exp_d": EXP_D}
+
+
+def grids() -> dict[str, Grid]:
+    """GRIDS with the grids other modules define registered into it. Those modules import this
+    one, so they are resolved on call; importing them at module level would be a cycle."""
+    from experiments.exp_f_compress import EXP_F
+    from experiments.exp_g_novelty import EXP_G
+    from experiments.exp_h_kinds import EXP_H
+
+    GRIDS.setdefault(EXP_F.name, EXP_F)
+    GRIDS.setdefault(EXP_G.name, EXP_G)
+    GRIDS.setdefault(EXP_H.name, EXP_H)
+    return GRIDS
 
 
 def _write_checkpoint(out_path: Path, payload: dict[str, Any]) -> None:
@@ -1557,6 +1726,16 @@ def _load_checkpoint(out_path: Path, force: bool) -> tuple[dict[str, Any] | None
     return candidate, None
 
 
+def _parse_names(raw: str | None, known: Collection[str], what: str) -> list[str] | None:
+    if raw is None:
+        return None
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        raise SystemExit(f"unknown {what}(s): {', '.join(unknown)}; known: {', '.join(known)}")
+    return names
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--public-sample", type=int, default=8)
@@ -1564,9 +1743,28 @@ def main() -> int:
     parser.add_argument("--only", type=str, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--methods",
+        type=str,
+        default=None,
+        help="comma-separated method names to run (partial run)",
+    )
+    parser.add_argument(
+        "--variants",
+        type=str,
+        default=None,
+        help="comma-separated variant keys, e.g. base,drop_top=2",
+    )
+    registry = grids()
+    parser.add_argument("--grid", choices=sorted(registry), default=EXP_D.name)
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
-    OUT.mkdir(parents=True, exist_ok=True)
+    grid = registry[args.grid]
+    methods = _parse_names(args.methods, grid.methods, "method")
+    variants = _parse_names(args.variants, [v.key() for v in grid.variants], "variant")
+    if methods or variants:
+        print(f"partial run: methods={methods or 'all'} variants={variants or 'all'}", flush=True)
+    grid.out.mkdir(parents=True, exist_ok=True)
     CACHE.mkdir(parents=True, exist_ok=True)
 
     results: list[dict[str, Any]] = []
@@ -1576,7 +1774,7 @@ def main() -> int:
             continue
         if args.limit is not None and n_done >= args.limit:
             break
-        out_path = OUT / f"{label}.json"
+        out_path = grid.out / f"{label}.json"
         prior, discard_reason = _load_checkpoint(out_path, args.force)
         if prior is None and discard_reason:
             print(f"[{label}] prior checkpoint discarded ({discard_reason})", flush=True)
@@ -1587,10 +1785,13 @@ def main() -> int:
             t,
             CACHE,
             prior=prior,
+            methods=methods,
+            variants=variants,
             progress=lambda msg, label=label: print(  # type: ignore[misc]
                 f"{time.strftime('%H:%M:%S')} [{label}] {msg}", flush=True
             ),
             checkpoint=lambda payload, out_path=out_path: _write_checkpoint(out_path, payload),  # type: ignore[misc]
+            grid=grid,
         )
         elapsed = time.perf_counter() - t0
         # Checkpoint immediately: a crash on the next transcript must not lose this one.
@@ -1598,8 +1799,8 @@ def main() -> int:
         base_records = [
             rec for rec in r["records"] if _record_identity(rec).variant_key == BASE_VARIANT.key()
         ]
-        if base_records:
-            _plot(label, base_records)
+        if grid.plots and base_records:
+            _plot(label, base_records, grid)
         failed = len(r.get("failures", []))
         note = f", {failed} JOBS FAILED" if failed else ""
         print(
@@ -1610,7 +1811,7 @@ def main() -> int:
         results.append(r)
         n_done += 1
 
-    _write_summary(results)
+    grid.write_summary(results, grid.out)
     total_failed = sum(len(r.get("failures", [])) for r in results)
     if total_failed:
         print("\n" + "!" * 78, flush=True)
@@ -1632,4 +1833,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Run through the importable module, not this __main__ copy: exp_f imports
+    # experiments.exp_d_curves, and two copies of this file would hold two GRIDS, two Grid
+    # classes and two sets of stamp globals, so a grid registered in one is invisible to the other.
+    from experiments import exp_d_curves
+
+    raise SystemExit(exp_d_curves.main())
