@@ -5,18 +5,32 @@ import numpy as np
 import pytest
 
 from loosy_goose.cli import LEVELS, build_parser, main, resolve_rate
+from loosy_goose.select import leverage_scores, rank_for_energy, svd_energy
 from loosy_goose.transcript import HEADER_KEY, load_blocks_jsonl
+
+_EMBED_DIM = 3
 
 
 def _fake_embeddings(texts: list[str], model_name: str) -> np.ndarray:
     rng = np.random.default_rng(11)
-    x = rng.normal(size=(len(texts), 16))
+    # Dim must stay well below len(texts) - 1: at full centred rank every leverage score is
+    # identical up to LAPACK roundoff, and min-max normalisation turns that noise into the ordering.
+    x = rng.normal(size=(len(texts), _EMBED_DIM))
     return x / np.linalg.norm(x, axis=1, keepdims=True)
 
 
 @pytest.fixture
 def stub_embed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("loosy_goose.select.embed_texts", _fake_embeddings)
+
+
+def test_stub_embedding_leverage_scores_are_well_separated() -> None:
+    x = _fake_embeddings(_CONTENTS, "stub")
+    u, s, _, _ = svd_energy(x)
+    k = rank_for_energy(s, 0.95)
+    assert k < len(_CONTENTS) - 1
+    gaps = np.diff(np.sort(leverage_scores(u, k)))
+    assert gaps.min() > 1e-3
 
 
 def _write_messages(path: Path, contents: list[str]) -> None:
@@ -149,8 +163,8 @@ def test_no_novelty_keep_half_output_matches_pre_level_control(
     # at the branch point), same fixture and stubbed embeddings.
     header, lines = _run(tmp_path, "--keep", "0.5", "--no-novelty")
     assert header["selector"] == "supersede+leverage" and header["novelty"] is False
-    assert (header["budget"], header["input_tokens"], header["output_tokens"]) == (60, 120, 53)
-    assert [json.loads(line)["index"] for line in lines] == [0, 2, 3, 6]
+    assert (header["budget"], header["input_tokens"], header["output_tokens"]) == (60, 120, 59)
+    assert [json.loads(line)["index"] for line in lines] == [1, 2, 4, 5]
     assert json.loads(lines[1])["blocks"] == [
         {"kind": "text", "text": _CONTENTS[2], "meta": {}},
     ]
@@ -161,8 +175,8 @@ def test_default_keep_half_output_is_pinned(tmp_path: Path, stub_embed: None) ->
     assert header["selector"] == "supersede+leverage+novelty-per-token@0.5"
     assert header["novelty"] is True
     # Observed when novelty became the default, same fixture and stubbed embeddings.
-    assert (header["budget"], header["input_tokens"], header["output_tokens"]) == (60, 120, 49)
-    assert [json.loads(line)["index"] for line in lines] == [2, 3, 4, 6]
+    assert (header["budget"], header["input_tokens"], header["output_tokens"]) == (60, 120, 50)
+    assert [json.loads(line)["index"] for line in lines] == [1, 2, 4, 6]
 
 
 @pytest.mark.parametrize(

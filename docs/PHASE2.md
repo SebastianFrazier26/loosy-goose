@@ -79,11 +79,23 @@ Details in [Experiment E](#experiment-e-elasticity-per-kind-predictors-cost-2026
 [Experiment H](#experiment-h-per-kind-scoring-built-2026-09-29-measured-2026-10-01).
 
 **Open.** Novelty stacked on `--band` or `--paths` was never measured, which is why both fall back
-to plain leverage. The new default's 2x reading rests on 15 of 18 transcripts. Experiment E's
-predictor table (E3) is still computed for `supersede+band+leverage`, not for the new default.
+to plain leverage. Experiment E's predictor table (E3) is still computed for
+`supersede+band+leverage`, not for the new default. Both are after v1 (decided 2026-10-12).
 The background prior (see [Still open](#still-open--do-not-treat-as-settled)) and downstream task
 evaluation, which is the only thing that could price recall and coverage in one currency, are
 after v1 and do not block prod (decided 2026-09-29).
+
+**Explained 2026-10-12: the new default's 2x reading rests on 15 of 18 transcripts.** A
+transcript drops out of a cell when the rate lies outside its achieved-rate curve
+(`exp_d_curves.py` `_interp_at`, `exp_f_compress.py` `_value_cell`). Three miss 0.5 kept:
+`swe-gym_row214` keeps 0.297 after supersession, so no method reaches 0.5;
+`trace-commons_4c09dfa9` is mostly two prose segments (4,730 and 2,870 tokens), so its achieved
+rate jumps from 0.47 to 0.94 for `supersede+leverage` and to 1.0 for the per-token arm;
+`trace-commons_11ef2190` misses only under the new default, because ranking per token puts its
+4,606-token code segment last, which caps it at 0.45 kept at every ratio up to 0.95, while
+`supersede+leverage` reaches 0.90. That one transcript is the whole 15-versus-16 gap. It is
+segment granularity, not a gap in the sweep: re-running cannot fix it, and adding ratio 1.0 would
+only interpolate across the jump and still leave `swe-gym_row214` out, so the grid stays as is.
 
 ## Still open — do not treat as settled
 
