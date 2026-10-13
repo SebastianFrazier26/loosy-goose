@@ -18,6 +18,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          # The write token must not sit in .git/config while third-party packages build and
+          # run; gh reads GH_TOKEN from the environment.
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           # Explicit: setup-uv's "auto" skips the cache on tag and release events.
