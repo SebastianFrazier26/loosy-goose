@@ -46,6 +46,7 @@ write to staging, validate, move into place, optionally verify. `mcp_server.py` 
 - The `/loosy` turn and everything after it are excluded from the fork.
 - Marker, a user-role message at the start of the fork, exactly: `[loosy-goose: compressed from session <id> on <date>; kept <k> of <n> tokens before the last <t> tokens, which are verbatim. Earlier turns are an extractive selection — some were dropped.]`
 - Atomic units kept or dropped whole: a tool call with its result; tool input never trimmed; tool result text may be trimmed.
+- loosy-goose's own artifacts are stripped at read time, before segmentation (user request, 2026-10-13): an earlier fork's marker and the `[loosy-goose: lines trimmed]` / `[loosy-goose: output trimmed]` placeholders are never segments, never scored, never kept and never counted in `input_tokens` or the budget. A run writes fresh placeholders only where it trims. Compressing a session that is itself a fork still proceeds, with a warning naming the earlier fork's date and the tokens added since; the `compress` tool warns the same way.
 - Thinking/reasoning in turns older than the protected tail is dropped (fallback switch `keep_thinking`).
 - Unknown record types pass through unchanged with a warning; the handoff refuses if one lies inside the compressed stretch.
 - `TESTED_VERSIONS`: Claude Code `2.1.296`, codex-cli `0.158.0`; a newer CLI still forks, with a warning.
@@ -71,7 +72,8 @@ Also covered by ordinary tests, though not in the top five:
 
 - a huge single tool_result inside the tail (Task 3);
 - a very short session (Task 10, "nothing to do");
-- CRLF and non-UTF-8 bytes (Task 3).
+- CRLF and non-UTF-8 bytes (Task 3);
+- a session that is itself a loosy-goose fork: marker and placeholders stripped on read, one marker and no inherited placeholder in the next fork, the already-compressed warning (Tasks 4, 6, 8, 9, 10, 11).
 
 ---
 
@@ -115,12 +117,12 @@ Also covered by ordinary tests, though not in the top five:
 | `src/loosy_goose/rate.py` | 1 | `LEVELS`, keep bounds, `Rate`, `resolve_rate`, `check_keep` (moved from `cli.py`) |
 | `src/loosy_goose/segment.py` | 2 | new `Segment.block` provenance field |
 | `src/loosy_goose/sessions/__init__.py` | 3 | package marker (empty) |
-| `src/loosy_goose/sessions/model.py` | 3 | `Session`, `SessionRecord`, snapshot, tolerant JSONL read/write, block tagging, version compare |
-| `src/loosy_goose/sessions/plan.py` | 3, 4 | triggers, units, protected tail/region, `plan_fork`, marker |
+| `src/loosy_goose/sessions/model.py` | 3 | `Session`, `SessionRecord`, snapshot, tolerant JSONL read/write, block tagging, version compare, explicit-session lookup |
+| `src/loosy_goose/sessions/plan.py` | 3, 4 | triggers, units, protected tail/region, `plan_fork`, marker, artifact stripping |
 | `tests/session_recorder.py` | 5 | records synthetic fixtures from the real CLIs, scrubbed; reused by live tests |
 | `tests/fixtures/sessions/claude_codewords.jsonl`, `codex_codewords.jsonl` | 5 | committed synthetic fixtures |
-| `tests/session_fixtures.py` | 5, 6, 8 | fixture paths, install helpers |
-| `tests/session_builders.py` | 3 | in-memory `Session` builder for pure tests |
+| `tests/session_fixtures.py` | 5, 6, 7, 8, 10 | fixture paths, install helpers, `fork_with`/`read_lines`, embedding stub |
+| `tests/session_builders.py` | 3, 4 | in-memory `Session` builder for pure tests |
 | `src/loosy_goose/sessions/claude.py` | 6, 7 | Claude Code adapter |
 | `src/loosy_goose/sessions/codex.py` | 8, 9 | Codex adapter |
 | `src/loosy_goose/sessions/adapter.py` | 10 | `SessionAdapter` protocol |
@@ -129,6 +131,8 @@ Also covered by ordinary tests, though not in the top five:
 | `src/loosy_goose/embed.py` | 11 | `warm()` |
 | `integrations/` | 12 | `/loosy` command, Codex `$loosy` skill, registration README |
 | `tests/test_live_handoff.py` | 13 | opt-in drift and e2e tests |
+| `tests/test_project_config.py` | 13 | `live` marker registered and deselected by default |
+| `tests/test_workflows.py` | 11, 14 | CI installs the `mcp` extra; pinned actions; release workflow |
 | `.github/workflows/release.yml`, `ci.yml` | 11, 14 | `mcp` extra in CI; release on tags |
 
 ---
@@ -248,7 +252,7 @@ def resolve_rate(
 
 - [ ] **Step 4: Point `cli.py` at it**
 
-In `src/loosy_goose/cli.py` (then `uv run ruff check --fix src/loosy_goose/cli.py` to re-sort the imports), delete lines 17–75 (from `KEEP_MIN = 0.1` through the end of `resolve_rate`), except `_keep`, `_target_tokens` and `_min_mentions`. Drop the now-unused `math`, `dataclass` and `Literal` imports. Add:
+In `src/loosy_goose/cli.py` (then `uv run ruff check --fix src/loosy_goose/cli.py` to re-sort the imports), delete lines 17–75 (from `KEEP_MIN = 0.1` through the end of `resolve_rate`), except `_keep` and `_target_tokens` (`_min_mentions`, at line 78, is outside the range and stays). Drop the now-unused `math`, `dataclass` and `Literal` imports. Add:
 
 ```python
 from loosy_goose.rate import KEEP_MAX, KEEP_MIN, LEVELS, check_keep, resolve_rate
@@ -258,13 +262,16 @@ Then rewrite `_keep`:
 
 ```python
 def _keep(value: str) -> float:
+    # Outside the try: argparse turns this ValueError into its own "invalid _keep value"
+    # message, exactly as before the move.
+    k = float(value)
     try:
-        return check_keep(float(value))
+        return check_keep(k)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 ```
 
-`float("abc")` also raises `ValueError`, and argparse reported that as an invalid value before. It still does, now with Python's message. The other argparse helpers and every help string stay byte-identical.
+`--keep abc` still fails with argparse's `invalid _keep value: 'abc'`, and an out-of-range value with the same `keep must be in [0.1, 0.8], got …` text as before. The other argparse helpers and every help string stay byte-identical.
 
 In `tests/test_cli.py:7`, replace the import with:
 
@@ -386,7 +393,7 @@ MSG
 - Produces (`loosy_goose.sessions.model`):
   - `Tool = Literal["claude", "codex"]`, `Category = Literal["message", "meta", "side", "unknown"]`, `CallSide = Literal["call", "result"]`, `PART = "part"`
   - `class SessionFormatError(ValueError)`
-  - `@dataclass class SessionRecord(line: int, raw: dict[str, Any], kind: str, category: Category, role: Role | None = None, blocks: list[Block] = [], prompt: str | None = None, thinking: bool = False, pinned: bool = False, reply: str | None = None, call_ids: tuple[str, ...] = (), call_side: CallSide | None = None, tool_name: str | None = None, exchange: int = -1)`
+  - `@dataclass class SessionRecord(line: int, raw: dict[str, Any], kind: str, category: Category, role: Role | None = None, blocks: list[Block] = [], prompt: str | None = None, thinking: bool = False, pinned: bool = False, reply: str | None = None, call_ids: tuple[str, ...] = (), call_side: CallSide | None = None, tool_name: str | None = None, exchange: int = -1, marker: str | None = None, cleaned: dict[int, str] = {})`
   - `@dataclass class Session(tool: Tool, path: Path, session_id: str, cwd: str, cli_version: str | None, records: list[SessionRecord], live: list[int], loose: list[int] = [], open_exchange: int | None = None, warnings: list[str] = [])` with methods `tokens(index: int) -> int` and `prompts() -> list[str]`
   - `snapshot(src: Path, dest: Path) -> int`
   - `read_jsonl(path: Path) -> tuple[list[tuple[int, dict[str, Any]]], list[str]]`
@@ -394,6 +401,8 @@ MSG
   - `text_blocks(text: str, part: int) -> list[Block]`
   - `tagged(kind: BlockKind, text: str, part: int, **meta: str) -> list[Block]`
   - `same_dir(recorded: str, cwd: Path) -> bool`
+  - `SESSION_ID: re.Pattern[str]` (`[0-9A-Za-z-]{8,64}`)
+  - `explicit_session(session: str, by_id: Callable[[str], Iterable[Path]]) -> list[Path]`: `session` as an absolute path to an existing file, or a session id looked up with `by_id`; anything else (a glob, a relative path) finds nothing. Both adapters' `locate` use it for `session != "current"`.
   - `version_key(version: str) -> tuple[int, ...]`
   - `newer_than_tested(version: str | None, tested: tuple[str, ...]) -> bool`
 - Produces (`loosy_goose.sessions.plan`):
@@ -420,6 +429,8 @@ Meaning of the model, used by every later task:
 - `pinned` records are always kept verbatim: startup attachments, compaction summaries, `session_meta`, Codex developer and context messages.
 - `exchange` is the user exchange a record belongs to. In Claude it counts the prompts seen so far. In Codex it counts `task_started` events. Records before the first one are in exchange 0.
 - `blocks` carry `meta["part"]`, the index of the content part inside the record's raw content.
+- `marker` holds the text of an earlier loosy-goose fork's marker. Only the adapters set it, on a `side` record with no blocks, so the marker is never segmented, scored or counted (Task 4 reads it for the already-compressed warning).
+- `cleaned` maps a content part to its text after an earlier handoff's trim placeholders were stripped, for the parts where stripping changed anything. `blocks` already hold the stripped text; `plan_fork` (Task 4) rewrites these parts in every record it keeps, so a placeholder is never copied into the next fork.
 
 - [ ] **Step 1: Write the in-memory builder** (`tests/session_builders.py`)
 
@@ -532,7 +543,13 @@ from pathlib import Path
 
 from session_builders import build, words
 
-from loosy_goose.sessions.model import dump_line, newer_than_tested, read_jsonl, snapshot
+from loosy_goose.sessions.model import (
+    dump_line,
+    explicit_session,
+    newer_than_tested,
+    read_jsonl,
+    snapshot,
+)
 from loosy_goose.sessions.plan import (
     DEFAULT_TRIGGERS,
     Trigger,
@@ -560,6 +577,23 @@ def test_read_jsonl_tolerates_crlf_and_round_trips_undecodable_bytes(tmp_path: P
     assert [n for n, _ in lines] == [0, 2]
     assert dump_line(lines[1][1]) == b'{"t":"caf\xe9"}\n'
     assert warnings == ["line 4: not valid JSON, skipped", "line 5: not a JSON object, skipped"]
+
+
+def test_explicit_session_takes_an_absolute_file_or_an_id_only(tmp_path: Path) -> None:
+    path = tmp_path / "s.jsonl"
+    path.write_text("{}\n", encoding="utf-8")
+    found = tmp_path / "found.jsonl"
+    asked: list[str] = []
+
+    def by_id(sid: str) -> list[Path]:
+        asked.append(sid)
+        return [found]
+
+    assert explicit_session(str(path), by_id) == [path]
+    assert explicit_session("33333333-3333-4333-8333-333333333333", by_id) == [found]
+    assert explicit_session("*", by_id) == []
+    assert explicit_session("relative/s.jsonl", by_id) == []
+    assert asked == ["33333333-3333-4333-8333-333333333333"]
 
 
 def test_newer_than_tested_compares_numerically() -> None:
@@ -671,6 +705,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -683,6 +718,7 @@ Category = Literal["message", "meta", "side", "unknown"]
 CallSide = Literal["call", "result"]
 
 PART = "part"
+SESSION_ID = re.compile(r"[0-9A-Za-z-]{8,64}")
 
 
 class SessionFormatError(ValueError):
@@ -705,6 +741,8 @@ class SessionRecord:
     call_side: CallSide | None = None
     tool_name: str | None = None
     exchange: int = -1
+    marker: str | None = None
+    cleaned: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -778,6 +816,16 @@ def same_dir(recorded: str, cwd: Path) -> bool:
         return Path(recorded).resolve() == cwd.resolve()
     except OSError:
         return False
+
+
+def explicit_session(session: str, by_id: Callable[[str], Iterable[Path]]) -> list[Path]:
+    given = Path(session)
+    if given.is_absolute() and given.is_file():
+        return [given]
+    # Only an id-shaped string reaches the adapter's glob, so "*" cannot match every session.
+    if not SESSION_ID.fullmatch(session):
+        return []
+    return sorted(by_id(session))
 
 
 def version_key(version: str) -> tuple[int, ...]:
@@ -948,7 +996,7 @@ Create `src/loosy_goose/sessions/__init__.py` as an empty file.
 - [ ] **Step 6: Run the tests and see them pass**
 
 Run: `uv run pytest tests/test_session_model.py -q && uv run mypy src && uv run ruff check . && uv run ruff format --check .`
-Expected: 13 passed; mypy `Success`. If `ruff format --check` flags `tests/session_builders.py`, run `uv run ruff format tests/session_builders.py tests/test_session_model.py` and re-check.
+Expected: 14 passed; mypy `Success`. If `ruff format --check` flags `tests/session_builders.py`, run `uv run ruff format tests/session_builders.py tests/test_session_model.py` and re-check.
 
 - [ ] **Step 7: Commit **
 
@@ -972,44 +1020,89 @@ MSG
 
 **Files:**
 - Modify: `src/loosy_goose/sessions/plan.py` (append below `split_region`; extend imports)
+- Modify: `tests/session_builders.py` (a `marker` shape; placeholders stripped as the adapters strip them)
 - Test: `tests/test_session_plan.py`
 
 **Interfaces:**
 - Consumes:
   - `Region`, `unit_ids`, `split_region`, `find_trigger`, `DEFAULT_TRIGGERS` (Task 3);
-  - `Session`, `SessionRecord`, `PART` (Task 3);
-  - `segment.segment`, `Segment.block` (Task 2).
+  - `Session`, `SessionRecord` (including `marker` and `cleaned`), `PART` (Task 3);
+  - `segment.segment`, `Segment.block` (Task 2);
+  - `transcript.Block`, `Transcript`, `Turn`; `tokens.count_tokens`.
 - Produces (`loosy_goose.sessions.plan`):
-  - `TRIMMED_RESULT = "[loosy-goose: output trimmed]"`, `GAP = "[loosy-goose: lines trimmed]"`
-  - `MARKER_PREFIX = "[loosy-goose: compressed from session "`. The adapters classify an earlier fork's marker as `side`, so a second `/loosy` replaces the stale marker instead of keeping two.
+  - `TRIMMED_RESULT = "[loosy-goose: output trimmed]"`, `GAP = "[loosy-goose: lines trimmed]"`, `PLACEHOLDERS = (GAP, TRIMMED_RESULT)`
+  - `MARKER_PREFIX = "[loosy-goose: compressed from session "`. The adapters classify an earlier fork's marker as `side` and store its text in `SessionRecord.marker`, so a second `/loosy` replaces the stale marker instead of keeping two.
   - `class HandoffRefusedError(Exception)`
   - `marker_text(source: str, date: str, kept: int, total: int, tail: int) -> str`
-  - `@dataclass(frozen=True) class ForkPlan(keep: tuple[int, ...], rewrites: dict[int, dict[int, str]], passthrough: tuple[int, ...], marker: str, tail_from: int, end: int, compressible_tokens: int, kept_tokens: int, tail_tokens: int, warnings: tuple[str, ...])`
+  - `strip_placeholders(text: str) -> str`: removes every line that holds only a placeholder and cuts a placeholder out of any other line.
+  - `strip_part(text: str, part: int, cleaned: dict[int, str]) -> str`: `strip_placeholders(text)`, and records `cleaned[part]` when that changed the text. The adapters (Tasks 6, 8) read text and tool_result parts through it; tool input and thinking are never stripped, because they are never rewritten.
+  - `@dataclass(frozen=True) class PriorFork(source: str, date: str, added_tokens: int)`
+  - `prior_fork(marker: str, tokens_after: int) -> PriorFork | None`: `None` when `marker` does not parse.
+  - `find_prior_fork(session: Session, end: int) -> PriorFork | None`: the latest marker in `live[:end]`.
+  - `recompress_warning(prior: PriorFork) -> str`: `this session was already compressed by loosy-goose on <date>; about <n> tokens added since — compressing again compounds the loss`, with `<n>` comma-grouped ("about": it is an estimate, Spec ambiguities item 14).
+  - `clean_transcript(transcript: Transcript) -> tuple[Transcript, PriorFork | None]`: the `compress` tool's read path (Task 11).
+  - `region_tokens(session: Session, region: Region) -> tuple[int, int]`: `(compressible, tail)` tokens; the one place both sums are taken (`plan_fork`, `handoff._fork`).
+  - `@dataclass(frozen=True) class ForkPlan(keep: tuple[int, ...], rewrites: dict[int, dict[int, str]], passthrough: tuple[int, ...], marker: str, tail_from: int, compressible_tokens: int, kept_tokens: int, tail_tokens: int, warnings: tuple[str, ...])`
+    - `tail_from` is the first tail position in `live`; the live thinking test (Task 13) reads it.
     - `keep` holds record indices in history (`live`) order.
-    - `rewrites[record][part]` is the replacement text for that content part. `""` means drop the part.
+    - `rewrites[record][part]` is the replacement text for that content part. `""` means drop the part, except in a tool result, where it means keep the part with empty text (its call needs it; Tasks 7, 9).
     - `passthrough` holds loose unknown records the writer appends unchanged.
   - `plan_fork(session: Session, region: Region, kept: Sequence[Segment], *, date: str, keep_thinking: bool = False) -> ForkPlan`
+- Produces (`session_builders`): the shape `marker` (a `side` record whose `marker` is the text); `prompt:<unit-id>` and `echo:<unit-id>` (a meta record sharing the prompt's unit); every shape except `call`, `handoff` and `think` reads its text through `strip_part`.
 
 **Mapping rule.** `plan_fork` re-runs `segment(region.transcript)` with the same defaults `compress_transcript` uses, so segment ids line up with the compressor's `original` list. The handoff always runs with `band=False, paths=False`, so a kept segment's text is the original text. For each segment:
 
 - `region.turn_record[seg.turn]` gives the record.
 - `region.transcript.turns[seg.turn].blocks[seg.block].meta["part"]` gives the content part.
 
-A record with any kept segment is *selected*. Every record sharing a unit with a selected record is *chosen*, so a call and its result are always kept together. A chosen record's partly kept parts are rebuilt from their kept segments:
+A record with any kept segment is *selected*. Every record before the tail sharing a unit with a selected record is *chosen*, so a call and its result are always kept together, and so is a Codex prompt with its `user_message` echo (Task 8 gives both one unit key). This includes a result with no blocks (an empty output, or one an earlier handoff trimmed to a placeholder), which is no turn of the transcript. A chosen record's partly kept parts are rebuilt from their kept segments:
 
 - tool_result: kept chunks joined by `\n`, with a `GAP` line where chunks were dropped, or `TRIMMED_RESULT` if none were kept;
 - prose: kept paragraphs joined by a blank line, code segments re-fenced;
 - tool_use: never rewritten.
 
-- [ ] **Step 1: Write the failing tests** (`tests/test_session_plan.py`)
+A meta record with `call_ids` is tied to a message, so it follows that message rather than its exchange: kept iff chosen. A dropped prompt's echo therefore leaves with it. Other meta records follow their exchange.
+
+Every kept record, tail and pinned ones included, then gets its `cleaned` parts as rewrites where no trim rewrote the part already. Because segments come from stripped blocks, an earlier run's placeholders never survive into the fork; the only placeholders in it are the ones this run writes where it trims. A result whose only content was a placeholder has no segments, so this run cannot trim it: it is kept with its call, with empty text.
+
+- [ ] **Step 1: Teach the builder the adapters' read path** (`tests/session_builders.py`)
+
+Rename `_record` to `_shaped`, leaving its body unchanged, and add this `_record` above it, so `build` reads text the way the adapters do:
+
+```python
+def _record(n: int, head: str, arg: str, text: str) -> SessionRecord:
+    if head == "marker":
+        return SessionRecord(n, {"n": n}, "user:loosy-marker", "side", marker=text)
+    if head == "echo":
+        return SessionRecord(n, {"n": n}, "event_msg:user_message", "meta", call_ids=(arg,))
+    cleaned: dict[int, str] = {}
+    # As the adapters: tool input and thinking are never rewritten, so never stripped.
+    body = text if head in ("call", "handoff", "think") else strip_part(text, 0, cleaned)
+    rec = _shaped(n, head, arg, body)
+    rec.cleaned = cleaned
+    if head == "prompt" and arg:
+        rec.call_ids = (arg,)
+    return rec
+```
+
+Change the import from `loosy_goose.sessions.plan` to `from loosy_goose.sessions.plan import Region, strip_part`, and replace `build`'s docstring with:
+
+```python
+    """Shapes: prompt[:unit-id], reply[:reply-id], think[:reply-id], call:<call-id>,
+    handoff:<call-id>, result:<call-id>, summary, marker, echo:<unit-id> (a meta record tied
+    to the prompt carrying the same unit id, as Codex's `user_message` event), meta, side,
+    unknown."""
+```
+
+- [ ] **Step 2: Write the failing tests** (`tests/test_session_plan.py`)
 
 ```python
 from collections.abc import Callable
 
 import pytest
-from session_builders import build, kept_where
+from session_builders import build, kept_where, words
 
-from loosy_goose.segment import Segment
+from loosy_goose.segment import Segment, segment
 from loosy_goose.sessions.model import Session
 from loosy_goose.sessions.plan import (
     DEFAULT_TRIGGERS,
@@ -1018,12 +1111,22 @@ from loosy_goose.sessions.plan import (
     TRIMMED_RESULT,
     ForkPlan,
     HandoffRefusedError,
+    PriorFork,
     Region,
+    clean_transcript,
+    find_prior_fork,
     find_trigger,
     marker_text,
     plan_fork,
+    prior_fork,
+    recompress_warning,
+    region_tokens,
     split_region,
+    strip_part,
+    strip_placeholders,
 )
+from loosy_goose.tokens import count_tokens
+from loosy_goose.transcript import Block, Transcript, Turn
 
 TRIGGER = "<command-name>/loosy</command-name>"
 LOG = [f"log line {i} " + "x" * 190 for i in range(6)]
@@ -1073,7 +1176,7 @@ def test_everything_kept_rewrites_nothing_and_excludes_the_trigger_turn() -> Non
     _, _, plan = _plan(lambda s: True)
     assert plan.keep == (0, 1, 2, 3, 4, 5, 7, 8, 9)
     assert plan.rewrites == {}
-    assert (plan.tail_from, plan.end) == (8, 10)
+    assert plan.tail_from == 8
 
 
 def test_a_kept_result_chunk_keeps_its_call_whole() -> None:
@@ -1114,6 +1217,19 @@ def test_meta_records_follow_their_exchange() -> None:
     assert plan.keep == (1, 2, 6)
 
 
+def test_a_meta_record_tied_to_a_prompt_follows_that_prompt_not_its_exchange() -> None:
+    s = build(
+        ("prompt:p1", "Remember ALPHA."),  # 0
+        ("echo:p1", ""),  # 1
+        ("reply", "noted"),  # 2
+        ("meta", ""),  # 3
+        ("prompt", "tail"),  # 4
+        ("prompt", TRIGGER),  # 5
+    )
+    assert _plan(lambda seg: seg.text == "noted", session=s)[2].keep == (2, 3, 4)
+    assert _plan(lambda seg: True, session=s)[2].keep == (0, 1, 2, 3, 4)
+
+
 def test_pinned_records_are_kept_even_when_nothing_is_selected() -> None:
     s = build(("summary", "old work"), ("prompt", "a"), ("reply", "b"), ("prompt", "c"))
     _, _, plan = _plan(lambda seg: False, session=s)
@@ -1147,6 +1263,7 @@ def test_token_accounting_and_marker() -> None:
     assert plan.compressible_tokens == sum(s.tokens(ri) for ri in region.turn_record)
     assert plan.kept_tokens == plan.compressible_tokens
     assert plan.tail_tokens == s.tokens(8) + s.tokens(9)
+    assert region_tokens(s, region) == (plan.compressible_tokens, plan.tail_tokens)
     assert (
         f"kept {plan.kept_tokens} of {plan.compressible_tokens} tokens before the last "
         f"{plan.tail_tokens} tokens" in plan.marker
@@ -1154,18 +1271,131 @@ def test_token_accounting_and_marker() -> None:
     assert "from session source-id on 2026-10-13" in plan.marker
     partial = _plan(lambda seg: seg.text == "second para GAMMA.")[2]
     assert 0 < partial.kept_tokens < partial.compressible_tokens
+
+
+def test_strip_placeholders_removes_placeholder_lines_and_inline_mentions() -> None:
+    assert strip_placeholders(f"a\n{GAP}\nb") == "a\nb"
+    assert strip_placeholders(TRIMMED_RESULT) == ""
+    assert strip_placeholders(f"saw {TRIMMED_RESULT} here\n\nnext") == "saw  here\n\nnext"
+    assert strip_placeholders("plain\n\ntext") == "plain\n\ntext"
+    cleaned: dict[int, str] = {}
+    assert strip_part("plain", 0, cleaned) == "plain" and cleaned == {}
+    assert strip_part(GAP, 2, cleaned) == "" and cleaned == {2: ""}
+
+
+def test_a_prior_fork_reports_its_date_and_the_tokens_added_since() -> None:
+    kept_text, tail_text, new_text = words(3), words(2, "gamma"), words(1300, "beta")
+    marker = marker_text(
+        "old-id", "2026-10-12", count_tokens(kept_text), 50, count_tokens(tail_text)
+    )
+    s = build(
+        ("marker", marker),
+        ("prompt", kept_text),
+        ("reply", tail_text),
+        ("prompt", new_text),
+        ("prompt", TRIGGER),
+    )
+    added = count_tokens(new_text)
+    prior = find_prior_fork(s, 4)
+    assert prior == PriorFork("old-id", "2026-10-12", added)
+    assert added >= 1000
+    assert recompress_warning(prior) == (
+        f"this session was already compressed by loosy-goose on 2026-10-12; about {added:,} "
+        "tokens added since — compressing again compounds the loss"
+    )
+    assert find_prior_fork(s, 0) is None
+    assert find_prior_fork(build(("prompt", "a")), 1) is None
+    assert prior_fork(f"{MARKER_PREFIX}x on 2026-10-13; ...]", 10) is None
+
+
+def test_placeholders_and_the_marker_never_reach_scoring_or_token_counts() -> None:
+    s = build(
+        ("marker", marker_text("old-id", "2026-10-12", 1, 2, 3)),  # 0
+        ("prompt", "Run the log."),  # 1
+        ("call:c1", '{"command": "cat run.log"}'),  # 2
+        ("result:c1", f"{LOG[0]}\n{GAP}\n{LOG[4]}"),  # 3
+        ("reply", f"saw {TRIMMED_RESULT} earlier.\n\nall fine."),  # 4
+        ("prompt", f"tail {GAP} prompt"),  # 5
+        ("prompt", TRIGGER),  # 6
+    )
+    region = split_region(s, find_trigger(s, DEFAULT_TRIGGERS["claude"]), protect_tail_tokens=0)
+    scored = [b.text for t in region.transcript.turns for b in t.blocks]
+    scored += [seg.text for seg in segment(region.transcript)]
+    assert not any(a in text for text in scored for a in (GAP, TRIMMED_RESULT, MARKER_PREFIX))
+    assert region.turn_record == (1, 2, 3, 4)
+    assert s.tokens(0) == 0
+    assert s.tokens(3) == count_tokens(f"{LOG[0]}\n{LOG[4]}")
+    plan = plan_fork(s, region, kept_where(region, lambda seg: True), date="2026-10-13")
+    assert 0 not in plan.keep
+    assert plan.rewrites == {
+        3: {0: f"{LOG[0]}\n{LOG[4]}"},
+        4: {0: "saw  earlier.\n\nall fine."},
+        5: {0: "tail  prompt"},
+    }
+    assert plan.compressible_tokens == sum(s.tokens(ri) for ri in (1, 2, 3, 4))
+
+
+def test_a_placeholder_only_result_stays_with_its_call_and_empty() -> None:
+    s = build(
+        ("prompt", "Run it."),  # 0
+        ("call:c1", '{"command": "true"}'),  # 1
+        ("result:c1", TRIMMED_RESULT),  # 2
+        ("prompt", "tail"),  # 3
+        ("prompt", TRIGGER),  # 4
+    )
+    assert (s.records[2].blocks, s.records[2].cleaned) == ([], {0: ""})
+    _, region, plan = _plan(lambda seg: seg.kind == "tool_use", session=s)
+    assert region.turn_record == (0, 1)
+    assert plan.keep == (1, 2, 3)
+    assert plan.rewrites == {2: {0: ""}}
+
+
+def test_a_result_trimmed_again_gets_placeholders_only_where_this_run_trims() -> None:
+    earlier = "\n".join([LOG[0], LOG[1], GAP, LOG[4], LOG[5]])
+    s = build(
+        ("prompt", "Run the log."),
+        ("call:c1", '{"command": "cat run.log"}'),
+        ("result:c1", earlier),  # 2: two chunks once the inherited gap is gone
+        ("prompt", "tail"),
+        ("prompt", TRIGGER),
+    )
+    whole = _plan(lambda seg: seg.kind == "tool_result", session=s)[2]
+    assert whole.rewrites == {2: {0: "\n".join([LOG[0], LOG[1], LOG[4], LOG[5]])}}
+    later = _plan(lambda seg: seg.kind == "tool_result" and "log line 4" in seg.text, session=s)[2]
+    assert later.rewrites == {2: {0: "\n".join([GAP, LOG[4], LOG[5]])}}
+
+
+def test_clean_transcript_drops_the_marker_and_placeholders_and_finds_the_prior_fork() -> None:
+    transcript = Transcript(
+        "t",
+        [
+            Turn(0, "user", [Block("text", marker_text("old-id", "2026-10-12", 0, 9, 0))]),
+            Turn(1, "assistant", [Block("text", "noted ALPHA")]),
+            Turn(2, "tool", [Block("tool_result", TRIMMED_RESULT)]),
+            Turn(3, "tool", [Block("tool_result", f"{LOG[0]}\n{GAP}")]),
+        ],
+    )
+    cleaned, prior = clean_transcript(transcript)
+    assert [(t.index, t.role, [b.text for b in t.blocks]) for t in cleaned.turns] == [
+        (0, "assistant", ["noted ALPHA"]),
+        (1, "tool", [LOG[0]]),
+    ]
+    added = count_tokens("noted ALPHA") + count_tokens(LOG[0])
+    assert prior == PriorFork("old-id", "2026-10-12", added)
+    assert clean_transcript(cleaned)[1] is None
 ```
 
-- [ ] **Step 2: Run them and see them fail**
+- [ ] **Step 3: Run them and see them fail**
 
 Run: `uv run pytest tests/test_session_plan.py -q`
-Expected: collection error `ImportError: cannot import name 'GAP' from 'loosy_goose.sessions.plan'`.
+Expected: collection error `ImportError: cannot import name 'strip_part' from 'loosy_goose.sessions.plan'` (raised by `session_builders`).
 
-- [ ] **Step 3: Implement** (append to `src/loosy_goose/sessions/plan.py`)
+- [ ] **Step 4: Implement** (append to `src/loosy_goose/sessions/plan.py`)
 
 Extend the imports at the top of `plan.py` to:
 
 ```python
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -1181,29 +1411,118 @@ Append:
 ```python
 TRIMMED_RESULT = "[loosy-goose: output trimmed]"
 GAP = "[loosy-goose: lines trimmed]"
+PLACEHOLDERS = (GAP, TRIMMED_RESULT)
 _FENCE = "`" * 3
 MARKER_PREFIX = "[loosy-goose: compressed from session "
 _MARKER = MARKER_PREFIX + (
     "{source} on {date}; kept {kept} of {total} tokens before the last {tail} tokens, which "
     "are verbatim. Earlier turns are an extractive selection — some were dropped.]"
 )
+_MARKER_FIELDS = re.compile(
+    re.escape(MARKER_PREFIX)
+    + r"(?P<source>\S+) on (?P<date>[^;]+); kept (?P<kept>\d+) of \d+ tokens before the last "
+    r"(?P<tail>\d+) tokens"
+)
+# Tool input must stay valid structured data and thinking carries signatures; neither is ever
+# rewritten, so neither is stripped.
+_NEVER_STRIPPED = frozenset({"tool_use", "thinking"})
 
 
 class HandoffRefusedError(Exception):
     pass
 
 
+def strip_placeholders(text: str) -> str:
+    if not any(p in text for p in PLACEHOLDERS):
+        return text
+    out: list[str] = []
+    for line in text.split("\n"):
+        cut = line
+        for p in PLACEHOLDERS:
+            cut = cut.replace(p, "")
+        if cut.strip() or not line.strip():
+            out.append(cut)
+    return "\n".join(out)
+
+
+def strip_part(text: str, part: int, cleaned: dict[int, str]) -> str:
+    out = strip_placeholders(text)
+    if out != text:
+        cleaned[part] = out
+    return out
+
+
+@dataclass(frozen=True)
+class PriorFork:
+    """An earlier loosy-goose fork whose marker is in the history being compressed again."""
+
+    source: str
+    date: str
+    added_tokens: int
+
+
+def prior_fork(marker: str, tokens_after: int) -> PriorFork | None:
+    found = _MARKER_FIELDS.match(marker)
+    if found is None:
+        return None
+    # The marker states what that fork carried after it: `kept` selected tokens and a verbatim
+    # `tail`. The rest of what follows it now is counted as added since. Records the fork kept
+    # outside both figures (a compaction summary, a command's expanded body) count as added too,
+    # so this is an estimate, floored at zero.
+    carried = int(found["kept"]) + int(found["tail"])
+    return PriorFork(found["source"], found["date"], max(0, tokens_after - carried))
+
+
+def find_prior_fork(session: Session, end: int) -> PriorFork | None:
+    live = session.live[:end]
+    for pos in range(len(live) - 1, -1, -1):
+        marker = session.records[live[pos]].marker
+        if marker is not None:
+            return prior_fork(marker, sum(session.tokens(ri) for ri in live[pos + 1 :]))
+    return None
+
+
+def recompress_warning(prior: PriorFork) -> str:
+    return (
+        f"this session was already compressed by loosy-goose on {prior.date}; "
+        f"about {prior.added_tokens:,} tokens added since — compressing again compounds the loss"
+    )
+
+
+def clean_transcript(transcript: Transcript) -> tuple[Transcript, PriorFork | None]:
+    """`transcript` without loosy-goose's own artifacts (marker blocks dropped, placeholders
+    stripped, emptied turns removed, the rest renumbered), plus the earlier fork the latest
+    marker names."""
+    turns: list[Turn] = []
+    marker: str | None = None
+    after = 0
+    for turn in transcript.turns:
+        blocks: list[Block] = []
+        for block in turn.blocks:
+            if block.text.startswith(MARKER_PREFIX):
+                marker, after = block.text, 0
+                continue
+            text = block.text if block.kind in _NEVER_STRIPPED else strip_placeholders(block.text)
+            if text.strip():
+                blocks.append(Block(block.kind, text, dict(block.meta)))
+                after += count_tokens(text)
+        if blocks:
+            turns.append(Turn(len(turns), turn.role, blocks))
+    prior = prior_fork(marker, after) if marker is not None else None
+    return Transcript(transcript.source, turns, dict(transcript.meta)), prior
+
+
 @dataclass(frozen=True)
 class ForkPlan:
     """`keep` is in history order. `rewrites[record][part]` replaces that content part's text;
-    an empty string drops the part. `passthrough` are loose unknown records written unchanged."""
+    an empty string drops the part, except in a tool result, which keeps the part with empty
+    text. `passthrough` are loose unknown records written unchanged."""
 
     keep: tuple[int, ...]
     rewrites: dict[int, dict[int, str]]
     passthrough: tuple[int, ...]
     marker: str
     tail_from: int
-    end: int
     compressible_tokens: int
     kept_tokens: int
     tail_tokens: int
@@ -1243,6 +1562,12 @@ def _rebuild(pieces: list[Piece]) -> str:
     return "\n\n".join(paras)
 
 
+def region_tokens(session: Session, region: Region) -> tuple[int, int]:
+    compressible = sum(session.tokens(ri) for ri in region.turn_record)
+    tail = sum(session.tokens(ri) for ri in session.live[region.tail_from : region.end])
+    return compressible, tail
+
+
 def _tokens_after(rec: SessionRecord, rewrite: dict[int, str]) -> int:
     untouched = sum(count_tokens(b.text) for b in rec.blocks if int(b.meta[PART]) not in rewrite)
     return untouched + sum(count_tokens(text) for text in rewrite.values())
@@ -1267,7 +1592,9 @@ def plan_fork(
     units = unit_ids(session)
     selected = {ri for (ri, _), group in pieces.items() if any(k for _, k, _ in group)}
     kept_units = {units[ri] for ri in selected}
-    chosen = {ri for ri in region.turn_record if units[ri] in kept_units}
+    # The whole stretch, not just the turns: a result with no text (an empty output, or one an
+    # earlier handoff trimmed to a placeholder) is no turn, yet its kept call needs it.
+    chosen = {ri for ri in session.live[: region.tail_from] if units[ri] in kept_units}
     rewrites: dict[int, dict[int, str]] = {}
     for (ri, part), group in pieces.items():
         if ri not in chosen or all(k for _, k, _ in group) or group[0][2].kind == "tool_use":
@@ -1297,7 +1624,8 @@ def plan_fork(
             if keep_thinking and rec.reply in replies:
                 keep.append(ri)
         elif rec.category == "meta":
-            if rec.exchange in exchanges:
+            # Tied to a message (Codex's echo of a prompt): it goes where that message goes.
+            if ri in chosen if rec.call_ids else rec.exchange in exchanges:
                 keep.append(ri)
         elif ri in chosen:
             keep.append(ri)
@@ -1307,18 +1635,21 @@ def plan_fork(
         "unchanged"
         for ri in passthrough
     ]
-    compressible = sum(session.tokens(ri) for ri in region.turn_record)
+    compressible, tail = region_tokens(session, region)
     kept_tokens = sum(
         _tokens_after(records[ri], rewrites.get(ri, {})) for ri in keep if ri in chosen
     )
-    tail = sum(session.tokens(ri) for ri in session.live[region.tail_from : region.end])
+    # After the count: a stripped part's blocks already hold its stripped text. A trim rewrite
+    # wins, since it was rebuilt from stripped blocks.
+    for ri in keep:
+        for part, text in records[ri].cleaned.items():
+            rewrites.setdefault(ri, {}).setdefault(part, text)
     return ForkPlan(
         keep=tuple(keep),
         rewrites=rewrites,
         passthrough=passthrough,
         marker=marker_text(session.session_id, date, kept_tokens, compressible, tail),
         tail_from=region.tail_from,
-        end=region.end,
         compressible_tokens=compressible,
         kept_tokens=kept_tokens,
         tail_tokens=tail,
@@ -1328,21 +1659,23 @@ def plan_fork(
 
 (`rec.reply in replies` is `False` for a `None` reply, because `replies` never holds `None`.)
 
-- [ ] **Step 4: Run the tests and see them pass**
+- [ ] **Step 5: Run the tests and see them pass**
 
 Run: `uv run pytest tests/test_session_plan.py tests/test_session_model.py -q && uv run mypy src && uv run ruff check . && uv run ruff format --check .`
-Expected: 26 passed; mypy `Success`. If `ruff format --check` flags a file, run `uv run ruff format <file>` and re-check.
+Expected: 34 passed; mypy `Success`. If `ruff format --check` flags a file, run `uv run ruff format <file>` and re-check.
 
-- [ ] **Step 5: Commit **
+- [ ] **Step 6: Commit **
 
 ```bash
-git add src/loosy_goose/sessions/plan.py tests/test_session_plan.py
+git add src/loosy_goose/sessions/plan.py tests/session_builders.py tests/test_session_plan.py
 git commit -m "$(cat <<'MSG'
 Plan the fork: kept segments back to records, whole tool pairs, marker
 
 Partly kept prose and tool results are rebuilt from their kept segments; tool input is
 never trimmed; older thinking is dropped unless keep_thinking; unknown records refuse
-inside the compressed stretch and pass through elsewhere.
+inside the compressed stretch and pass through elsewhere. loosy-goose's own marker and
+trim placeholders are stripped before segmentation and never inherited by a later fork;
+an earlier fork in the history yields the already-compressed warning.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
@@ -1799,8 +2132,9 @@ MSG
 
 **Interfaces:**
 - Consumes:
-  - `Session`, `SessionRecord`, `SessionFormatError`, `read_jsonl`, `same_dir`, `tagged`, `text_blocks` (Task 3);
-  - `MARKER_PREFIX`, `find_trigger`, `DEFAULT_TRIGGERS`, `unit_ids` (Tasks 3–4);
+  - `Session`, `SessionRecord`, `SessionFormatError`, `read_jsonl`, `same_dir`, `explicit_session`, `tagged`, `text_blocks` (Task 3);
+  - `MARKER_PREFIX`, `strip_part`, `strip_placeholders`, `find_trigger`, `DEFAULT_TRIGGERS`, `unit_ids`, `GAP`, `TRIMMED_RESULT` (Tasks 3–4);
+  - `SessionRecord.marker`, `SessionRecord.cleaned` (Task 3);
   - the fixtures (Task 5).
 - Produces (`loosy_goose.sessions.claude`):
   - `TOOL: Tool = "claude"`, `TESTED_VERSIONS: tuple[str, ...] = ("2.1.296",)`
@@ -1817,8 +2151,8 @@ MSG
 | `user` with a `tool_result` part | message | `call_side="result"`, `call_ids` = `tool_use_id`s |
 | `user` with `isCompactSummary` | message | `pinned` |
 | `user` with `isMeta` | meta | e.g. a slash command's expanded body |
-| `user` whose text starts with `MARKER_PREFIX` | side | an earlier fork's marker |
-| other `user` | message | `prompt` = its text |
+| `user` whose text starts with `MARKER_PREFIX` | side | an earlier fork's marker; `marker` = its text, no blocks |
+| other `user` | message | `prompt` = its text, placeholders stripped |
 | `assistant` | message | `reply` = `message.id`; `thinking` if only thinking parts; tool_use → `call_side="call"`, `tool_name` |
 | `attachment` | meta | `pinned` when before the first prompt in the chain |
 | `system` `compact_boundary` | meta | `pinned` |
@@ -1827,6 +2161,8 @@ MSG
 | anything else | unknown | |
 
 `live` is the `parentUuid` walk back from the last non-sidechain uuid record, reversed. A missing parent stops the walk with a warning, because Claude Code truncates there too.
+
+`text` and `tool_result` parts are read through `strip_part` (Task 4), so an earlier handoff's placeholders never become blocks and the parts they sat in land in `cleaned`. A `tool_result` that held only a placeholder has no blocks and stays a `result` record. `tool_use` input and `thinking` are read as written.
 
 - [ ] **Step 1: Add the install helper** (append to `tests/session_fixtures.py`, and add `"install_claude"` to `__all__`)
 
@@ -1867,7 +2203,14 @@ from session_fixtures import (
 )
 
 from loosy_goose.sessions import claude
-from loosy_goose.sessions.plan import DEFAULT_TRIGGERS, MARKER_PREFIX, find_trigger, unit_ids
+from loosy_goose.sessions.plan import (
+    DEFAULT_TRIGGERS,
+    GAP,
+    MARKER_PREFIX,
+    TRIMMED_RESULT,
+    find_trigger,
+    unit_ids,
+)
 
 
 def _read() -> claude.Session:
@@ -1906,12 +2249,12 @@ def test_the_trigger_is_the_recorded_slash_command() -> None:
 
 def test_meta_and_startup_records_are_not_prompts() -> None:
     s = _read()
-    for ri in s.live:
-        rec = s.records[ri]
-        if rec.raw.get("isMeta"):
-            assert rec.category == "meta" and rec.prompt is None
-        if rec.kind == "attachment" and rec.exchange == 0:
-            assert rec.pinned
+    live = [s.records[ri] for ri in s.live]
+    metas = [r for r in live if r.raw.get("isMeta")]
+    startup = [r for r in live if r.kind == "attachment" and r.exchange == 0]
+    assert metas and startup
+    assert all(r.category == "meta" and r.prompt is None for r in metas)
+    assert all(r.pinned for r in startup)
 
 
 def test_side_unknown_and_marker_records_are_classified(tmp_path: Path) -> None:
@@ -1930,7 +2273,38 @@ def test_side_unknown_and_marker_records_are_classified(tmp_path: Path) -> None:
     assert kinds["queue-operation"] == "side"
     assert kinds["brand-new-thing"] == "unknown"
     assert kinds["user:loosy-marker"] == "side"
+    old = next(r for r in s.records if r.kind == "user:loosy-marker")
+    assert (old.marker, old.blocks) == (marker["message"]["content"], [])
     assert len(s.records) - 1 in s.loose
+
+
+def test_placeholders_are_stripped_on_read(tmp_path: Path) -> None:
+    lines = fixture_lines(CLAUDE_FIXTURE)
+    result = next(
+        o for o in lines
+        if isinstance(o.get("message", {}).get("content"), list)
+        and any(p.get("type") == "tool_result" for p in o["message"]["content"])
+    )
+    part = next(
+        i for i, p in enumerate(result["message"]["content"]) if p.get("type") == "tool_result"
+    )
+    result["message"]["content"][part]["content"] = TRIMMED_RESULT
+    reply = next(
+        o for o in lines
+        if o.get("type") == "assistant"
+        and any(p.get("type") == "text" for p in o["message"]["content"])
+    )
+    text_part = next(
+        i for i, p in enumerate(reply["message"]["content"]) if p.get("type") == "text"
+    )
+    reply["message"]["content"][text_part]["text"] += f"\n{GAP}"
+    s = claude.read(write_lines(tmp_path / "s.jsonl", lines))
+    rec = next(r for r in s.records if r.raw.get("uuid") == result["uuid"])
+    assert (rec.call_side, rec.blocks, rec.cleaned) == ("result", [], {part: ""})
+    edited = next(r for r in s.records if r.raw.get("uuid") == reply["uuid"])
+    assert text_part in edited.cleaned
+    texts = [b.text for r in s.records for b in r.blocks]
+    assert not any(GAP in t or TRIMMED_RESULT in t for t in texts)
 
 
 def test_a_missing_parent_truncates_history_with_a_warning(tmp_path: Path) -> None:
@@ -1997,12 +2371,13 @@ from loosy_goose.sessions.model import (
     SessionFormatError,
     SessionRecord,
     Tool,
+    explicit_session,
     read_jsonl,
     same_dir,
     tagged,
     text_blocks,
 )
-from loosy_goose.sessions.plan import MARKER_PREFIX
+from loosy_goose.sessions.plan import MARKER_PREFIX, strip_part, strip_placeholders
 from loosy_goose.transcript import Block
 
 __all__ = ["Session", "TESTED_VERSIONS", "TOOL", "default_home", "locate", "project_slug", "read"]
@@ -2010,7 +2385,6 @@ __all__ = ["Session", "TESTED_VERSIONS", "TOOL", "default_home", "locate", "proj
 TOOL: Tool = "claude"
 TESTED_VERSIONS: tuple[str, ...] = ("2.1.296",)
 
-_ID = re.compile(r"[0-9A-Za-z-]{8,64}")
 _SIDE_TYPES = frozenset(
     {
         "queue-operation", "last-prompt", "cost-state", "mode", "permission-mode",
@@ -2050,12 +2424,7 @@ def _recorded_cwd(path: Path) -> str | None:
 def locate(cwd: Path, session: str, home: Path) -> list[Path]:
     projects = home / "projects"
     if session != "current":
-        given = Path(session)
-        if given.is_absolute() and given.is_file():
-            return [given]
-        if not _ID.fullmatch(session):
-            return []
-        return sorted(projects.glob(f"*/{session}.jsonl"))
+        return explicit_session(session, lambda sid: projects.glob(f"*/{sid}.jsonl"))
     slugged = projects / project_slug(str(cwd))
     # The slug rule is inferred, not documented, so the recorded cwd decides; the slug only
     # narrows the scan when its directory exists.
@@ -2076,9 +2445,9 @@ def _content_text(content: Any) -> str:
     return ""
 
 
-def _blocks(content: Any) -> list[Block]:
+def _blocks(content: Any, cleaned: dict[int, str]) -> list[Block]:
     if isinstance(content, str):
-        return text_blocks(content, 0)
+        return text_blocks(strip_part(content, 0, cleaned), 0)
     if not isinstance(content, list):
         return []
     blocks: list[Block] = []
@@ -2087,12 +2456,13 @@ def _blocks(content: Any) -> list[Block]:
             continue
         kind = part.get("type")
         if kind == "text":
-            blocks += text_blocks(str(part.get("text", "")), i)
+            blocks += text_blocks(strip_part(str(part.get("text", "")), i, cleaned), i)
         elif kind == "tool_use":
             body = json.dumps(part.get("input", {}), ensure_ascii=False, sort_keys=True)
             blocks += tagged("tool_use", body, i, name=str(part.get("name", "")))
         elif kind == "tool_result":
-            blocks += tagged("tool_result", _content_text(part.get("content")), i)
+            body = strip_part(_content_text(part.get("content")), i, cleaned)
+            blocks += tagged("tool_result", body, i)
         elif kind == "thinking":
             blocks += tagged("thinking", str(part.get("thinking", "")), i)
     return blocks
@@ -2107,23 +2477,29 @@ def _user(n: int, obj: dict[str, Any]) -> SessionRecord:
     content = _message(obj).get("content")
     parts = [p for p in content if isinstance(p, dict)] if isinstance(content, list) else []
     results = [p for p in parts if p.get("type") == "tool_result"]
+    cleaned: dict[int, str] = {}
     if results:
         return SessionRecord(
-            n, obj, "user:tool_result", "message", role="user", blocks=_blocks(content),
+            n, obj, "user:tool_result", "message", role="user", blocks=_blocks(content, cleaned),
             call_ids=tuple(str(p.get("tool_use_id", "")) for p in results), call_side="result",
+            cleaned=cleaned,
         )
     if obj.get("isCompactSummary"):
         return SessionRecord(
             n, obj, "user:compact_summary", "message", role="user",
-            blocks=_blocks(content), pinned=True,
+            blocks=_blocks(content, cleaned), pinned=True, cleaned=cleaned,
         )
     if obj.get("isMeta"):
-        return SessionRecord(n, obj, "user:meta", "meta", role="user", blocks=_blocks(content))
+        return SessionRecord(
+            n, obj, "user:meta", "meta", role="user", blocks=_blocks(content, cleaned),
+            cleaned=cleaned,
+        )
     text = _content_text(content)
     if text.startswith(MARKER_PREFIX):
-        return SessionRecord(n, obj, "user:loosy-marker", "side")
+        return SessionRecord(n, obj, "user:loosy-marker", "side", marker=text)
     return SessionRecord(
-        n, obj, "user", "message", role="user", blocks=_blocks(content), prompt=text
+        n, obj, "user", "message", role="user", blocks=_blocks(content, cleaned),
+        prompt=strip_placeholders(text), cleaned=cleaned,
     )
 
 
@@ -2133,13 +2509,15 @@ def _assistant(n: int, obj: dict[str, Any]) -> SessionRecord:
     parts = [p for p in content if isinstance(p, dict)] if isinstance(content, list) else []
     types = {p.get("type") for p in parts}
     calls = [p for p in parts if p.get("type") == "tool_use"]
+    cleaned: dict[int, str] = {}
     return SessionRecord(
-        n, obj, "assistant", "message", role="assistant", blocks=_blocks(content),
+        n, obj, "assistant", "message", role="assistant", blocks=_blocks(content, cleaned),
         thinking=bool(types) and types <= _THINKING,
         reply=str(msg["id"]) if "id" in msg else None,
         call_ids=tuple(str(c.get("id", "")) for c in calls),
         call_side="call" if calls else None,
         tool_name=str(calls[-1].get("name", "")) if calls else None,
+        cleaned=cleaned,
     )
 
 
@@ -2228,7 +2606,7 @@ def read(path: Path) -> Session:
 - [ ] **Step 5: Run the tests and see them pass**
 
 Run: `uv run pytest tests/test_sessions_claude.py -q && uv run mypy src && uv run ruff check . && uv run ruff format --check .`
-Expected: 9 passed; mypy `Success` (format any flagged file with `uv run ruff format <file>`).
+Expected: 10 passed; mypy `Success` (format any flagged file with `uv run ruff format <file>`).
 
 - [ ] **Step 6: Commit**
 
@@ -2239,7 +2617,8 @@ Read Claude Code sessions into the session model
 
 Locate by cwd (slug dir, falling back to the recorded cwd), explicit id or path; history is
 the parentUuid chain from the leaf; startup attachments and compaction records are pinned,
-side records dropped, unknown types flagged, earlier loosy-goose markers superseded.
+side records dropped, unknown types flagged, earlier loosy-goose markers superseded and
+its trim placeholders stripped before they can become blocks.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
@@ -2252,10 +2631,11 @@ MSG
 
 **Files:**
 - Modify: `src/loosy_goose/sessions/claude.py` (append; extend imports and `__all__`)
+- Modify: `tests/session_fixtures.py` (add `fork_with`, `read_lines`; Task 9 reuses them)
 - Test: `tests/test_sessions_claude.py` (append)
 
 **Interfaces:**
-- Consumes: `ForkPlan`, `plan_fork`, `split_region`, `find_trigger`, `DEFAULT_TRIGGERS`, `MARKER_PREFIX` (Tasks 3–4); `dump_line`, `read_jsonl` (Task 3); `kept_where` (Task 3 builders); `read` (Task 6).
+- Consumes: `ForkPlan`, `plan_fork`, `split_region`, `find_trigger`, `DEFAULT_TRIGGERS`, `MARKER_PREFIX` (Tasks 3–4); `dump_line`, `read_jsonl` (Task 3); `kept_where` (Task 3 builders, through `fork_with`); `read` (Task 6).
 - Produces (`loosy_goose.sessions.claude`):
   - `write_fork(session: Session, plan: ForkPlan, new_id: str, out_dir: Path) -> Path`: writes `out_dir/<new_id>.jsonl`.
   - `validate(fork: Path, session_id: str) -> list[str]`: the failed checks, from `"parse"`, `"chain"`, `"coverage"`, `"tool-pairs"`, `"session-id"`.
@@ -2263,59 +2643,76 @@ MSG
   - `new_session_id() -> str`: uuid4.
   - `resume_command(session_id: str, cwd: str) -> str`: `cd <quoted cwd> && claude --resume <id>`.
   - `verify_command(session_id: str) -> list[str]`: `["claude", "-p", "Reply with exactly: OK", "--resume", id]`.
+- Produces (`session_fixtures`):
+  - `read_lines(path: Path) -> list[dict[str, Any]]`
+  - `fork_with(adapter: ModuleType, tmp_path: Path, lines: list[dict[str, Any]] | None = None, keep: Callable[[Segment], bool] = lambda s: True) -> tuple[Session, ForkPlan, str, Path]`: reads `lines` (default: the adapter's fixture), plans with `protect_tail_tokens=0` and `date="2026-10-13"`, and writes the fork to `tmp_path / "out"`.
 
 **Writer rules:**
 
 - Kept chain records are written in history order, each a deep copy with `sessionId` (and `session_id` when present) set to the new id.
 - Each record's `parentUuid` is set to the previous written record's uuid. This re-links across every dropped stretch.
 - The marker is a new `user` record whose plain string content is `plan.marker`. It sits at the root, or right after the last kept `compact_boundary` ([RF1]: Claude Code reads history from the boundary on, so a marker before it would be cut).
-- `plan.rewrites` replace `message.content` parts: `text` for text parts, `content` for `tool_result` parts. `""` drops the part.
+- `plan.rewrites` replace `message.content` parts: `text` for text parts, `content` for `tool_result` parts. `""` drops a text part; a `tool_result` part rewritten to `""` stays with empty `content`, because dropping it would orphan its `tool_use` (a result an earlier handoff trimmed to a placeholder, Task 4).
 - `passthrough` records are appended with the new session id.
 - The file ends with a `last-prompt` record pointing `leafUuid` at the last chain record. This settles the spec's open item: writing it costs nothing and mirrors what the CLI writes.
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/test_sessions_claude.py`; extend the imports)
+- [ ] **Step 1: Add the shared fork helpers** (append to `tests/session_fixtures.py`, add `"fork_with"` and `"read_lines"` to `__all__`, add `from collections.abc import Callable` and `from types import ModuleType` to the imports, and add this block below them)
 
-Add to the imports:
+```python
+if TYPE_CHECKING:
+    from loosy_goose.segment import Segment
+    from loosy_goose.sessions.model import Session
+    from loosy_goose.sessions.plan import ForkPlan
+```
+
+with `TYPE_CHECKING` added to the `typing` import. Then append:
+
+```python
+def read_lines(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def fork_with(
+    adapter: ModuleType,
+    tmp_path: Path,
+    lines: list[dict[str, Any]] | None = None,
+    keep: Callable[[Segment], bool] = lambda s: True,
+) -> tuple[Session, ForkPlan, str, Path]:
+    """Fork `lines` (default: the adapter's fixture) keeping the segments `keep` selects, with
+    no protected tail, into `tmp_path / "out"`."""
+    from session_builders import kept_where
+
+    from loosy_goose.sessions.plan import DEFAULT_TRIGGERS, find_trigger, plan_fork, split_region
+
+    fixture = CLAUDE_FIXTURE if adapter.TOOL == "claude" else CODEX_FIXTURE
+    source = write_lines(tmp_path / "src.jsonl", lines) if lines is not None else FIXTURES / fixture
+    s = adapter.read(source)
+    trigger = find_trigger(s, DEFAULT_TRIGGERS[adapter.TOOL])
+    region = split_region(s, trigger, protect_tail_tokens=0)
+    plan = plan_fork(s, region, kept_where(region, keep), date="2026-10-13")
+    new_id = adapter.new_session_id()
+    return s, plan, new_id, adapter.write_fork(s, plan, new_id, tmp_path / "out")
+```
+
+- [ ] **Step 2: Write the failing tests** (append to `tests/test_sessions_claude.py`; extend the imports)
+
+Add to the imports, and add `fork_with` and `read_lines` to the existing `session_fixtures` import:
 
 ```python
 import dataclasses
 import json
 import uuid
-from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
 import pytest
-from session_builders import kept_where
-
-from loosy_goose.segment import Segment
-from loosy_goose.sessions.plan import ForkPlan, plan_fork, split_region
 ```
 
 Append:
 
 ```python
-def _fork(
-    tmp_path: Path,
-    lines: list[dict[str, Any]] | None = None,
-    keep: Callable[[Segment], bool] = lambda s: True,
-) -> tuple[claude.Session, ForkPlan, str, Path]:
-    source = (
-        write_lines(tmp_path / "src.jsonl", lines) if lines is not None else FIXTURES / CLAUDE_FIXTURE
-    )
-    s = claude.read(source)
-    region = split_region(s, find_trigger(s, DEFAULT_TRIGGERS["claude"]), protect_tail_tokens=0)
-    plan = plan_fork(s, region, kept_where(region, keep), date="2026-10-13")
-    new_id = claude.new_session_id()
-    return s, plan, new_id, claude.write_fork(s, plan, new_id, tmp_path / "out")
-
-
-def _lines(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-
-
 def test_a_fork_without_beta_validates_and_relinks(tmp_path: Path) -> None:
-    _, _, new_id, fork = _fork(tmp_path, keep=lambda seg: "BETA" not in seg.text)
+    _, _, new_id, fork = fork_with(claude, tmp_path, keep=lambda seg: "BETA" not in seg.text)
     assert fork.name == f"{new_id}.jsonl"
     assert claude.validate(fork, new_id) == []
     f = claude.read(fork)
@@ -2328,9 +2725,9 @@ def test_a_fork_without_beta_validates_and_relinks(tmp_path: Path) -> None:
 
 
 def test_kept_records_keep_their_ids_and_the_file_ends_on_the_leaf(tmp_path: Path) -> None:
-    s, _, new_id, fork = _fork(tmp_path)
+    s, _, new_id, fork = fork_with(claude, tmp_path)
     original = {r.raw["uuid"] for r in s.records if isinstance(r.raw.get("uuid"), str)}
-    out = _lines(fork)
+    out = read_lines(fork)
     chain = [o for o in out if isinstance(o.get("uuid"), str)]
     assert {o["uuid"] for o in chain[1:]} <= original
     assert all(o.get("sessionId") == new_id for o in out if "sessionId" in o)
@@ -2341,7 +2738,7 @@ def test_kept_records_keep_their_ids_and_the_file_ends_on_the_leaf(tmp_path: Pat
 
 
 def test_a_rewritten_tool_result_is_written(tmp_path: Path) -> None:
-    s, plan, new_id, _ = _fork(tmp_path)
+    s, plan, new_id, _ = fork_with(claude, tmp_path)
     ri = next(ri for ri in plan.keep if s.records[ri].call_side == "result")
     part = int(s.records[ri].blocks[0].meta["part"])
     trimmed = dataclasses.replace(plan, rewrites={ri: {part: "trimmed"}})
@@ -2350,6 +2747,17 @@ def test_a_rewritten_tool_result_is_written(tmp_path: Path) -> None:
     f = claude.read(fork)
     rec = next(r for r in f.records if r.raw.get("uuid") == s.records[ri].raw["uuid"])
     assert [b.text for b in rec.blocks] == ["trimmed"]
+
+
+def test_an_emptied_tool_result_stays_paired_with_its_call(tmp_path: Path) -> None:
+    s, plan, new_id, _ = fork_with(claude, tmp_path)
+    ri = next(ri for ri in plan.keep if s.records[ri].call_side == "result")
+    part = int(s.records[ri].blocks[0].meta["part"])
+    emptied = dataclasses.replace(plan, rewrites={ri: {part: ""}})
+    fork = claude.write_fork(s, emptied, new_id, tmp_path / "emptied")
+    assert claude.validate(fork, new_id) == []
+    out = next(o for o in read_lines(fork) if o.get("uuid") == s.records[ri].raw["uuid"])
+    assert out["message"]["content"][part]["content"] == ""
 
 
 def _corrupt(lines: list[dict[str, Any]], how: str) -> list[dict[str, Any]]:
@@ -2375,8 +2783,8 @@ def _corrupt(lines: list[dict[str, Any]], how: str) -> list[dict[str, Any]]:
 
 @pytest.mark.parametrize("how", ["chain", "tool-pairs", "session-id", "coverage"])
 def test_validate_names_the_failed_check(tmp_path: Path, how: str) -> None:
-    _, _, new_id, fork = _fork(tmp_path)
-    bad = write_lines(tmp_path / "bad.jsonl", _corrupt(_lines(fork), how))
+    _, _, new_id, fork = fork_with(claude, tmp_path)
+    bad = write_lines(tmp_path / "bad.jsonl", _corrupt(read_lines(fork), how))
     assert how in claude.validate(bad, new_id)
 
 
@@ -2413,7 +2821,7 @@ def test_rf1_an_already_compacted_session_forks_from_its_boundary(tmp_path: Path
     assert s.records[s.live[0]].kind == "system:compact_boundary"
     assert s.records[s.live[1]].pinned and s.records[s.live[1]].kind == "user:compact_summary"
     assert not any("ALPHA" in p for p in s.prompts())
-    _, _, new_id, fork = _fork(tmp_path, lines)
+    _, _, new_id, fork = fork_with(claude, tmp_path, lines)
     assert claude.validate(fork, new_id) == []
     f = claude.read(fork)
     kinds = [f.records[ri].kind for ri in f.live[:3]]
@@ -2433,12 +2841,12 @@ def test_destination_and_commands() -> None:
 
 The `ALPHA` assertion on the fork text works because the fixture's ALPHA prompt and its "noted." reply are before the boundary, and the injected summary avoids naming the word. The attachments before ALPHA are also pre-boundary, and they are scrubbed to `<scrubbed>`.
 
-- [ ] **Step 2: Run them and see them fail**
+- [ ] **Step 3: Run them and see them fail**
 
 Run: `uv run pytest tests/test_sessions_claude.py -q`
 Expected: the new tests fail with `AttributeError: module 'loosy_goose.sessions.claude' has no attribute 'new_session_id'`.
 
-- [ ] **Step 3: Implement** (append to `claude.py`)
+- [ ] **Step 4: Implement** (append to `claude.py`)
 
 Extend the imports to add `copy`, `shlex`, `uuid`, `from datetime import datetime`, `dump_line` from `loosy_goose.sessions.model`, and `ForkPlan` alongside `MARKER_PREFIX` from `loosy_goose.sessions.plan`. Add `"fork_destination"`, `"new_session_id"`, `"resume_command"`, `"validate"`, `"verify_command"`, `"write_fork"` to `__all__`. Then append:
 
@@ -2472,11 +2880,12 @@ def _apply_rewrites(obj: dict[str, Any], rewrite: dict[int, str]) -> None:
         return
     parts: list[Any] = []
     for i, part in enumerate(content):
+        result = part.get("type") == "tool_result"
         if i not in rewrite:
             parts.append(part)
-        elif rewrite[i]:
-            key = "content" if part.get("type") == "tool_result" else "text"
-            parts.append({**part, key: rewrite[i]})
+        # An emptied tool_result stays: dropping it would orphan its tool_use.
+        elif rewrite[i] or result:
+            parts.append({**part, "content" if result else "text": rewrite[i]})
     msg["content"] = parts
 
 
@@ -2569,21 +2978,22 @@ def validate(fork: Path, session_id: str) -> list[str]:
     return failures
 ```
 
-- [ ] **Step 4: Run the tests and see them pass**
+- [ ] **Step 5: Run the tests and see them pass**
 
 Run: `uv run pytest tests/test_sessions_claude.py -q && uv run mypy src && uv run ruff check . && uv run ruff format --check .`
-Expected: 18 passed; mypy `Success` (run `uv run ruff format` on flagged files first).
+Expected: 20 passed; mypy `Success` (run `uv run ruff format` on flagged files first).
 
-- [ ] **Step 5: Commit **
+- [ ] **Step 6: Commit **
 
 ```bash
-git add src/loosy_goose/sessions/claude.py tests/test_sessions_claude.py
+git add src/loosy_goose/sessions/claude.py tests/session_fixtures.py tests/test_sessions_claude.py
 git commit -m "$(cat <<'MSG'
 Write and validate Claude Code forks
 
 New session id throughout, chain re-linked across every dropped stretch, marker at the
-root or right after a kept compact boundary, last-prompt pointing at the new leaf.
-Validation walks parentUuid from the leaf and checks coverage, tool pairs and one id.
+root or right after a kept compact boundary, last-prompt pointing at the new leaf; an
+emptied tool_result stays paired with its call. Validation walks parentUuid from the leaf
+and checks coverage, tool pairs and one id.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
@@ -2600,7 +3010,7 @@ MSG
 - Test: `tests/test_sessions_codex.py`
 
 **Interfaces:**
-- Consumes: as Task 6, plus `exchange_starts`, `Trigger` (Task 3).
+- Consumes: as Task 6 (`strip_part`, `MARKER_PREFIX`, `TRIMMED_RESULT`, `SessionRecord.marker`/`cleaned` among them), plus `exchange_starts`, `Trigger` (Task 3).
 - Produces (`loosy_goose.sessions.codex`):
   - `TOOL: Tool = "codex"`, `TESTED_VERSIONS: tuple[str, ...] = ("0.158.0",)`
   - `default_home() -> Path`: `$CODEX_HOME` or `~/.codex`
@@ -2615,19 +3025,21 @@ MSG
 | `session_meta`, `compacted` | meta | `pinned` |
 | `response_item` / `message`, role `assistant` | message | blocks from `output_text` |
 | `response_item` / `message`, role `user` followed by `event_msg` `user_message` before the next `task_started` | message | `prompt` = the event's `message` |
-| `response_item` / `message`, role `user` starting with `MARKER_PREFIX` | side | an earlier fork's marker |
+| `response_item` / `message`, role `user` starting with `MARKER_PREFIX` | side | an earlier fork's marker; `marker` = its text, no blocks |
 | other `response_item` / `message`, roles `user` and `developer` | meta | `pinned` (instructions, environment context) |
 | `response_item` / `reasoning` | message | `thinking`; blocks from `summary` texts |
 | `response_item` / `function_call`, `custom_tool_call` | message | `call_side="call"`, `call_ids=(call_id,)`, `tool_name` |
 | `response_item` / `function_call_output`, `custom_tool_call_output` | message | `call_side="result"`, role `tool` |
 | `response_item` / `web_search_call`, `agent_message`, `tool_search_call`, `tool_search_output` | meta | kept with their exchange; the tool search pair is never trimmed |
-| `event_msg` (any), `turn_context`, `world_state`, `token_usage_record`, `inter_agent_communication_metadata` | meta | |
+| `event_msg` `user_message` echoing a prompt | meta | `call_ids=(f"prompt-{line}",)`, shared with the prompt record, so the two form one unit and are kept or dropped together |
+| `event_msg` (any other), `turn_context`, `world_state`, `token_usage_record`, `inter_agent_communication_metadata` | meta | |
 | anything else | unknown | |
 
 - `live` is every record, or, after a `compacted` record, the `session_meta` lines plus everything from the last `compacted` on ([RF4]).
 - `exchange` counts `task_started` events.
 - `open_exchange` is the last exchange whose `task_started` has no `task_complete`/`turn_aborted` after it.
 - `reply` for assistant-side records is `f"exchange-{n}"`, so `keep_thinking` keeps reasoning only in exchanges that keep something.
+- Message texts and `*_output` texts are read through `strip_part` (Task 4), so an earlier handoff's placeholders never become blocks and the parts they sat in land in `cleaned`. Call arguments and reasoning summaries are read as written.
 
 - [ ] **Step 1: Add the install helper** (append to `tests/session_fixtures.py`, and add `"install_codex"` to `__all__`)
 
@@ -2654,6 +3066,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from session_fixtures import (
     CODE_WORDS,
     CODEX_FIXTURE,
@@ -2666,9 +3079,11 @@ from session_fixtures import (
 )
 
 from loosy_goose.sessions import codex
+from loosy_goose.sessions.model import SessionFormatError
 from loosy_goose.sessions.plan import (
     DEFAULT_TRIGGERS,
     MARKER_PREFIX,
+    TRIMMED_RESULT,
     Trigger,
     exchange_starts,
     find_trigger,
@@ -2706,11 +3121,21 @@ def test_calls_pair_with_their_outputs() -> None:
 
 def test_context_messages_are_pinned_and_prompts_are_messages() -> None:
     s = _read()
-    for rec in s.records:
-        if rec.kind == "response_item:message:developer":
-            assert rec.pinned and rec.prompt is None
-        if rec.prompt is not None:
-            assert rec.category == "message" and not rec.pinned
+    developer = [r for r in s.records if r.kind == "response_item:message:developer"]
+    prompts = [r for r in s.records if r.prompt is not None]
+    assert developer and prompts
+    assert all(r.pinned and r.prompt is None for r in developer)
+    assert all(r.category == "message" and not r.pinned for r in prompts)
+
+
+def test_a_prompt_and_its_user_message_echo_form_one_unit() -> None:
+    s = _read()
+    units = unit_ids(s)
+    echoes = [ri for ri in s.live if s.records[ri].kind == "event_msg:user_message"]
+    assert len(echoes) == len(s.prompts())
+    for ri in echoes:
+        mates = [rj for rj in s.live if rj != ri and units[rj] == units[ri]]
+        assert [s.records[rj].prompt is not None for rj in mates] == [True]
 
 
 def test_exchanges_follow_task_started_and_the_trigger_is_the_sentinel_turn() -> None:
@@ -2746,6 +3171,22 @@ def test_unknown_types_and_earlier_markers_are_classified(tmp_path: Path) -> Non
     ]
     s = codex.read(write_lines(tmp_path / "s.jsonl", lines + extra))
     assert [r.category for r in s.records[-3:]] == ["unknown", "unknown", "side"]
+    assert s.records[-1].marker == f"{MARKER_PREFIX}x on d; ...]"
+    assert s.records[-1].blocks == []
+
+
+def test_placeholders_are_stripped_on_read(tmp_path: Path) -> None:
+    lines = fixture_lines(CODEX_FIXTURE)
+    out = next(
+        o for o in lines
+        if o["type"] == "response_item"
+        and o["payload"].get("type") in ("function_call_output", "custom_tool_call_output")
+    )
+    out["payload"]["output"] = TRIMMED_RESULT
+    s = codex.read(write_lines(tmp_path / "s.jsonl", lines))
+    rec = next(r for r in s.records if r.call_side == "result")
+    assert (rec.blocks, rec.cleaned) == ([], {0: ""})
+    assert not any(TRIMMED_RESULT in b.text for r in s.records for b in r.blocks)
 
 
 def test_locate_by_cwd_id_and_path(tmp_path: Path) -> None:
@@ -2760,10 +3201,6 @@ def test_locate_by_cwd_id_and_path(tmp_path: Path) -> None:
 
 
 def test_a_file_without_session_meta_is_refused(tmp_path: Path) -> None:
-    import pytest
-
-    from loosy_goose.sessions.model import SessionFormatError
-
     path = write_lines(tmp_path / "bad.jsonl", [{"type": "event_msg", "payload": {}}])
     with pytest.raises(SessionFormatError, match="session_meta"):
         codex.read(path)
@@ -2789,7 +3226,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -2798,12 +3234,13 @@ from loosy_goose.sessions.model import (
     SessionFormatError,
     SessionRecord,
     Tool,
+    explicit_session,
     read_jsonl,
     same_dir,
     tagged,
     text_blocks,
 )
-from loosy_goose.sessions.plan import MARKER_PREFIX
+from loosy_goose.sessions.plan import MARKER_PREFIX, strip_part
 from loosy_goose.transcript import Block
 
 __all__ = ["Session", "TESTED_VERSIONS", "TOOL", "default_home", "locate", "read"]
@@ -2811,7 +3248,6 @@ __all__ = ["Session", "TESTED_VERSIONS", "TOOL", "default_home", "locate", "read
 TOOL: Tool = "codex"
 TESTED_VERSIONS: tuple[str, ...] = ("0.158.0",)
 
-_ID = re.compile(r"[0-9A-Za-z-]{8,64}")
 _CALLS = frozenset({"function_call", "custom_tool_call"})
 _OUTPUTS = frozenset({"function_call_output", "custom_tool_call_output"})
 _META_ITEMS = frozenset({"web_search_call", "agent_message", "tool_search_call", "tool_search_output"})
@@ -2841,12 +3277,7 @@ def _head(path: Path) -> dict[str, Any] | None:
 def locate(cwd: Path, session: str, home: Path) -> list[Path]:
     root = home / "sessions"
     if session != "current":
-        given = Path(session)
-        if given.is_absolute() and given.is_file():
-            return [given]
-        if not _ID.fullmatch(session):
-            return []
-        return sorted(root.glob(f"*/*/*/rollout-*-{session}.jsonl"))
+        return explicit_session(session, lambda sid: root.glob(f"*/*/*/rollout-*-{sid}.jsonl"))
     files = sorted(root.glob("*/*/*/rollout-*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
     out: list[Path] = []
     for path in files:
@@ -2885,18 +3316,25 @@ def _output(payload: dict[str, Any]) -> str:
 def _item(n: int, obj: dict[str, Any], payload: dict[str, Any]) -> SessionRecord:
     ptype = str(payload.get("type"))
     kind = f"response_item:{ptype}"
+    cleaned: dict[int, str] = {}
     if ptype == "message":
         role = payload.get("role")
         texts = _texts(payload.get("content"))
-        blocks: list[Block] = [b for i, text in texts for b in text_blocks(text, i)]
-        if role == "assistant":
-            return SessionRecord(n, obj, f"{kind}:assistant", "message", role="assistant", blocks=blocks)
         if role == "user" and texts and texts[0][1].startswith(MARKER_PREFIX):
-            return SessionRecord(n, obj, "response_item:loosy-marker", "side")
+            return SessionRecord(n, obj, "response_item:loosy-marker", "side", marker=texts[0][1])
+        blocks: list[Block] = [
+            b for i, text in texts for b in text_blocks(strip_part(text, i, cleaned), i)
+        ]
+        if role == "assistant":
+            return SessionRecord(
+                n, obj, f"{kind}:assistant", "message", role="assistant", blocks=blocks,
+                cleaned=cleaned,
+            )
         if role in ("user", "developer"):
             return SessionRecord(
                 n, obj, f"{kind}:{role}", "meta",
                 role="user" if role == "user" else "system", blocks=blocks, pinned=True,
+                cleaned=cleaned,
             )
         return SessionRecord(n, obj, f"{kind}:{role}", "unknown")
     if ptype == "reasoning":
@@ -2916,8 +3354,8 @@ def _item(n: int, obj: dict[str, Any], payload: dict[str, Any]) -> SessionRecord
     if ptype in _OUTPUTS:
         return SessionRecord(
             n, obj, kind, "message", role="tool",
-            blocks=tagged("tool_result", _output(payload), 0),
-            call_ids=(str(payload.get("call_id", "")),), call_side="result",
+            blocks=tagged("tool_result", strip_part(_output(payload), 0, cleaned), 0),
+            call_ids=(str(payload.get("call_id", "")),), call_side="result", cleaned=cleaned,
         )
     if ptype in _META_ITEMS:
         return SessionRecord(n, obj, kind, "meta")
@@ -2952,6 +3390,9 @@ def _promote_prompts(records: list[SessionRecord], live: list[int]) -> None:
             message = rec.raw.get("payload", {}).get("message")
             prompt.category, prompt.pinned = "message", False
             prompt.prompt = message if isinstance(message, str) else " ".join(b.text for b in prompt.blocks)
+            # One unit, so the echo is kept or dropped with its prompt: a dropped prompt's text
+            # would otherwise ship in its echo, and a later read would pin it on a context message.
+            prompt.call_ids = rec.call_ids = (f"prompt-{prompt.line}",)
             pending = None
 
 
@@ -3004,7 +3445,7 @@ def read(path: Path) -> Session:
 - [ ] **Step 5: Run the tests and see them pass**
 
 Run: `uv run pytest tests/test_sessions_codex.py -q && uv run mypy src && uv run ruff check . && uv run ruff format --check .`
-Expected: 8 passed; mypy `Success` (run `uv run ruff format` on flagged files first).
+Expected: 10 passed; mypy `Success` (run `uv run ruff format` on flagged files first).
 
 - [ ] **Step 6: Commit**
 
@@ -3015,7 +3456,9 @@ Read Codex sessions into the session model
 
 Locate by session_meta cwd, explicit id or path; history is file order from the last
 compacted record; prompts are the user messages echoed by user_message events;
-instructions and context messages are pinned; open turns are detected.
+instructions and context messages are pinned; a prompt and its user_message echo form
+one unit; open turns are detected; earlier
+loosy-goose markers are superseded and its trim placeholders stripped on read.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
@@ -3031,7 +3474,7 @@ MSG
 - Test: `tests/test_sessions_codex.py` (append)
 
 **Interfaces:**
-- Consumes: `ForkPlan`, `plan_fork`, `split_region`, `find_trigger`, `DEFAULT_TRIGGERS`, `MARKER_PREFIX`; `dump_line`, `read_jsonl`; `kept_where`.
+- Consumes: `ForkPlan`, `MARKER_PREFIX`, `GAP`, `TRIMMED_RESULT`; `dump_line`, `read_jsonl`; `fork_with`, `read_lines` (Task 7 `session_fixtures`); the prompt/echo unit (Task 8).
 - Produces (`loosy_goose.sessions.codex`):
   - `write_fork(session: Session, plan: ForkPlan, new_id: str, out_dir: Path) -> Path`: writes `out_dir/<new_id>.jsonl`; the final name comes from `fork_destination`.
   - `validate(fork: Path, session_id: str) -> list[str]`: from `"parse"`, `"session-id"`, `"forked-from"`, `"stale-id"`, `"tool-pairs"`, `"turns"`, `"ordinals"`.
@@ -3046,7 +3489,7 @@ MSG
 - Line 0's `payload.forked_from_id` is set to the old id.
 - `ordinal` is renumbered to the written line index on every line that carried one.
 - The marker is a `response_item` user message inserted before the first kept `response_item` after the last kept `compacted` record. That puts it inside a kept turn, and after a compaction that would otherwise replace it.
-- `plan.rewrites` replace message content texts, or the output text of a `*_output` (a str stays a str; a list keeps its non-text items).
+- `plan.rewrites` replace message content texts, or the output text of a `*_output` (a str stays a str; a list keeps its non-text items). An output rewritten to `""` stays, with empty text, so its call keeps its pair.
 
 - [ ] **Step 1: Write the failing tests** (append to `tests/test_sessions_codex.py`; extend the imports)
 
@@ -3054,46 +3497,24 @@ Add to the imports:
 
 ```python
 import uuid
-from collections.abc import Callable
 from datetime import datetime
 
-import pytest
-from session_builders import kept_where
-
-from loosy_goose.segment import Segment
-from loosy_goose.sessions.plan import ForkPlan, plan_fork, split_region
+from loosy_goose.sessions.plan import GAP
 ```
+
+and add `fork_with` and `read_lines` (Task 7) to the existing `session_fixtures` import.
 
 Append:
 
 ```python
-def _fork(
-    tmp_path: Path,
-    lines: list[dict[str, Any]] | None = None,
-    keep: Callable[[Segment], bool] = lambda s: True,
-) -> tuple[codex.Session, ForkPlan, str, Path]:
-    source = (
-        write_lines(tmp_path / "src.jsonl", lines) if lines is not None else FIXTURES / CODEX_FIXTURE
-    )
-    s = codex.read(source)
-    region = split_region(s, find_trigger(s, DEFAULT_TRIGGERS["codex"]), protect_tail_tokens=0)
-    plan = plan_fork(s, region, kept_where(region, keep), date="2026-10-13")
-    new_id = codex.new_session_id()
-    return s, plan, new_id, codex.write_fork(s, plan, new_id, tmp_path / "out")
-
-
-def _lines(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-
-
 def _is_marker(o: dict[str, Any]) -> bool:
     return o.get("type") == "response_item" and MARKER_PREFIX in json.dumps(o, ensure_ascii=False)
 
 
 def test_a_fork_without_beta_validates(tmp_path: Path) -> None:
-    s, _, new_id, fork = _fork(tmp_path, keep=lambda seg: "BETA" not in seg.text)
+    s, _, new_id, fork = fork_with(codex, tmp_path, keep=lambda seg: "BETA" not in seg.text)
     assert codex.validate(fork, new_id) == []
-    out = _lines(fork)
+    out = read_lines(fork)
     assert out[0]["payload"]["id"] == new_id
     assert out[0]["payload"]["forked_from_id"] == s.session_id
     assert s.session_id not in json.dumps([o for o in out[1:] if not _is_marker(o)])
@@ -3104,16 +3525,64 @@ def test_a_fork_without_beta_validates(tmp_path: Path) -> None:
     assert all(w in text for w in ("ALPHA", "GAMMA", "DELTA"))
     marker = next(i for i, o in enumerate(out) if _is_marker(o))
     assert all(o["type"] != "response_item" for o in out[:marker])
+    assert "BETA" not in json.dumps(out)
+
+
+def _with_turn_context(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A context user message after every `turn_context`, which Codex may write (Facts)."""
+    out: list[dict[str, Any]] = []
+    for o in lines:
+        out.append(o)
+        if o["type"] == "turn_context":
+            text = "<environment_context>scrubbed</environment_context>"
+            out.append({
+                "timestamp": o["timestamp"], "type": "response_item",
+                "payload": {
+                    "type": "message", "role": "user",
+                    "content": [{"type": "input_text", "text": text}],
+                },
+            })
+    return out
+
+
+def test_a_dropped_prompt_takes_its_echo_along_even_with_per_turn_context(
+    tmp_path: Path,
+) -> None:
+    lines = _with_turn_context(fixture_lines(CODEX_FIXTURE))
+    _, _, new_id, fork = fork_with(codex, tmp_path, lines, keep=lambda seg: "BETA" not in seg.text)
+    assert codex.validate(fork, new_id) == []
+    assert "BETA" not in fork.read_text(encoding="utf-8")
+    prompts = codex.read(fork).prompts()
+    assert all(w in " ".join(prompts) for w in ("ALPHA", "GAMMA", "DELTA"))
+    assert not any("environment_context" in p for p in prompts)
 
 
 def test_ordinals_are_renumbered(tmp_path: Path) -> None:
     lines = [{**o, "ordinal": i} for i, o in enumerate(fixture_lines(CODEX_FIXTURE))]
-    _, _, new_id, fork = _fork(tmp_path, lines, keep=lambda seg: "BETA" not in seg.text)
-    out = _lines(fork)
+    _, _, new_id, fork = fork_with(codex, tmp_path, lines, keep=lambda seg: "BETA" not in seg.text)
+    out = read_lines(fork)
     assert [o.get("ordinal") for o in out if "ordinal" in o] == [
         i for i, o in enumerate(out) if "ordinal" in o
     ]
     assert codex.validate(fork, new_id) == []
+
+
+def test_a_fork_of_a_fork_has_one_marker_and_no_inherited_placeholders(tmp_path: Path) -> None:
+    _, _, first_id, first = fork_with(codex, tmp_path)
+    lines = read_lines(first)
+    out = next(
+        o for o in lines
+        if o["type"] == "response_item"
+        and o["payload"].get("type") in ("function_call_output", "custom_tool_call_output")
+    )
+    out["payload"]["output"] = TRIMMED_RESULT
+    s, _, new_id, second = fork_with(codex, tmp_path / "again", lines)
+    assert s.session_id == first_id
+    assert codex.validate(second, new_id) == []
+    text = second.read_text(encoding="utf-8")
+    assert text.count(MARKER_PREFIX) == 1
+    assert f"compressed from session {first_id} " in text
+    assert GAP not in text and TRIMMED_RESULT not in text
 
 
 def _corrupt(lines: list[dict[str, Any]], how: str, old: str) -> list[dict[str, Any]]:
@@ -3144,8 +3613,8 @@ def _corrupt(lines: list[dict[str, Any]], how: str, old: str) -> list[dict[str, 
 
 @pytest.mark.parametrize("how", ["tool-pairs", "stale-id", "session-id", "turns", "ordinals"])
 def test_validate_names_the_failed_check(tmp_path: Path, how: str) -> None:
-    s, _, new_id, fork = _fork(tmp_path)
-    bad = write_lines(tmp_path / "bad.jsonl", _corrupt(_lines(fork), how, s.session_id))
+    s, _, new_id, fork = fork_with(codex, tmp_path)
+    bad = write_lines(tmp_path / "bad.jsonl", _corrupt(read_lines(fork), how, s.session_id))
     assert how in codex.validate(bad, new_id)
 
 
@@ -3183,9 +3652,9 @@ def test_rf4_a_session_spanning_context_windows_forks_from_its_last_compaction(
     first_live = s.records[s.live[1]]
     assert first_live.kind == "compacted" and first_live.pinned
     assert len(s.prompts()) == 3 and not any("ALPHA" in p or "BETA" in p for p in s.prompts())
-    _, _, new_id, fork = _fork(tmp_path, lines)
+    _, _, new_id, fork = fork_with(codex, tmp_path, lines)
     assert codex.validate(fork, new_id) == []
-    out = _lines(fork)
+    out = read_lines(fork)
     compacted = next(i for i, o in enumerate(out) if o["type"] == "compacted")
     marker = next(i for i, o in enumerate(out) if _is_marker(o))
     assert compacted < marker
@@ -3369,7 +3838,7 @@ def validate(fork: Path, session_id: str) -> list[str]:
 - [ ] **Step 4: Run the tests and see them pass**
 
 Run: `uv run pytest tests/test_sessions_codex.py -q && uv run mypy src && uv run ruff check . && uv run ruff format --check .`
-Expected: 17 passed; mypy `Success` (run `uv run ruff format` on flagged files first).
+Expected: 21 passed; mypy `Success` (run `uv run ruff format` on flagged files first).
 
 - [ ] **Step 5: Commit **
 
@@ -3401,7 +3870,7 @@ MSG
 - Consumes:
   - both adapters (Tasks 6–9);
   - `snapshot`, `newer_than_tested`, `SessionFormatError`, `Session`, `Tool` (Task 3);
-  - `find_trigger`, `split_region`, `plan_fork`, `DEFAULT_TRIGGERS`, `PROTECT_TAIL_TOKENS`, `HandoffRefusedError`, `Trigger` (Tasks 3–4);
+  - `find_trigger`, `split_region`, `plan_fork`, `DEFAULT_TRIGGERS`, `PROTECT_TAIL_TOKENS`, `HandoffRefusedError`, `Trigger`, `find_prior_fork`, `recompress_warning`, `region_tokens` (Tasks 3–4); `GAP`, `MARKER_PREFIX`, `TRIMMED_RESULT` in the tests;
   - `resolve_rate` (Task 1);
   - `pipeline.PipelineOptions`, `pipeline.compress_transcript`; `segment.segment`; `tokens.count_tokens`.
 - Produces:
@@ -3420,7 +3889,7 @@ MSG
     - `ADAPTERS: dict[Tool, SessionAdapter]`, `DEFAULT_KEEP_THINKING = False`
     - `class HandoffError(Exception)`
     - `Runner = Callable[[list[str], Path], str]`
-    - `@dataclass(frozen=True) class HandoffOptions(level: str | None = None, keep: float | None = None, target_tokens: int | None = None, session: str = "current", tool: Literal["auto", "claude", "codex"] = "auto", cwd: Path = Path.cwd(), verify: bool = False, protect_tail_tokens: int = 4000, keep_thinking: bool = DEFAULT_KEEP_THINKING, triggers: tuple[str, ...] | None = None, homes: dict[Tool, Path] | None = None)`. `cwd` is a `default_factory`.
+    - `@dataclass(frozen=True) class HandoffOptions(level: str | None = None, keep: float | None = None, target_tokens: int | None = None, session: str = "current", tool: Literal["auto", "claude", "codex"] = "auto", cwd: Path = Path.cwd(), verify: bool = False, protect_tail_tokens: int = 4000, keep_thinking: bool = DEFAULT_KEEP_THINKING, homes: dict[Tool, Path] | None = None)`. `cwd` is a `default_factory`.
     - `@dataclass(frozen=True) class HandoffResult(status: Literal["forked", "nothing-to-do"], reason: str | None, tool: Tool, source_session: str, source_path: str, original_resume_command: str, fork_session: str | None, fork_path: str | None, resume_command: str | None, before_tokens: int, after_tokens: int, tail_tokens: int, keep: float | None, first_prompt: str, last_prompt: str, trigger: str, verified: bool | None, warnings: list[str])` with `to_dict() -> dict[str, Any]`
     - `handoff(opts: HandoffOptions, *, now: datetime | None = None, runner: Runner | None = None, cache_dir: Path | None = None) -> HandoffResult`
   - `session_fixtures`: `fake_embeddings(texts: list[str], model_name: str) -> np.ndarray`, `without_trigger(lines: list[dict[str, Any]]) -> list[dict[str, Any]]`
@@ -3430,7 +3899,7 @@ MSG
 1. Candidates come from the selected adapters' `locate`, newest first by mtime.
 2. For `session="current"`, read up to the 3 newest and take the first carrying a trigger. Otherwise take the newest, and warn that the handoff trigger was not found ([RF3], [RF5]). If more than one candidate changed in the last 10 minutes, warn ([RF3]).
 3. Every read is of a snapshot in a private temp dir ([RF2]).
-4. Split the region:
+4. Split the region. If `live[:end]` holds an earlier fork's marker, add `recompress_warning(find_prior_fork(...))` to the warnings: the session was already compressed, the earlier fork's date, and the tokens added since. The handoff still proceeds, and the warning also rides on a "nothing-to-do" result.
    - If no compressible records are left, the result is "nothing-to-do".
    - If `target_tokens` is at least the session's tokens, the result is "nothing-to-do".
    - Otherwise the target for the compressible part is `target_tokens` minus everything else, and an error if that leaves nothing.
@@ -3439,7 +3908,7 @@ MSG
 7. Count the fork's tokens by re-reading it. Move it to its destination.
 8. With `verify`, write a throwaway copy under a third id, run the CLI's `verify_command`, and delete the copy. If the run fails or doesn't answer OK, delete the fork and raise.
 
-Token counts are block-level `count_tokens` over the live history: `before` covers everything before the trigger, `after` covers the whole fork.
+Token counts are block-level `count_tokens` over the live history: `before` covers everything before the trigger, `after` covers the whole fork. Neither counts a marker or a trim placeholder: the adapters strip them on read (Tasks 4, 6, 8), so `after` is the fork as a later handoff would read it.
 
 - [ ] **Step 1: Add test helpers** (append to `tests/session_fixtures.py`; add `"fake_embeddings"` and `"without_trigger"` to `__all__`; add `import numpy as np` to the imports)
 
@@ -3469,6 +3938,7 @@ def without_trigger(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
 ```python
 import json
 import os
+import re
 import time
 import uuid
 from datetime import datetime
@@ -3484,12 +3954,21 @@ from session_fixtures import (
     install_claude,
     install_codex,
     without_trigger,
+    write_lines,
 )
 
 from loosy_goose.handoff import HandoffError, HandoffOptions, handoff
+from loosy_goose.pipeline import Compressed, PipelineOptions
+from loosy_goose.segment import segment
 from loosy_goose.sessions import claude, codex
+from loosy_goose.sessions.plan import GAP, MARKER_PREFIX, TRIMMED_RESULT
+from loosy_goose.transcript import Transcript
 
 NOW = datetime(2026, 10, 13, 12, 0, 0)
+RECOMPRESSED = re.compile(
+    r"this session was already compressed by loosy-goose on 2026-10-13; about [\d,]+ tokens "
+    r"added since — compressing again compounds the loss"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -3673,9 +4152,60 @@ def test_rf5_an_unidentifiable_trigger_excludes_nothing_and_says_so(tmp_path: Pa
     assert any("handoff trigger not found" in w for w in result.warnings)
     fork = claude.read(Path(str(result.fork_path)))
     assert "DELTA" in fork.prompts()[-1]
+
+
+def _keep_everything(
+    transcript: Transcript, opts: PipelineOptions, *, cache_dir: Path | None = None
+) -> Compressed:
+    return Compressed(segment(transcript), None, 0, 0, 0, 1.0)
+
+
+def _parts(obj: dict[str, Any]) -> list[dict[str, Any]]:
+    message = obj.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    return [p for p in content if isinstance(p, dict)] if isinstance(content, list) else []
+
+
+def test_a_second_handoff_on_a_fork_warns_and_inherits_no_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Keeping every segment makes this run trim nothing, so any placeholder in the second fork
+    # would be one inherited from the first.
+    monkeypatch.setattr("loosy_goose.handoff.compress_transcript", _keep_everything)
+    install_claude(tmp_path / "claude")
+    first = handoff(_opts(tmp_path), now=NOW)
+    earlier = Path(str(first.fork_path))
+    lines = [json.loads(line) for line in earlier.read_text(encoding="utf-8").splitlines()]
+    for obj in lines:
+        for part in _parts(obj):
+            if part.get("type") == "tool_result":
+                part["content"] = TRIMMED_RESULT
+    reply = next(
+        p
+        for o in reversed(lines)
+        if o.get("type") == "assistant"
+        for p in _parts(o)
+        if p.get("type") == "text"
+    )
+    reply["text"] += f"\n{GAP}"
+    write_lines(earlier, lines)
+    assert first.status == "forked" and not any(RECOMPRESSED.fullmatch(w) for w in first.warnings)
+
+    second = handoff(_opts(tmp_path, session=str(first.fork_session)), now=NOW)
+    assert (second.status, second.source_session) == ("forked", first.fork_session)
+    assert any(RECOMPRESSED.fullmatch(w) for w in second.warnings)
+    fork = Path(str(second.fork_path))
+    assert claude.validate(fork, str(second.fork_session)) == []
+    text = fork.read_text(encoding="utf-8")
+    assert text.count(MARKER_PREFIX) == 1
+    assert f"compressed from session {first.fork_session} " in text
+    assert GAP not in text and TRIMMED_RESULT not in text
+    parts = [p for o in map(json.loads, text.splitlines()) for p in _parts(o)]
+    results = [p["content"] for p in parts if p.get("type") == "tool_result"]
+    assert results and set(results) == {""}
 ```
 
-`len(b'{"type":"user","uuid":"half')` is 27.
+`len(b'{"type":"user","uuid":"half')` is 27. In the second-handoff test the earlier fork's `GAP` sits in the last reply, inside the protected tail, and its `tool_result` is in the compressed stretch, so both the tail and the stretch are checked.
 
 - [ ] **Step 3: Run them and see them fail**
 
@@ -3748,8 +4278,11 @@ from loosy_goose.sessions.plan import (
     HandoffRefusedError,
     Region,
     Trigger,
+    find_prior_fork,
     find_trigger,
     plan_fork,
+    recompress_warning,
+    region_tokens,
     split_region,
 )
 from loosy_goose.tokens import count_tokens
@@ -3780,7 +4313,6 @@ class HandoffOptions:
     verify: bool = False
     protect_tail_tokens: int = PROTECT_TAIL_TOKENS
     keep_thinking: bool = DEFAULT_KEEP_THINKING
-    triggers: tuple[str, ...] | None = None
     homes: dict[Tool, Path] | None = None
 
 
@@ -3860,7 +4392,7 @@ def _pick(
             if dropped
             else []
         )
-        trigger = find_trigger(session, opts.triggers or DEFAULT_TRIGGERS[adapter.TOOL])
+        trigger = find_trigger(session, DEFAULT_TRIGGERS[adapter.TOOL])
         read.append(_Picked(adapter, path, session, trigger, own))
         if trigger.how != "none" or opts.session != "current":
             break
@@ -3947,11 +4479,13 @@ def _fork(
             f"{', '.join(adapter.TESTED_VERSIONS)}; its session format may have changed"
         )
     region: Region = split_region(session, p.trigger, opts.protect_tail_tokens)
+    prior = find_prior_fork(session, region.end)
+    if prior is not None:
+        warnings.append(recompress_warning(prior))
     history = session.live[: region.end]
     prompts = [r.prompt for ri in history if (r := session.records[ri]).prompt is not None]
     before = sum(session.tokens(ri) for ri in history)
-    tail = sum(session.tokens(ri) for ri in session.live[region.tail_from : region.end])
-    compressible = sum(session.tokens(ri) for ri in region.turn_record)
+    compressible, tail = region_tokens(session, region)
 
     def result(
         status: Literal["forked", "nothing-to-do"],
@@ -4056,7 +4590,7 @@ def _fork(
 - [ ] **Step 6: Run the tests and see them pass**
 
 Run: `uv run pytest tests/test_handoff.py -q && uv run mypy src && uv run ruff check . && uv run ruff format --check .`
-Expected: 15 passed; mypy `Success`. That includes the module-as-protocol assignment `ADAPTERS: dict[Tool, SessionAdapter] = {"claude": claude, "codex": codex}`, which mypy supports. If mypy rejects a module for a protocol mismatch, first check that every protocol member is listed in that adapter's `__all__`: with `__all__` defined, mypy matches a module against a protocol by its exported names only (checked while planning). Otherwise fix the adapter's signature, not the protocol. Run `uv run ruff format` on flagged files first.
+Expected: 16 passed; mypy `Success`. That includes the module-as-protocol assignment `ADAPTERS: dict[Tool, SessionAdapter] = {"claude": claude, "codex": codex}`, which mypy supports. If mypy rejects a module for a protocol mismatch, first check that every protocol member is listed in that adapter's `__all__`: with `__all__` defined, mypy matches a module against a protocol by its exported names only (checked while planning). Otherwise fix the adapter's signature, not the protocol. Run `uv run ruff format` on flagged files first.
 
 - [ ] **Step 7: Run the whole suite**
 
@@ -4073,7 +4607,8 @@ Add the session handoff: locate, snapshot, compress, fork, validate, verify
 Prefers the newest session carrying a handoff trigger and warns about concurrent sessions;
 reads only snapshots; compresses the part before the protected tail; validates the fork in
 staging before moving it next to the original; optional headless live check on a
-throwaway copy. Every result carries both resume commands, token counts and warnings.
+throwaway copy. Every result carries both resume commands, token counts and warnings,
+including one when the session is itself an earlier loosy-goose fork.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
@@ -4098,7 +4633,8 @@ MSG
   - `handoff`, `HandoffOptions`, `HandoffError` (Task 10); `PROTECT_TAIL_TOKENS` (Task 3);
   - `LEVELS`, `check_keep`, `resolve_rate` (Task 1);
   - `pipeline.compress_transcript`, `PipelineOptions`, `selector_label`, `to_turns`;
-  - `transcript.load_claude_code_jsonl`, `load_messages_json`; `Tool` (Task 3).
+  - `transcript.load_claude_code_jsonl`, `load_messages_json`; `Tool` (Task 3);
+  - `clean_transcript`, `recompress_warning` (Task 4); `GAP`, `MARKER_PREFIX`, `marker_text` in the tests.
 - Produces:
   - `loosy_goose.embed.warm(model_name: str = SELECT_MODEL) -> None`
   - `loosy_goose.mcp_server`:
@@ -4107,7 +4643,7 @@ MSG
     - `build_server(*, homes: Mapping[Tool, Path] | None = None) -> MCPServer`
     - `main() -> None`
   - MCP tool `handoff_session(level: str | None = None, keep: float | None = None, target_tokens: int | None = None, session: str = "current", tool: Literal["auto", "claude", "codex"] = "auto", cwd: str | None = None, verify: bool = False, protect_tail_tokens: int = 4000) -> dict`: `HandoffResult.to_dict()`.
-  - MCP tool `compress(messages: list[dict] | None = None, path: str | None = None, level: str | None = None, keep: float | None = None, target_tokens: int | None = None) -> {"header": {...}, "turns": [{"index", "role", "blocks": [{"kind", "text", "meta"}]}]}`: writes nothing.
+  - MCP tool `compress(messages: list[dict] | None = None, path: str | None = None, level: str | None = None, keep: float | None = None, target_tokens: int | None = None) -> {"header": {...}, "turns": [{"index", "role", "blocks": [{"kind", "text", "meta"}]}]}`: writes nothing. The input goes through `clean_transcript` before anything is counted, so an earlier fork's marker and placeholders are neither scored nor counted; `header["warnings"]` holds the already-compressed warning when the input carried a marker, else `[]`.
 
 **Decision (user, 2026-10-13):** the official `mcp` 2.x SDK. Errors meant for the user are raised as `ToolError`, because any other exception's message is hidden from the client (verified with 2.3.0).
 
@@ -4146,6 +4682,8 @@ from mcp import Client  # noqa: E402
 from session_fixtures import FIXTURE_CWD, fake_embeddings, install_claude  # noqa: E402
 
 from loosy_goose import mcp_server  # noqa: E402
+from loosy_goose.sessions.plan import GAP, MARKER_PREFIX, marker_text  # noqa: E402
+from loosy_goose.tokens import count_tokens  # noqa: E402
 
 _CONTENTS = [
     "Please look at the failing test in tests/test_main.py and tell me what you see.",
@@ -4209,6 +4747,27 @@ def test_compress_reads_a_transcript_path(tmp_path: Path) -> None:
     result = _call(mcp_server.build_server(), "compress", {"path": str(path), "keep": 0.5})
     assert not result.is_error, _text(result)
     assert result.structured_content["header"]["keep_source"] == "keep"
+
+
+def test_compress_strips_an_earlier_forks_artifacts_and_warns() -> None:
+    marker = {"role": "user", "content": marker_text("old-id", "2026-10-12", 10, 40, 5)}
+    tagged = [dict(m) for m in MESSAGES]
+    tagged[3]["content"] = f"{tagged[3]['content']}\n{GAP}"
+    plain = _call(mcp_server.build_server(), "compress", {"messages": MESSAGES, "level": "light"})
+    again = _call(
+        mcp_server.build_server(), "compress", {"messages": [marker, *tagged], "level": "light"}
+    )
+    assert not again.is_error, _text(again)
+    header = again.structured_content["header"]
+    assert header["input_tokens"] == plain.structured_content["header"]["input_tokens"]
+    added = sum(count_tokens(c) for c in _CONTENTS) - (10 + 5)
+    assert header["warnings"] == [
+        f"this session was already compressed by loosy-goose on 2026-10-12; about {added:,} "
+        "tokens added since — compressing again compounds the loss"
+    ]
+    assert plain.structured_content["header"]["warnings"] == []
+    body = json.dumps(again.structured_content["turns"])
+    assert GAP not in body and MARKER_PREFIX not in body
 
 
 @pytest.mark.parametrize(
@@ -4304,7 +4863,7 @@ from loosy_goose.pipeline import PipelineOptions, compress_transcript, selector_
 from loosy_goose.rate import LEVELS, check_keep, resolve_rate
 from loosy_goose.segment import segment
 from loosy_goose.sessions.model import Tool
-from loosy_goose.sessions.plan import PROTECT_TAIL_TOKENS
+from loosy_goose.sessions.plan import PROTECT_TAIL_TOKENS, clean_transcript, recompress_warning
 from loosy_goose.tokens import count_tokens
 from loosy_goose.transcript import Transcript, load_claude_code_jsonl, load_messages_json
 
@@ -4369,7 +4928,7 @@ def build_server(*, homes: Mapping[Tool, Path] | None = None) -> MCPServer:
         and return the kept turns. Writes nothing. Rate: one of level (light|medium|heavy,
         default medium), keep (0.10-0.80) or target_tokens."""
         _check_rate(level, keep, target_tokens)
-        transcript = _transcript(messages, path)
+        transcript, prior = clean_transcript(_transcript(messages, path))
         input_tokens = (
             sum(count_tokens(s.text) for s in segment(transcript))
             if target_tokens is not None
@@ -4389,6 +4948,7 @@ def build_server(*, homes: Mapping[Tool, Path] | None = None) -> MCPServer:
             "output_tokens": result.output_tokens,
             "atom_recall_final": result.atom_recall_final,
             "notes": list(rate.notes),
+            "warnings": [recompress_warning(prior)] if prior is not None else [],
         }
         turns = [
             {
@@ -4453,13 +5013,13 @@ def main() -> None:
 Append to `CHANGELOG.md` under `## Unreleased`:
 
 ```markdown
-- 2026-10-13 — `loosy-goose-mcp`, an MCP server (new `mcp` extra, official `mcp` SDK 2.x) with two tools. `handoff_session` forks the current Claude Code or Codex session into a compressed copy whose history is the kept turns plus a verbatim recent tail (at least 4,000 tokens) behind a marker, validates the fork the way each CLI loads it, and returns the resume command for the fork and for the untouched original. `compress` returns compressed turns and writes nothing. Session formats live in `sessions/claude.py` and `sessions/codex.py`, tested against Claude Code 2.1.296 and codex-cli 0.158.0; a newer CLI still forks, with a warning. Rate presets moved from `cli.py` to `loosy_goose.rate` (CLI unchanged); segments now record their source block (`Segment.block`, not part of `segments_digest`).
+- 2026-10-13 — `loosy-goose-mcp`, an MCP server (new `mcp` extra, official `mcp` SDK 2.x) with two tools. `handoff_session` forks the current Claude Code or Codex session into a compressed copy whose history is the kept turns plus a verbatim recent tail (at least 4,000 tokens) behind a marker, validates the fork the way each CLI loads it, and returns the resume command for the fork and for the untouched original. `compress` returns compressed turns and writes nothing. Session formats live in `sessions/claude.py` and `sessions/codex.py`, tested against Claude Code 2.1.296 and codex-cli 0.158.0; a newer CLI still forks, with a warning. Compressing a session that is itself a fork still works but warns (the earlier fork's date and the tokens added since), and loosy-goose's own marker and `[loosy-goose: … trimmed]` placeholders are stripped before scoring, so they never stack up across handoffs; `compress` does the same. Rate presets moved from `cli.py` to `loosy_goose.rate` (CLI unchanged); segments now record their source block (`Segment.block`, not part of `segments_digest`).
 ```
 
 - [ ] **Step 5: Run the tests and see them pass**
 
 Run: `uv run pytest tests/test_mcp_server.py tests/test_workflows.py -q && uv run mypy src && uv run ruff check . && uv run ruff format --check .`
-Expected: 11 passed; mypy `Success`.
+Expected: 12 passed; mypy `Success`.
 
 - [ ] **Step 6: Smoke-test that the server builds outside pytest**
 
@@ -4791,7 +5351,7 @@ MSG
 ## Task 13: Opt-in live drift and end-to-end tests (both CLIs)
 
 **Files:**
-- Modify: `pyproject.toml:63-66` (`[tool.pytest.ini_options]`: `addopts`, `live` marker)
+- Modify: `pyproject.toml` `[tool.pytest.ini_options]` (`addopts`, `live` marker; lines 64–66 at HEAD, about 4 lower once Task 11 has added the extra and the script)
 - Create: `tests/test_live_handoff.py`
 - Test: `tests/test_project_config.py`
 - Modify (only if Step 6 fails): `src/loosy_goose/handoff.py` (`DEFAULT_KEEP_THINKING`), `CHANGELOG.md`
@@ -4801,7 +5361,7 @@ MSG
   - `scratch_repo`, `record_claude`, `record_codex`, `CODE_WORDS`, `SENTINEL` (Task 5);
   - `kept_where` (Task 3);
   - the adapters (Tasks 6–9);
-  - `find_trigger`, `split_region`, `plan_fork`, `DEFAULT_TRIGGERS` (Tasks 3–4);
+  - `find_trigger`, `split_region`, `plan_fork`, `ForkPlan` (its `tail_from` and `keep`), `DEFAULT_TRIGGERS` (Tasks 3–4);
   - `SessionAdapter` (Task 10);
   - `integrations/claude/loosy.md` (Task 12).
 - Produces: the `live` pytest marker, deselected by default. `uv run pytest -m live` runs only these.
@@ -4859,8 +5419,9 @@ Expected: 1 passed.
 
 Opt-in: `uv run pytest -m live`. Needs `claude` and `codex` on PATH and logged in, and spends a
 little API use. Run after upgrading either CLI: a failure here means its session format moved.
-The synthetic sessions they record stay in ~/.codex (its sqlite has indexed them); the Claude
-project folder of each scratch repo is removed.
+Each test deletes only what it made: the session file it recorded, the forks it wrote, and its
+scratch repo. Codex's sqlite index is never touched, so it may keep a stale row for a deleted
+synthetic Codex session.
 """
 
 from __future__ import annotations
@@ -4881,7 +5442,13 @@ from loosy_goose.segment import Segment
 from loosy_goose.sessions import claude, codex
 from loosy_goose.sessions.adapter import SessionAdapter
 from loosy_goose.sessions.model import Session
-from loosy_goose.sessions.plan import DEFAULT_TRIGGERS, find_trigger, plan_fork, split_region
+from loosy_goose.sessions.plan import (
+    DEFAULT_TRIGGERS,
+    ForkPlan,
+    find_trigger,
+    plan_fork,
+    split_region,
+)
 
 pytestmark = pytest.mark.live
 
@@ -4929,9 +5496,10 @@ def _setup(tool: str) -> tuple[SessionAdapter, Path, Recorder, Callable[[str], l
     )
 
 
-def _cleanup(tool: str, cwd: Path, home: Path) -> None:
-    if tool == "claude":
-        shutil.rmtree(home / "projects" / claude.project_slug(str(cwd)), ignore_errors=True)
+def _cleanup(created: list[Path], cwd: Path) -> None:
+    # Only what the test made (Global Constraints: the only files deleted are our own).
+    for path in created:
+        path.unlink(missing_ok=True)
     shutil.rmtree(cwd, ignore_errors=True)
 
 
@@ -4943,21 +5511,28 @@ def _drift(
     work: Path,
     keep: Callable[[Segment], bool],
     resume: Callable[[str], list[str]],
-) -> tuple[str, Session, Session]:
+    *,
+    keep_thinking: bool = False,
+) -> tuple[str, Session, ForkPlan]:
     session = adapter.read(source)
     region = split_region(
         session, find_trigger(session, DEFAULT_TRIGGERS[adapter.TOOL]), protect_tail_tokens=0
     )
-    plan = plan_fork(session, region, kept_where(region, keep), date=date.today().isoformat())
+    plan = plan_fork(
+        session,
+        region,
+        kept_where(region, keep),
+        date=date.today().isoformat(),
+        keep_thinking=keep_thinking,
+    )
     fork_id = adapter.new_session_id()
     staged = adapter.write_fork(session, plan, fork_id, work)
     assert adapter.validate(staged, fork_id) == []
-    fork = adapter.read(staged)
     dest = adapter.fork_destination(source, fork_id, home, datetime.now())
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(staged, dest)
     try:
-        return _ask(resume(fork_id), cwd), session, fork
+        return _ask(resume(fork_id), cwd), session, plan
     finally:
         dest.unlink(missing_ok=True)
 
@@ -4967,13 +5542,15 @@ def test_drift_a_fork_resumes_with_exactly_the_kept_words(tool: str, tmp_path: P
     _need(tool)
     adapter, home, record, resume = _setup(tool)
     cwd = scratch_repo()
+    created: list[Path] = []
     try:
         source = record(cwd, home)
+        created.append(source)
         answer, _, _ = _drift(
             adapter, source, home, cwd, tmp_path, lambda s: "BETA" not in s.text, resume
         )
     finally:
-        _cleanup(tool, cwd, home)
+        _cleanup(created, cwd)
     assert _words(answer) == {"ALPHA", "GAMMA", "DELTA"}
     assert MARKER_SEEN in answer
 
@@ -4983,15 +5560,20 @@ def test_drift_dropping_older_thinking_survives_resume(tool: str, tmp_path: Path
     _need(tool)
     adapter, home, record, resume = _setup(tool)
     cwd = scratch_repo()
+    created: list[Path] = []
     try:
         source = record(cwd, home)
-        answer, session, fork = _drift(adapter, source, home, cwd, tmp_path, lambda s: True, resume)
+        created.append(source)
+        answer, session, plan = _drift(
+            adapter, source, home, cwd, tmp_path, lambda s: True, resume
+        )
     finally:
-        _cleanup(tool, cwd, home)
-    before = sum(1 for ri in session.live if session.records[ri].thinking)
-    after = sum(1 for ri in fork.live if fork.records[ri].thinking)
-    if before == after:
+        _cleanup(created, cwd)
+    # Only thinking before the tail is dropped; the trigger turn and the tail say nothing here.
+    older = [ri for ri in session.live[: plan.tail_from] if session.records[ri].thinking]
+    if not older:
         pytest.skip("this recording has no thinking before the protected tail; nothing dropped")
+    assert not set(older) & set(plan.keep)
     assert _words(answer) == set(CODE_WORDS)
 
 
@@ -5013,8 +5595,10 @@ def test_e2e_claude_handoff_through_the_mcp_tool(tmp_path: Path) -> None:
         json.dumps({"mcpServers": {"loosy-goose": {"command": SERVER[0], "args": SERVER[1:]}}}),
         encoding="utf-8",
     )
+    created: list[Path] = []
     try:
         source = record_claude(cwd, home, trigger=False)
+        created.append(source)
         existing = set(source.parent.glob("*.jsonl"))
         # Prompt before --allowedTools: the flag is variadic and would swallow it.
         out = _ask(
@@ -5027,12 +5611,13 @@ def test_e2e_claude_handoff_through_the_mcp_tool(tmp_path: Path) -> None:
             env={"MCP_TIMEOUT": "120000", "MCP_TOOL_TIMEOUT": "600000"},
         )
         forks = sorted(set(source.parent.glob("*.jsonl")) - existing)
+        created += forks
         assert len(forks) == 1, out
         fork = claude.read(forks[0])
         answer = _ask(["claude", "-p", ASK, "--resume", fork.session_id], cwd)
         _check_e2e(claude.read(source), fork, answer)
     finally:
-        _cleanup("claude", cwd, home)
+        _cleanup(created, cwd)
 
 
 def _forked_from(path: Path) -> str | None:
@@ -5046,8 +5631,10 @@ def test_e2e_codex_handoff_through_the_mcp_tool(tmp_path: Path) -> None:
     _need("codex", "uv")
     home = codex.default_home()
     cwd = scratch_repo()
+    created: list[Path] = []
     try:
         source = record_codex(cwd, home, trigger=False)
+        created.append(source)
         sid = codex.read(source).session_id
         overrides = [
             "-c", f"mcp_servers.loosy-goose.command={json.dumps(SERVER[0])}",
@@ -5064,12 +5651,13 @@ def test_e2e_codex_handoff_through_the_mcp_tool(tmp_path: Path) -> None:
         forks = [
             p for p in (home / "sessions").glob("*/*/*/rollout-*.jsonl") if _forked_from(p) == sid
         ]
+        created += forks
         assert len(forks) == 1
         fork = codex.read(forks[0])
         answer = _ask(["codex", "exec", "resume", fork.session_id, ASK], cwd)
         _check_e2e(codex.read(source), fork, answer)
     finally:
-        _cleanup("codex", cwd, home)
+        _cleanup(created, cwd)
 ```
 
 `record_claude` and `record_codex` take `(cwd, home)` positionally, which is why `Recorder = Callable[..., Path]`.
@@ -5090,7 +5678,23 @@ If `test_drift_dropping_older_thinking_survives_resume` fails with an API error 
 
 - set `DEFAULT_KEEP_THINKING = True` in `src/loosy_goose/handoff.py` and delete the comment above it;
 - add a `CHANGELOG.md` line that names the CLI and version whose resume broke, for example `- 2026-10-13 — handoff keeps thinking/reasoning inside kept turns: dropping it broke resume on Claude Code 2.1.296 (live drift test).`;
-- change the test to fork with `plan_fork(..., keep_thinking=True)` by threading a `keep_thinking` parameter through `_drift`;
+- in `tests/test_live_handoff.py`, replace the end of `test_drift_dropping_older_thinking_survives_resume`, from its `answer, session, plan = _drift(` call on, with:
+
+  ```python
+          answer, session, plan = _drift(
+              adapter, source, home, cwd, tmp_path, lambda s: True, resume, keep_thinking=True
+          )
+      finally:
+          _cleanup(created, cwd)
+      # Fallback in force: older thinking is kept inside kept turns, and the resume must work.
+      older = [ri for ri in session.live[: plan.tail_from] if session.records[ri].thinking]
+      if not older:
+          pytest.skip("this recording has no thinking before the protected tail")
+      assert set(older) <= set(plan.keep)
+      assert _words(answer) == set(CODE_WORDS)
+  ```
+
+  and rename the test to `test_drift_keeping_older_thinking_survives_resume`;
 - re-run until green.
 
 - [ ] **Step 7: Commit **
@@ -5118,7 +5722,7 @@ If Step 6 applied the thinking fallback, also `git add src/loosy_goose/handoff.p
 **Files:**
 - Create: `.github/workflows/release.yml`
 - Modify: `.github/workflows/ci.yml:3-6` (add `workflow_call:` so the release can run the full CI matrix)
-- Modify: `README.md` (one line under `## Run` → after the Handoff section)
+- Modify: `README.md` (one line appended to the "Handoff from Claude Code or Codex" section)
 - Modify: `CHANGELOG.md` (append)
 - Test: `tests/test_workflows.py` (append)
 
@@ -5126,13 +5730,20 @@ If Step 6 applied the thinking fallback, also `git add src/loosy_goose/handoff.p
 - Consumes: `ci.yml` (Task 11 state); `integrations/` files (Task 12).
 - Produces: a GitHub Release per `v*` tag, with `dist/*` (sdist and wheel), `integrations/claude/loosy.md`, `integrations/codex/loosy/SKILL.md`, `integrations/codex/loosy/agents/openai.yaml` and `integrations/README.md` attached, and the install command in the notes. The user creates and pushes the tag; nothing in this plan does.
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/test_workflows.py`)
+- [ ] **Step 1: Write the failing tests** (`tests/test_workflows.py`)
+
+Add to the imports at the top of the file, which then reads:
 
 ```python
 import re
+from pathlib import Path
 
 import pytest
+```
 
+Then append:
+
+```python
 _USES = re.compile(r"uses:\s*(\S+)")
 
 
@@ -5291,14 +5902,16 @@ Each of these is a decision. Raise it with the user if it looks wrong.
    - Claude: history starts at the last `compact_boundary`, the boundary and summary are pinned, and the marker goes after the boundary.
    - Codex: history starts at the last `compacted` record, which is pinned, and the marker goes after it.
 5. **Codex prompts versus injected context.** A user message is a prompt only when an `event_msg` `user_message` echoes it. Other user and developer messages (instructions, environment context) are pinned and always kept.
-6. **Meta records** (attachments after startup, Codex `event_msg`/`turn_context`/`world_state`) are kept iff their exchange keeps a message.
+6. **Meta records** (attachments after startup, Codex `event_msg`/`turn_context`/`world_state`) are kept iff their exchange keeps a message. The exception is a meta record tied to one message: Codex's `user_message` echo shares its prompt's unit and is kept iff that prompt is. Otherwise a dropped prompt's text would ship in its echo.
 7. **Trimmed tool results.** A dropped run of chunks becomes a `[loosy-goose: lines trimmed]` line. A result whose call was kept but whose chunks all were not becomes `[loosy-goose: output trimmed]`. Claude's `toolUseResult` mirror field is left as recorded (UI-only).
 8. **`target_tokens`** is a whole-fork target. The compressible part gets the target minus everything kept verbatim. A target below that is an error, and a session already under target is "nothing-to-do".
-9. **Repeated `/loosy`.** An earlier fork's marker is classified `side`, so it is replaced, not stacked.
+9. **Repeated `/loosy`.** An earlier fork's marker is classified `side`, so it is replaced, not stacked. Its trim placeholders are stripped on read, so they are never inherited (user request, 2026-10-13).
 10. **`last-prompt`** is always written for the new leaf. This settles the spec's open item without needing to know whether Claude Code requires it.
 11. **Failed live check.** With `verify=true`, a failed check deletes the fork as well and raises, consistent with "a failure leaves the user's session as it was".
 12. **Codex command mechanism.** The spec says "prompt". Codex custom prompts are deprecated, so v1 ships a skill (`$loosy`, explicit-only).
 13. **Fork placement.** The fork is written and validated in a private temp dir and moved next to the original only when it passes. A broken fork never appears in a CLI's session list.
+14. **"Tokens added since" an earlier fork** (user request, 2026-10-13). This is the token count of the history after the marker minus the `kept` and `tail` figures the marker itself states, floored at zero. Records the earlier fork kept outside both figures, such as a compaction summary or a command's expanded body, count as added, so the figure is an estimate. The marker text is fixed by the spec, so it cannot carry an exact count. Only a marker inside the live history counts: one cut off by a later built-in compaction is not history.
+15. **Where placeholders are stripped.** Text and tool-result parts only. Tool input and thinking are never rewritten (input must stay valid structured data; thinking carries signatures), so they are read as written. A result that held only a placeholder is kept with its call, with empty text. It has no segments, so the current run cannot trim it and writes no fresh placeholder for it.
 
 ## Self-Review
 
@@ -5338,16 +5951,19 @@ Each of these is a decision. Raise it with the user if it looks wrong.
 | Testing: unit, fixtures, MCP in-process, drift, e2e, release | 3–11, 5, 11, 13, 13, 14 |
 | Distribution: install commands, release notes | 12, 14 |
 | Open items: thinking, `last-prompt`, SDK choice | 13, 7, 11 |
+| User request 2026-10-13: already-compressed warning (handoff and `compress`) | 4 (`find_prior_fork`, `recompress_warning`), 10, 11 |
+| User request 2026-10-13: marker and trim placeholders stripped on read, never scored, kept or counted | 4 (`strip_part`, `plan_fork`, `clean_transcript`), 6, 7, 8, 9, 10, 11 |
 
 **Placeholder scan:** no TBD/TODO. Every code step carries its code, and no step says "similar to Task N". The template strings left in deliverables are deliberate: `vX.Y.Z` in the install docs, `<your clone>` in the startup error, the `<field>` slots in the command files that the model fills from the result, and `session=<id>` in messages.
 
 **Name and type consistency, checked across tasks:**
 
-- `Session`, `SessionRecord` fields; `Trigger(position, how)`; `Region(end, tail_from, transcript, turn_record)`.
+- `Session`, `SessionRecord` fields (`marker`, `cleaned` included); `Trigger(position, how)`; `Region(end, tail_from, transcript, turn_record)`.
 - `ForkPlan` fields; `plan_fork(session, region, kept, *, date, keep_thinking)`.
+- Artifact handling, all in `sessions/plan.py` (Task 4): `PLACEHOLDERS`, `strip_placeholders`, `strip_part` (used by both adapters and the builder), `PriorFork`, `prior_fork`, `find_prior_fork` (used by `handoff`), `recompress_warning` (used by `handoff` and `compress`), `clean_transcript` (used by `compress`).
 - The adapter surface, identical in `claude.py` and `codex.py`: `TOOL`, `TESTED_VERSIONS`, `default_home`, `locate`, `read`, `write_fork`, `validate`, `fork_destination`, `new_session_id`, `resume_command`, `verify_command`. `SessionAdapter` matches it.
 - `HandoffOptions` and `HandoffResult` field names. The command files' `<field>` slots are tested against `HandoffResult`, and their argument names against `HandoffOptions`.
-- Test helpers: `build`, `words`, `kept_where`, `fixture_lines`, `write_lines`, `install_claude`, `install_codex`, `fake_embeddings`, `without_trigger`.
+- Test helpers: `build`, `words`, `kept_where`, `fixture_lines`, `write_lines`, `install_claude`, `install_codex`, `read_lines`, `fork_with`, `fake_embeddings`, `without_trigger`.
 
 **Review Focus coverage:** each line has a pinning test in its owning task:
 
