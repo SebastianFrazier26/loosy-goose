@@ -180,7 +180,13 @@ def _total(session: Session) -> int:
 def _run(argv: list[str], cwd: Path) -> tuple[int, str]:
     try:
         done = subprocess.run(
-            argv, cwd=cwd, capture_output=True, text=True, timeout=VERIFY_TIMEOUT_S, check=False
+            argv,
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=VERIFY_TIMEOUT_S,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise HandoffError(f"the live check could not run `{argv[0]}`: {exc}") from exc
@@ -222,12 +228,19 @@ def _verify(
     staged = p.adapter.write_fork(p.session, plan, check_id, work / "verify")
     copy = p.adapter.fork_destination(p.source, check_id, home, stamp)
     _place(staged, copy)
+    reply_file = work / f"verify-reply-{check_id}.txt"
     try:
-        code, reply = runner(p.adapter.verify_command(check_id), cwd)
+        code, reply = runner(p.adapter.verify_command(check_id, reply_file), cwd)
+        if p.adapter.REPLY_IN_FILE:
+            try:
+                reply = reply_file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                reply = ""
         # Exact, not a substring: an error message containing "TOKEN" or "BOOK" is no answer.
         return code == 0 and reply.strip() == "OK"
     finally:
         copy.unlink(missing_ok=True)
+        reply_file.unlink(missing_ok=True)
 
 
 def handoff(

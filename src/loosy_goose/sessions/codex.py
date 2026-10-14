@@ -34,6 +34,7 @@ from loosy_goose.sessions.plan import MARKER_PREFIX, ForkPlan, strip_part
 from loosy_goose.transcript import Block
 
 __all__ = [
+    "REPLY_IN_FILE",
     "Session",
     "TESTED_VERSIONS",
     "TOOL",
@@ -50,6 +51,7 @@ __all__ = [
 
 TOOL: Tool = "codex"
 TESTED_VERSIONS: tuple[str, ...] = ("0.158.0",)
+REPLY_IN_FILE: bool = True
 
 _CALLS = frozenset({"function_call", "custom_tool_call"})
 _OUTPUTS = frozenset({"function_call_output", "custom_tool_call_output"})
@@ -329,8 +331,18 @@ def resume_command(session_id: str, cwd: str) -> str:
     return f"cd {shlex.quote(cwd)} && codex resume {session_id}"
 
 
-def verify_command(session_id: str) -> list[str]:
-    return ["codex", "exec", "resume", session_id, "Reply with exactly: OK"]
+def verify_command(session_id: str, reply_file: Path) -> list[str]:
+    # stdout carries banners and logs, so the reply is read from the file instead.
+    return [
+        "codex",
+        "exec",
+        "resume",
+        "--skip-git-repo-check",
+        "--output-last-message",
+        str(reply_file),
+        session_id,
+        "Reply with exactly: OK",
+    ]
 
 
 def _apply_rewrites(obj: dict[str, Any], rewrite: dict[int, str]) -> None:

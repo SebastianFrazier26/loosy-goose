@@ -345,10 +345,13 @@ def test_destination_ids_and_commands() -> None:
     )
     assert uuid.UUID(codex.new_session_id()).version == 7
     assert codex.resume_command("abc", "/work/my dir") == "cd '/work/my dir' && codex resume abc"
-    assert codex.verify_command("abc") == [
+    assert codex.verify_command("abc", Path("/w/reply.txt")) == [
         "codex",
         "exec",
         "resume",
+        "--skip-git-repo-check",
+        "--output-last-message",
+        "/w/reply.txt",
         "abc",
         "Reply with exactly: OK",
     ]

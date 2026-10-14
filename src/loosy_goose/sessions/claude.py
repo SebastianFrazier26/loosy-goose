@@ -34,6 +34,7 @@ from loosy_goose.sessions.plan import MARKER_PREFIX, ForkPlan, strip_part, strip
 from loosy_goose.transcript import Block
 
 __all__ = [
+    "REPLY_IN_FILE",
     "Session",
     "TESTED_VERSIONS",
     "TOOL",
@@ -51,6 +52,7 @@ __all__ = [
 
 TOOL: Tool = "claude"
 TESTED_VERSIONS: tuple[str, ...] = ("2.1.296",)
+REPLY_IN_FILE: bool = False
 
 _SIDE_TYPES = frozenset(
     {
@@ -378,7 +380,7 @@ def resume_command(session_id: str, cwd: str) -> str:
     return f"cd {shlex.quote(cwd)} && claude --resume {session_id}"
 
 
-def verify_command(session_id: str) -> list[str]:
+def verify_command(session_id: str, reply_file: Path) -> list[str]:
     return ["claude", "-p", "Reply with exactly: OK", "--resume", session_id]
 
 

@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import subprocess
 import time
 import uuid
 from datetime import datetime
@@ -19,6 +20,7 @@ from session_fixtures import (
     write_lines,
 )
 
+from loosy_goose import handoff as handoff_mod
 from loosy_goose.handoff import HandoffError, HandoffOptions, handoff
 from loosy_goose.pipeline import Compressed, PipelineOptions
 from loosy_goose.segment import segment
@@ -343,3 +345,80 @@ def test_a_write_fork_failure_partway_leaves_no_fork_behind(
     with pytest.raises(OSError, match="disk full"):
         handoff(_opts(tmp_path), now=NOW)
     assert _names(source.parent) == [source.name]
+
+
+def _codex_runner(reply: str | None, stdout: str, calls: list[list[str]], code: int = 0) -> Any:
+    def runner(argv: list[str], cwd: Path) -> tuple[int, str]:
+        calls.append(argv)
+        if reply is not None:
+            Path(argv[argv.index("--output-last-message") + 1]).write_text(reply)
+        return code, stdout
+
+    return runner
+
+
+def test_codex_verify_reads_the_reply_file_and_ignores_stdout_noise(tmp_path: Path) -> None:
+    install_codex(tmp_path / "codex")
+    calls: list[list[str]] = []
+    runner = _codex_runner("OK\n", "OpenAI Codex v0.158.0\nworkdir: /x\nOK\ntokens used: 9", calls)
+    result = handoff(_opts(tmp_path, tool="codex", verify=True), now=NOW, runner=runner)
+    assert result.verified is True
+    argv = calls[0]
+    assert argv[:3] == ["codex", "exec", "resume"]
+    assert "--skip-git-repo-check" in argv
+    reply_file = Path(argv[argv.index("--output-last-message") + 1])
+    assert not reply_file.exists()
+
+
+@pytest.mark.parametrize(
+    ("reply", "stdout", "code"),
+    [("nope", "OK", 0), (None, "OK", 0), ("OK", "OK", 1), ("", "OK", 0)],
+)
+def test_codex_verify_fails_on_the_file_not_stdout(
+    tmp_path: Path, reply: str | None, stdout: str, code: int
+) -> None:
+    install_codex(tmp_path / "codex")
+    calls: list[list[str]] = []
+    runner = _codex_runner(reply, stdout, calls, code)
+    with pytest.raises(HandoffError, match="live check failed"):
+        handoff(_opts(tmp_path, tool="codex", verify=True), now=NOW, runner=runner)
+    assert not Path(calls[0][calls[0].index("--output-last-message") + 1]).exists()
+
+
+def test_codex_reply_file_is_removed_when_the_runner_crashes(tmp_path: Path) -> None:
+    install_codex(tmp_path / "codex")
+    seen: list[Path] = []
+
+    def runner(argv: list[str], cwd: Path) -> tuple[int, str]:
+        path = Path(argv[argv.index("--output-last-message") + 1])
+        path.write_text("OK")
+        seen.append(path)
+        raise RuntimeError("runner crashed")
+
+    with pytest.raises(RuntimeError, match="runner crashed"):
+        handoff(_opts(tmp_path, tool="codex", verify=True), now=NOW, runner=runner)
+    assert not seen[0].exists()
+
+
+def test_claude_verify_still_reads_stdout(tmp_path: Path) -> None:
+    install_claude(tmp_path / "claude")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str], cwd: Path) -> tuple[int, str]:
+        calls.append(argv)
+        return 0, "OK\n"
+
+    assert handoff(_opts(tmp_path, verify=True), now=NOW, runner=runner).verified is True
+    assert "--output-last-message" not in calls[0]
+
+
+def test_run_gives_the_subprocess_no_stdin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0, stdout="OK", stderr="")
+
+    monkeypatch.setattr(handoff_mod.subprocess, "run", fake_run)
+    assert handoff_mod._run(["x"], tmp_path) == (0, "OK")
+    assert seen["stdin"] is subprocess.DEVNULL

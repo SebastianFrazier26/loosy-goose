@@ -418,3 +418,12 @@ def test_a_call_that_never_got_output_is_dropped_as_an_incomplete_unit() -> None
         assert {0, 3, 4, 5} <= set(plan.keep)
         assert any("c3" in w and "never got output" in w for w in plan.warnings)
         assert any("c1" in w for w in plan.warnings) == (protect > 0)
+        stretch = [w for w in plan.warnings if "compressible stretch" in w]
+        assert stretch == (
+            [
+                "1 interrupted tool call(s) with no output were dropped from the compressible "
+                "stretch, since a fork's calls must all be answered"
+            ]
+            if protect == 0
+            else []
+        )

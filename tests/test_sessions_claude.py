@@ -387,7 +387,7 @@ def test_destination_and_commands() -> None:
     assert (
         claude.resume_command("abc", "/work/my dir") == "cd '/work/my dir' && claude --resume abc"
     )
-    assert claude.verify_command("abc") == [
+    assert claude.verify_command("abc", Path("/w/reply.txt")) == [
         "claude",
         "-p",
         "Reply with exactly: OK",

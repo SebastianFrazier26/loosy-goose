@@ -401,6 +401,16 @@ def plan_fork(
         for ri in session.live[region.tail_from : region.end]
         if ri in incomplete and records[ri].call_side == "call"
     ]
+    stretch_dropped = sum(
+        1
+        for ri in session.live[: region.tail_from]
+        if ri in incomplete and records[ri].call_side == "call"
+    )
+    if stretch_dropped:
+        warnings.append(
+            f"{stretch_dropped} interrupted tool call(s) with no output were dropped from the "
+            "compressible stretch, since a fork's calls must all be answered"
+        )
     for pos, ri in enumerate(session.live[: region.end]):
         rec = records[ri]
         if rec.category == "side" or ri in drop:
