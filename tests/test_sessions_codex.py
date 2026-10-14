@@ -351,7 +351,7 @@ def test_destination_ids_and_commands() -> None:
         "resume",
         "--skip-git-repo-check",
         "--output-last-message",
-        "/w/reply.txt",
+        str(Path("/w/reply.txt")),
         "abc",
         "Reply with exactly: OK",
     ]
