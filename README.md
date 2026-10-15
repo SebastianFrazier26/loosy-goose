@@ -107,6 +107,7 @@ results. Headline findings, stated plainly:
 - [docs/PHASE1.md](docs/PHASE1.md) — experiment designs, pre-registered criteria, results, open defects
 - [docs/PHASE2.md](docs/PHASE2.md) — Phase 2 plan, decisions with the option rejected, verified nulls, what is still open
 - [docs/results/](docs/results/) — raw summary tables as emitted by the experiment scripts, with a note on how stale each one is
+- [integrations/README.md](integrations/README.md) — the /loosy (Claude Code) and $loosy (Codex) session handoff: install, register, use
 - [CLAUDE.md](CLAUDE.md) — repository guide for coding agents
 
 ## Run
@@ -156,6 +157,16 @@ table when `--paths` is on. Every line after that is one kept turn,
 `--level`, `--keep` and `--target-tokens` are mutually exclusive. No preset turns on `--band` or
 `--paths`.
 
+## Handoff from Claude Code or Codex
+
+`loosy-goose-mcp` is an MCP server whose `handoff_session` tool forks your live Claude Code or
+Codex session into a compressed copy. The copy holds the kept turns, a verbatim recent tail and
+a marker, and you resume it in place of built-in `/compact`. The original session is never
+modified. Install, registration and the `/loosy` / `$loosy` commands:
+[integrations/README.md](integrations/README.md). The same server's `compress` tool returns
+compressed turns for any transcript and writes nothing.
+Releases: each `v*` tag publishes a GitHub Release with the wheel, the sdist and the integrations files; its notes carry the install command.
+
 ## Continuing on another machine
 
 Everything needed is in the repo; nothing depends on the machine Phase 1 ran on.
@@ -193,6 +204,8 @@ uv run pytest
 
 Lint, format check and type check: `uv run ruff check . && uv run ruff format --check . && uv run mypy src`.
 
+Opt-in drift and end-to-end tests against the real CLIs (needs logged-in `claude` and `codex`, spends a little API use): `uv run pytest -m live`. Re-record the synthetic fixtures with `uv run python tests/session_recorder.py`.
+
 ## Roadmap
 
 - **Done** — Phase 1: PPMI-SVD vs embedding-SVD vs code channel, on real and public transcripts
@@ -200,8 +213,8 @@ Lint, format check and type check: `uv run ruff check . && uv run ruff format --
   budgets. Plan, decisions and open questions in [docs/PHASE2.md](docs/PHASE2.md)
 - **Done** — core pipeline and CLI: segment → supersede → (band) → (paths) → leverage score →
   novelty-per-token select (plain budget select with `--no-novelty`, `--band` or `--paths`) → emit
-- MCP server
-- Claude Code plugin; Codex parity
+- **Done** — MCP server and session handoff (`/loosy`, `$loosy`) for Claude Code and Codex
+- Claude Code plugin packaging and marketplace entry
 - Personalization prior built from the user's own local sessions
 
 ## License

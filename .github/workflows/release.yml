@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          # The write token must not sit in .git/config while third-party packages build and
+          # run; gh reads GH_TOKEN from the environment.
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          # Explicit: setup-uv's "auto" skips the cache on tag and release events.
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv build
+      # A wheel carries no [tool.uv.sources], so CPU torch on Linux has to be asked for; this
+      # is the install the release notes tell users to run.
+      - name: Install the built wheel with CPU torch
+        run: |
+          wheel="$(ls dist/*.whl)"
+          uv tool install --python 3.12 --torch-backend cpu "loosy-goose[embed,mcp] @ file://$PWD/$wheel"
+          "$(uv tool dir)/loosy-goose/bin/python" -c "import torch; v = torch.__version__; print(v); assert v.endswith('+cpu'), v"
+          "$(uv tool dir --bin)/loosy-goose" --help
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > notes.md <<EOF
+          Install (uv 0.11.3 or newer):
+
+              uv tool install --torch-backend cpu "loosy-goose[embed,mcp] @ git+https://github.com/SebastianFrazier26/loosy-goose@${GITHUB_REF_NAME}"
+
+          Then register the MCP server and install /loosy (Claude Code) or \$loosy (Codex): see integrations/README.md, attached.
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            integrations/claude/loosy.md \
+            integrations/codex/loosy/SKILL.md \
+            integrations/codex/loosy/agents/openai.yaml \
+            integrations/README.md \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md

@@ -428,3 +428,27 @@ def test_a_hyphenated_filename_after_a_separator_yields_no_fragment_atom() -> No
     assert extract_atoms("open src/foo-set.js now") == ["src/foo-set.js"]
     assert "set.js" not in extract_atoms("call run.foo-set.js")
     assert extract_atoms("edit my-file.py ok") == ["my-file.py"]
+
+
+def test_segments_carry_their_source_block_index() -> None:
+    transcript = Transcript(
+        "t",
+        [
+            Turn(
+                0,
+                "user",
+                [
+                    Block("text", "first paragraph here"),
+                    Block("tool_use", '{"command": "ls"}', {"name": "Bash"}),
+                    Block("text", "one sentence.\n\nanother sentence."),
+                ],
+            )
+        ],
+    )
+    segs = segment(transcript)
+    assert [(s.kind, s.block) for s in segs] == [
+        ("prose", 0),
+        ("tool_use", 1),
+        ("prose", 2),
+        ("prose", 2),
+    ]

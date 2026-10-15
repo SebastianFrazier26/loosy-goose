@@ -4,7 +4,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from loosy_goose.cli import LEVELS, build_parser, main, resolve_rate
+from loosy_goose.cli import build_parser, main
+from loosy_goose.rate import LEVELS, resolve_rate
 from loosy_goose.select import leverage_scores, rank_for_energy, svd_energy
 from loosy_goose.transcript import HEADER_KEY, load_blocks_jsonl
 

@@ -1,12 +1,11 @@
 import argparse
 import io
-import math
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
+from loosy_goose.rate import KEEP_MAX, KEEP_MIN, LEVELS, check_keep, resolve_rate
 from loosy_goose.transcript import (
     Transcript,
     load_claude_code_jsonl,
@@ -14,32 +13,15 @@ from loosy_goose.transcript import (
     write_blocks_jsonl,
 )
 
-KEEP_MIN = 0.1
-KEEP_MAX = 0.8
-LEVELS: dict[str, float] = {"light": 0.50, "medium": 0.33, "heavy": 0.25}
-DEFAULT_LEVEL = "medium"
-
-RateSource = Literal["keep", "level", "target-tokens"]
-
-
-@dataclass(frozen=True)
-class Rate:
-    """The compression rate as the pipeline consumes it. `budget` is set only when a token target
-    was honoured exactly; otherwise the pipeline derives the budget from `keep`."""
-
-    keep: float
-    budget: int | None
-    source: RateSource
-    level: str | None
-    target_tokens: int | None
-    notes: tuple[str, ...]
-
 
 def _keep(value: str) -> float:
+    # Outside the try: argparse turns this ValueError into its own "invalid _keep value"
+    # message, exactly as before the move.
     k = float(value)
-    if not KEEP_MIN <= k <= KEEP_MAX:
-        raise argparse.ArgumentTypeError(f"keep must be in [{KEEP_MIN}, {KEEP_MAX}], got {k}")
-    return k
+    try:
+        return check_keep(k)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def _target_tokens(value: str) -> int:
@@ -47,32 +29,6 @@ def _target_tokens(value: str) -> int:
     if n < 1:
         raise argparse.ArgumentTypeError(f"target-tokens must be a positive integer, got {n}")
     return n
-
-
-def resolve_rate(
-    keep: float | None, level: str | None, target_tokens: int | None, input_tokens: int
-) -> Rate:
-    """`input_tokens` must be the count `token_budget` sums (original segments), or a target's
-    implied ratio would not match the budget the pipeline would derive from it."""
-    if keep is not None:
-        rounded = round(keep, 2)
-        notes: tuple[str, ...] = ()
-        if rounded != keep:
-            notes = (f"--keep {keep} rounded to 0.01 steps; using {rounded:.2f}",)
-        return Rate(rounded, None, "keep", None, None, notes)
-    if target_tokens is not None:
-        implied = target_tokens / input_tokens if input_tokens else math.inf
-        if KEEP_MIN <= implied <= KEEP_MAX:
-            return Rate(implied, target_tokens, "target-tokens", None, target_tokens, ())
-        clamped = KEEP_MIN if implied < KEEP_MIN else KEEP_MAX
-        warning = (
-            f"warning: --target-tokens {target_tokens} implies keep {implied:.4f} of "
-            f"{input_tokens} input tokens, outside [{KEEP_MIN}, {KEEP_MAX}]; clamped to "
-            f"keep {clamped:.2f}"
-        )
-        return Rate(clamped, None, "target-tokens", None, target_tokens, (warning,))
-    name = level if level is not None else DEFAULT_LEVEL
-    return Rate(LEVELS[name], None, "level", name, None, ())
 
 
 def _min_mentions(value: str) -> int:

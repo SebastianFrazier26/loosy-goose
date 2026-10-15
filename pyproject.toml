@@ -22,9 +22,13 @@ embed = [
     "sentence-transformers>=3.0",
     "torch>=2.14.0",
 ]
+mcp = [
+    "mcp>=2.3,<3",
+]
 
 [project.scripts]
 loosy-goose = "loosy_goose.cli:main"
+loosy-goose-mcp = "loosy_goose.mcp_server:main"
 
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13.0"]
@@ -52,6 +56,8 @@ explicit = true
 
 [tool.ruff]
 line-length = 100
+# Plan and spec docs embed Python snippets that ruff 0.16 would otherwise format-check.
+extend-exclude = ["docs/superpowers"]
 target-version = "py312"
 
 [tool.ruff.lint]
@@ -63,4 +69,8 @@ files = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: needs the embedding model; skipped when sentence_transformers is missing"]
+addopts = "-m 'not live'"
+markers = [
+    "slow: needs the embedding model; skipped when sentence_transformers is missing",
+    "live: needs logged-in claude and codex CLIs and spends a little API use; run with `uv run pytest -m live`",
+]

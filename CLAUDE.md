@@ -8,10 +8,13 @@ Read [docs/DESIGN.md](docs/DESIGN.md) before changing the algorithm and
 
 ## Commands
 
-- `uv sync --dev --extra embed` — install (Python 3.12 pinned via `.python-version`). The CLI
+- `uv sync --dev --extra embed --extra mcp` — install (Python 3.12 pinned via `.python-version`). The CLI
   alone needs `uv sync --extra embed`; the experiments also need the dev group, which carries
   scikit-learn (TF-IDF baselines)
 - `uv run pytest` — tests
+- `uv run loosy-goose-mcp` — the MCP server on stdio
+- `uv run pytest -m live` — opt-in drift/e2e tests against the real CLIs
+- `uv run python tests/session_recorder.py` — re-record the synthetic session fixtures
 - `uv run ruff check . && uv run ruff format --check .` — lint + format check
 - `uv run mypy src` — type check (strict)
 - `uv run loosy-goose compress <transcript> [--keep 0.5 | --level light|medium|heavy | --target-tokens N] [--no-novelty] [--band] [--paths --min-mentions 2] [--output out.jsonl]` — CLI: supersede → leverage → per-token novelty selection at alpha 0.5 (default; `--no-novelty` for a plain budget fill; `--band` / `--paths` fall back to plain leverage); rate defaults to `--level medium` (0.33); header reports `atom_recall_final` as information only
@@ -35,6 +38,10 @@ Core:
 - `metrics.py` — compression ratio, atom recall, semantic coverage, `evaluate`
 - `pipeline.py` — `compress_transcript`: the shipped supersede → (band) → (paths) → leverage → per-token novelty@0.5 stack (exp_g's `supersede+leverage+novelty-per-token@0.5`, default since 2026-10-02), band and paths opt-in; `--no-novelty`, `--band` or `--paths` select by plain leverage budget fill instead, since novelty was never measured with band or paths; `PipelineOptions` carries the knobs; `to_turns` regroups kept segments into turns
 - `cli.py` — argparse entry point
+- `rate.py` — `LEVELS`, keep bounds, `resolve_rate` (shared by the CLI and the MCP server)
+- `sessions/` — session handoff: `model.py` (tool-agnostic `Session`), `plan.py` (trigger, protected tail, units, `plan_fork`, marker), `claude.py` / `codex.py` (the only code that knows a CLI's session format), `adapter.py` (protocol)
+- `handoff.py` — locate, snapshot, compress, write, validate, verify
+- `mcp_server.py` — `handoff_session` and `compress` tools (`mcp` extra)
 
 Experiment A (topic basis):
 
@@ -56,6 +63,8 @@ Experiment C (code channel):
 
 Supporting:
 
+- `integrations/` — `/loosy` command (Claude Code), `$loosy` skill (Codex), registration README
+- `tests/fixtures/sessions/` — synthetic Claude Code and Codex sessions recorded by `tests/session_recorder.py`
 - `tests/` — pytest
 - `experiments/` — experiment scripts, Phase 1 and 2; outputs in `experiments/output/` (gitignored); see `experiments/README.md`
   - `fetch_public.py` — downloads trace-commons/agent-traces, SWE-Gym/OpenHands-SFT-Trajectories, oasst2 validation into `data/public/`, writes `SOURCES.md` with revision hashes
@@ -135,3 +144,4 @@ the top of [docs/PHASE2.md](docs/PHASE2.md).
 - Do not push unprompted. Pushing to `origin` on this personal repo is fine **when the user
   asks for it**; it is not something to do on your own initiative.
 - Design decisions go through the user: propose options, wait.
+- Session fixtures are synthetic only. Re-record them with tests/session_recorder.py; never copy a real session into the repo.
