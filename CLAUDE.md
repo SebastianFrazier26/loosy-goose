@@ -78,6 +78,7 @@ Supporting:
   - `exp_g_novelty.py` — Experiment G grid (`exp_d_curves.py --grid exp_g`): `novelty_select` on the supersession pool at alpha 0.5 / 1 / 2, plus a per-token arm at 0.5, compared against exp_d's leverage and supersede+leverage
   - `exp_h_kinds.py` — Experiment H grid (`exp_d_curves.py --grid exp_h`): the four `kind_select` arms on the supersession pool, compared against exp_d's leverage and supersede+leverage, plus a kept-token share per kind table
   - `grid_status.py` — read-only progress watcher for a running grid (`--grid NAME [--methods A,B] [--variants base] [--log PATH] [--watch [--interval 10]]`): done/planned per transcript and method, rough ETA, NOT RUNNING / stall warnings
+  - `exp_i_downstream.py` — Experiment I: downstream model performance (probe QA, next-step prediction) after loosy compression vs full context vs a Sonnet summary at matched budget, through the real `claude -p` / `codex exec` CLIs; checkpointed per call in `experiments/output/exp_i/calls.jsonl`; `exp_i_status.py` shows progress
   - `survey_paths.py` — path mass and substitution-table cost, counted with `paths.find_paths`; public corpora only
   - `survey_tool_output.py` — shapes inside `tool_result` blocks and their token share; public corpora only
 - `docs/` — design spec, Phase 1 and Phase 2 write-ups, committed result tables
