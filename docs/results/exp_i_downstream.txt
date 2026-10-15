@@ -1,0 +1,51 @@
+Experiment I — downstream performance after compression
+version 1; 20 transcripts (5 trace-commons, 15 swe-gym); cells: mean [95% bootstrap CI over transcripts] n=transcripts
+
+Probe QA accuracy (probes Sonnet answers correctly from full context)
+condition       haiku-5.5                     sonnet-5.5                    gpt-6-luna                    gpt-6-sol                     
+full            0.96 [0.94,0.98] n=20         1.00 [1.00,1.00] n=20         0.96 [0.94,0.97] n=20         0.94 [0.92,0.96] n=20         
+loosy-light     0.81 [0.74,0.87] n=20         0.84 [0.77,0.91] n=20         0.80 [0.72,0.85] n=20         0.81 [0.74,0.87] n=20         
+loosy-medium    0.79 [0.71,0.86] n=20         0.80 [0.73,0.86] n=20         0.74 [0.66,0.81] n=20         0.80 [0.74,0.86] n=20         
+loosy-heavy     0.76 [0.68,0.82] n=20         0.77 [0.70,0.84] n=20         0.71 [0.63,0.79] n=20         0.77 [0.70,0.85] n=20         
+summary-light   0.94 [0.90,0.97] n=19         0.96 [0.93,0.99] n=19         0.95 [0.92,0.97] n=20         0.92 [0.89,0.95] n=20         
+summary-medium  0.92 [0.90,0.94] n=20         0.95 [0.93,0.97] n=20         0.92 [0.90,0.95] n=20         0.93 [0.90,0.96] n=20         
+summary-heavy   0.92 [0.88,0.95] n=19         0.93 [0.90,0.96] n=19         0.93 [0.90,0.95] n=20         0.90 [0.88,0.92] n=20         
+
+Next-step agreement with the real action (same=1, partial=0.5)
+condition       haiku-5.5                     sonnet-5.5                    gpt-6-luna                    gpt-6-sol                     
+full            0.30 [0.15,0.47] n=20         0.40 [0.25,0.57] n=20         0.42 [0.25,0.60] n=20         0.25 [0.10,0.42] n=20         
+loosy-light     0.17 [0.05,0.33] n=20         0.30 [0.15,0.47] n=20         0.40 [0.23,0.60] n=20         0.20 [0.07,0.35] n=20         
+loosy-medium    0.12 [0.00,0.28] n=20         0.28 [0.12,0.42] n=20         0.33 [0.15,0.50] n=20         0.30 [0.15,0.47] n=20         
+loosy-heavy     0.17 [0.05,0.35] n=20         0.25 [0.12,0.40] n=20         0.25 [0.10,0.40] n=20         0.23 [0.10,0.35] n=20         
+summary-light   0.05 [0.00,0.13] n=19         0.24 [0.11,0.37] n=19         0.38 [0.20,0.55] n=20         0.23 [0.10,0.35] n=20         
+summary-medium  0.29 [0.16,0.45] n=19         0.26 [0.11,0.42] n=19         0.25 [0.12,0.40] n=20         0.28 [0.12,0.42] n=20         
+summary-heavy   0.25 [0.10,0.42] n=20         0.25 [0.10,0.40] n=20         0.35 [0.17,0.53] n=20         0.25 [0.12,0.40] n=20         
+
+Probes kept after the full-context filter: swe-gym_row112=10, swe-gym_row145=9, swe-gym_row152=10, swe-gym_row164=10, swe-gym_row178=8, swe-gym_row218=10, swe-gym_row275=10, swe-gym_row338=10, swe-gym_row347=10, swe-gym_row357=10, swe-gym_row405=10, swe-gym_row473=10, swe-gym_row54=9, swe-gym_row63=10, swe-gym_row77=10, trace-commons_2965219c=8, trace-commons_89cf9e13=9, trace-commons_92833a43=10, trace-commons_ba1b4916=10, trace-commons_f93127ef=10
+
+Tokens of the earlier stretch as rendered (tail always verbatim, not counted)
+condition        mean tokens  share of full
+full                   20236          1.000
+loosy-light             9945          0.495
+loosy-medium            6746          0.333
+loosy-heavy             5147          0.254
+summary-light           6864          0.345
+summary-medium          5142          0.257
+summary-heavy           4112          0.202
+verbatim tail: mean 5054 tokens
+
+Calls and tokens, CLI-reported (codex input includes its own ~10-16k prompt per call)
+caller      task           calls     input tok  output tok  call-h
+gpt-6-luna  next             140     3,387,695       8,060    2.17
+gpt-6-luna  probe            140     3,406,229      16,285    2.19
+gpt-6-sol   next             140     3,412,759      42,870    2.26
+gpt-6-sol   probe            140     3,431,289      29,627    2.23
+haiku-5.5   next             138     3,061,713      30,883    1.64
+haiku-5.5   probe            138     3,093,409      80,256    1.68
+sonnet-5.5  grade_next       556       705,849      23,052    0.52
+sonnet-5.5  grade_probe      556       821,607      45,689    0.47
+sonnet-5.5  next             138     3,062,001      25,797    1.66
+sonnet-5.5  probe            138     3,093,678      29,468    1.65
+sonnet-5.5  probe_gen         20       648,339       9,985    0.03
+sonnet-5.5  summary           60     1,946,826     577,473    1.02
+codex tool calls made despite the no-tools instruction: 0
