@@ -230,15 +230,18 @@ def random_bits(doc: str) -> tuple[np.ndarray, np.ndarray]:
 THIN_THEN_SELECT_Q = (0.7, 0.5)
 KIND_THIN_Q = (0.5, 0.25)
 EXTRA_ARMS = frozenset({"code>sel", "code+tr>sel"})
+# Third pass (2026-10-22): thinned code dumps are force-kept rather than left to the selector,
+# which otherwise still drops most of them; the rest of the budget is selected as usual.
+KEEP_ARMS = frozenset({"code-keep>sel"})
 SEL_CACHE = OUT / "cache"
 
 
-def select_from(segs: list[Segment], budget: int) -> list[Segment]:
+def select_from(segs: list[Segment], budget: int, protect: str = "none") -> list[Segment]:
     """The shipped selector (leverage x per-token novelty@0.5) run on already-thinned segments."""
     config = CompressConfig(strategy="leverage")
     x = embed_segments(segs, config.model_name, SEL_CACHE)
     scores = score_segments(x, config)
-    return novelty_select(segs, scores, budget, NOVELTY_ALPHA, "none", per_token=True)
+    return novelty_select(segs, scores, budget, NOVELTY_ALPHA, protect, per_token=True)  # type: ignore[arg-type]
 
 
 def arm_outputs(
@@ -253,7 +256,7 @@ def arm_outputs(
     """(arm, selection keep, kept segments) per arm, lazily so `arm_s` times each one."""
 
     def want(arm: str) -> bool:
-        return arm in only if only else arm not in EXTRA_ARMS
+        return arm in only if only else arm not in EXTRA_ARMS | KEEP_ARMS
 
     if want("thin-nocode"):
         yield (
@@ -294,6 +297,14 @@ def arm_outputs(
             pre_budget = pool_tokens - math.ceil((1 - q) * bulk)
             pre = thin.thin_to_budget(pool, words, pre_budget, kinds=kinds).segments
             yield arm, q, select_from(pre, budget)
+    if want("code-keep>sel"):
+        code = frozenset({"code"})
+        bulk = sum(count_tokens(s.text) for s in pool if s.kind == "code")
+        pool_tokens = sum(count_tokens(s.text) for s in pool)
+        for q in KIND_THIN_Q:
+            pre_budget = pool_tokens - math.ceil((1 - q) * bulk)
+            pre = thin.thin_to_budget(pool, words, pre_budget, kinds=code).segments
+            yield "code-keep>sel", q, select_from(pre, budget, "code_only")
 
 
 def token_bits_for(key: str) -> thin.TokenBits:
