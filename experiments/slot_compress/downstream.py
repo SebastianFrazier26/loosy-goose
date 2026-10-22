@@ -7,7 +7,9 @@ only if Haiku answers it correctly from the full context. Haiku answers, Sonnet 
 
 Conditions per level: loosy (shipped pipeline), line (supersede -> line-keep code -> select),
 slotd / slote (supersede -> slot prose -> line-keep code -> select; direct rows with a legend, or
-rows re-realised as English), summary (Sonnet at loosy's rendered size), plus full once.
+rows re-realised as English), slme (same order, prose rewritten by a local qwen3-1.7b SLM in
+english mode; rewrites are precomputed in the main thread before any call so workers never load
+torch), summary (Sonnet at loosy's rendered size), plus full once.
 
   uv run python experiments/slot_compress/downstream.py --plan
   uv run python experiments/slot_compress/downstream.py --dry-run [--conditions loosy,line]
@@ -60,8 +62,10 @@ SONNET = exi.HELPER
 CODEX_PROBER = exi.MODEL_BY_NAME["gpt-6-sol"]
 C_SEED = exi.SEED + 2
 C_N = 10
-FAMILIES = ("loosy", "line", "slotd", "slote", "summary")
+FAMILIES = ("loosy", "line", "slotd", "slote", "slme", "summary")
 SLOT_MODE = {"slotd": "direct", "slote": "english"}
+SLM_MODEL = "qwen3-1.7b"
+PROSE_FAMILIES = ("slotd", "slote", "slme")
 LEVEL_NAMES = ("light", "medium", "heavy")
 STOP = threading.Event()
 # 429s are deliberately absent: a plain rate limit is transient and exi backs off through it.
@@ -72,11 +76,6 @@ LINE_HEADER = (
     "and command-output dumps only the lines naming identifiers, paths, numbers or errors were "
     "kept (gaps are marked with '… (N lines elided)'; line numbers were removed). Every line that "
     "remains is verbatim"
-)
-SLOTD_FALLBACK_LEGEND = (
-    "prose and reasoning sentences were rewritten as terse rows: a leading 'NOT' marks negation, "
-    "then action, agent, object, recipient and one extra clause, with words dropped and "
-    "identifiers, paths and numbers kept exactly; an empty field repeats the row above"
 )
 SLOTE_NOTE = (
     "prose and reasoning sentences were mechanically shortened and re-worded, with identifiers, "
@@ -100,20 +99,37 @@ class Plan:
     families: list[str]
     levels: list[str]
     slot_version: Any = None
+    slm_version: Any = None
 
     def cond(self, family: str, level: str) -> str:
         if family in SLOT_MODE:
             return f"{family}.v{self.slot_version}-{level}"
+        if family == "slme":
+            return f"slme.v{self.slm_version}-{SLM_MODEL}-{level}"
         return f"{family}-{level}"
 
 
 def header_for(family: str, slot: Any) -> str:
     if family == "slotd":
-        legend = getattr(slot, "LEGEND", SLOTD_FALLBACK_LEGEND)
-        return f"{LINE_HEADER}; {legend}]"
-    if family == "slote":
+        return f"{LINE_HEADER}; {slot.LEGEND}]"
+    if family in ("slote", "slme"):
         return f"{LINE_HEADER}; {SLOTE_NOTE}]"
     return f"{LINE_HEADER}]"
+
+
+def load_slm() -> Any:
+    try:
+        return importlib.import_module("slm_slot")
+    except ImportError as exc:
+        raise SystemExit(f"slme needs experiments/slot_compress/slm_slot.py: {exc}") from exc
+
+
+def transform_pool(pool: list[Segment], fam: str, slot: Any, slm: Any) -> list[Segment]:
+    if fam in SLOT_MODE:
+        return slot.slot_segments(pool, SLOT_MODE[fam])
+    if fam == "slme":
+        return slm.slm_slot_segments(pool, "english", slm.MODELS[SLM_MODEL])
+    return pool
 
 
 # --------------------------------------------------------------------------- guarded runner
@@ -173,16 +189,12 @@ def select_c() -> list[tuple[exi.Candidate, exi.Cut]]:
 # --------------------------------------------------------------------------- contexts
 
 
-def kept_segments(
-    original: list[Segment], level: str, mode: str | None, slot: Any
-) -> list[Segment]:
-    """Supersede first, slot second, line-keep and budget selection third, so tokens the slot
-    transform frees are refilled by selection. The budget stays that of the untransformed text."""
+def kept_segments(original: list[Segment], level: str, pool: list[Segment]) -> list[Segment]:
+    """`pool` is the superseded (and, for slot families, prose-transformed) segment list. Supersede
+    first, slot second, line-keep and budget selection third, so tokens the transform frees are
+    refilled by selection. The budget stays that of the untransformed text."""
     k = LEVELS[level]
     budget = math.ceil(sum(count_tokens(s.text) for s in original) * k)
-    pool = apply_supersession(original)
-    if mode is not None:
-        pool = slot.slot_segments(pool, mode)
     pre = [lines.line_keep(s) if s.kind == "code" else s for s in pool]
     rule, value = lines.FORCE[level]
     return lines.force_select(pre, budget, rule, value)
@@ -197,14 +209,21 @@ class Item:
     earlier_tokens: dict[str, int]
     seg_tokens: dict[str, int]
     budget: dict[str, int]
+    pools: dict[str, list[Segment]]
 
 
-def build_item(cand: exi.Candidate, cut: exi.Cut, plan: Plan, slot: Any) -> Item:
+def build_item(cand: exi.Candidate, cut: exi.Cut, plan: Plan, slot: Any, slm: Any) -> Item:
     prep = exi.load_or_prepare(cand, cut, OUT / "c")
     comp = Transcript(f"{cand.label}#compressible", list(cand.transcript.turns[: cut.tail_from]))
     original = segment(comp)
     total = sum(count_tokens(s.text) for s in original)
-    it = Item(cand.label, prep, original, {}, {}, {}, {})
+    it = Item(cand.label, prep, original, {}, {}, {}, {}, {})
+    base = apply_supersession(original)
+    for fam in plan.families:
+        if fam in PROSE_FAMILIES:
+            it.pools[fam] = transform_pool(base, fam, slot, slm)
+        elif fam == "line":
+            it.pools[fam] = base
     it.ctx["full"] = exi.assemble("full", prep.full_earlier, prep.tail)
     it.earlier_tokens["full"] = count_tokens(prep.full_earlier)
     for level in plan.levels:
@@ -220,7 +239,7 @@ def build_item(cand: exi.Candidate, cut: exi.Cut, plan: Plan, slot: Any) -> Item
                 it.earlier_tokens[cond] = count_tokens(prep.earlier[f"loosy-{level}"])
                 it.seg_tokens[cond] = prep.kept_segment_tokens[f"loosy-{level}"]
                 continue
-            kept = kept_segments(original, level, SLOT_MODE.get(fam), slot)
+            kept = kept_segments(original, level, it.pools[fam])
             earlier = exi.render_segments(kept)
             hdr = header_for(fam, slot)
             it.ctx[cond] = f"{hdr}\n\n{earlier}\n\n{exi.TAIL_HEADER}\n\n{prep.tail}"
@@ -395,7 +414,7 @@ def print_plan(labels: Sequence[str], plan: Plan, max_calls: int, gen: exi.Model
 # --------------------------------------------------------------------------- dry run
 
 
-def dry_run(items: list[Item], plan: Plan, slot: Any) -> None:
+def dry_run(items: list[Item], plan: Plan) -> None:
     sample_dir = OUT / "contexts"
     sample_dir.mkdir(parents=True, exist_ok=True)
     log(
@@ -416,15 +435,13 @@ def dry_run(items: list[Item], plan: Plan, slot: Any) -> None:
             b = np.mean([it.budget[cond] for it in items])
             over = sum(it.seg_tokens[cond] > it.budget[cond] for it in items)
             log(f"{cond:22s} {e:9.0f} {s:9.0f} {b:9.0f}  {over}")
-    if slot is not None:
-        for fam, mode in SLOT_MODE.items():
-            if fam not in plan.families:
-                continue
+    for fam in PROSE_FAMILIES:
+        if fam in plan.families:
             before = after = 0
             for it in items:
                 pool = apply_supersession(it.original)
                 tp = [s for s in pool if s.kind in ("prose", "thinking")]
-                slotted = {s.id: s for s in slot.slot_segments(pool, mode)}
+                slotted = {s.id: s for s in it.pools[fam]}
                 before += sum(count_tokens(s.text) for s in tp)
                 after += sum(count_tokens(slotted[s.id].text) for s in tp if s.id in slotted)
             log(f"{fam} prose/thinking tokens in pool: {before} -> {after} ({after / before:.2f}x)")
@@ -546,7 +563,10 @@ def main() -> None:
     if bad := [f for f in fams if f not in FAMILIES] + [lv for lv in levels if lv not in LEVELS]:
         raise SystemExit(f"unknown condition/level: {bad}")
     slot = load_slot() if any(f in SLOT_MODE for f in fams) else None
-    plan = Plan(fams, levels, getattr(slot, "SLOT_VERSION", None))
+    slm = load_slm() if "slme" in fams else None
+    plan = Plan(
+        fams, levels, getattr(slot, "SLOT_VERSION", None), getattr(slm, "SLM_VERSION", None)
+    )
 
     if args.probe_model:
         gen = exi.MODEL_BY_NAME[args.probe_model]
@@ -569,10 +589,10 @@ def main() -> None:
 
     items = []
     for cand, cut in selected:
-        items.append(build_item(cand, cut, plan, slot))
+        items.append(build_item(cand, cut, plan, slot, slm))
         log(f"context {cand.label}")
     if args.dry_run:
-        dry_run(items, plan, slot)
+        dry_run(items, plan)
         return
 
     store = exi.Store(OUT / "calls.jsonl")
