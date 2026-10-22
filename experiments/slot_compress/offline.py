@@ -1,6 +1,9 @@
 """Offline report for the slot transform on Experiment I's 20 public transcripts (no API calls).
 
-  uv run python experiments/slot_compress/offline.py
+  uv run python experiments/slot_compress/offline.py [--gentle]
+
+`--gentle` reports the v3 gentle profile (prose, thinking and prose-like tool_result chunks) to
+offline_gentle.md instead.
 
 Reads the spike_thin PREP pickle (`uv run python experiments/spike_thin/run.py prep` builds it);
 writes experiments/output/slot_compress/offline.md.
@@ -9,6 +12,7 @@ writes experiments/output/slot_compress/offline.md.
 from __future__ import annotations
 
 import pickle
+import re
 import sys
 import time
 from pathlib import Path
@@ -44,6 +48,110 @@ def _atom_stats(old: list[Segment], new: list[Segment]) -> tuple[int, int]:
 
 def _clip(s: str) -> str:
     return s if len(s) <= EXCERPT_CHARS else s[:EXCERPT_CHARS].rsplit(" ", 1)[0] + " ..."
+
+
+OUT_GENTLE = ROOT / "experiments" / "output" / "slot_compress" / "offline_gentle.md"
+NEG_RE = re.compile(
+    r"(?i)\b(?:don['\u2019]t have to|doesn['\u2019]t need to|isn['\u2019]t a\b|no need to)"
+)
+
+
+def _toks_of(segs: list[Segment], kinds: tuple[str, ...]) -> int:
+    return sum(count_tokens(s.text) for s in segs if s.kind in kinds)
+
+
+def main_gentle() -> None:
+    data: dict[str, Any] = pickle.loads(PREP.read_bytes())
+    g_total = g_prose = g_toolprose = 0
+    d_prose = d_tool = 0
+    kept = atot = 0
+    n_tool_like = 0
+    per: list[str] = []
+    pool_neg: list[tuple[str, Segment, Segment]] = []
+    pool_prose: list[tuple[str, Segment, Segment]] = []
+    pool_tool: list[tuple[str, Segment, Segment]] = []
+    slot.STATS.reset()
+    t0 = time.perf_counter()
+    for label, d in data.items():
+        orig: list[Segment] = d["original"]
+        new = slot.slot_segments(orig, "english", profile="gentle", include_tool_prose=True)
+        total: int = d["total"]
+        pro_b = _toks_of(orig, ("prose", "thinking"))
+        pro_a = _toks_of(new, ("prose", "thinking"))
+        tp_b = tp_a = 0
+        for o, n in zip(orig, new, strict=True):
+            if o.kind == "tool_result" and slot.is_prose_like(o):
+                n_tool_like += 1
+                tp_b += count_tokens(o.text)
+                tp_a += count_tokens(n.text)
+            if n.text != o.text:
+                atot += len(o.atoms)
+                kept += sum(a in n.text for a in o.atoms)
+                if "<uploaded_files>" in o.text:
+                    continue
+                if o.kind == "tool_result":
+                    pool_tool.append((label, o, n))
+                elif NEG_RE.search(o.text) and count_tokens(o.text) <= 260:
+                    pool_neg.append((label, o, n))
+                elif 40 <= count_tokens(o.text) <= 160 and count_tokens(
+                    n.text
+                ) < 0.85 * count_tokens(o.text):
+                    pool_prose.append((label, o, n))
+        g_total += total
+        g_prose += pro_b
+        d_prose += pro_b - pro_a
+        g_toolprose += tp_b
+        d_tool += tp_b - tp_a
+        per.append(
+            f"| {label} | {total} | {pro_b} | {(pro_b - pro_a) / max(pro_b, 1):.1%} | {tp_b} | "
+            f"{(tp_b - tp_a) / max(tp_b, 1):.1%} | {(pro_b - pro_a + tp_b - tp_a) / total:.2%} |"
+        )
+    dt = time.perf_counter() - t0
+    st = slot.STATS
+    saved = d_prose + d_tool
+    md = [
+        "# slot_compress gentle (v3) offline report",
+        "",
+        f"GENTLE_VERSION {slot.GENTLE_VERSION}; english surface; prose-like tool_result chunks "
+        f"included ({n_tool_like} chunks, {g_toolprose} tokens). No API calls; {dt:.0f}s.",
+        "",
+        f"- prose+thinking: {g_prose} of {g_total} tokens ({g_prose / g_total:.1%}); "
+        f"reduction {d_prose / g_prose:.1%}",
+        f"- prose-like tool_result: reduction {d_tool / max(g_toolprose, 1):.1%} "
+        f"({d_tool} of {g_toolprose} tokens)",
+        f"- total saved: {saved} tokens = {saved / g_total:.2%} of all tokens",
+        f"- atom survival (changed segments): {kept / max(atot, 1):.2%} ({kept}/{atot})",
+        f"- sentence units rewritten {st.rowed}, verbatim fallback {st.fallback} "
+        f"({st.fallback / max(st.rowed + st.fallback, 1):.1%}), dropped as filler {st.dropped}, "
+        f"atom-guard fallbacks {st.atom_guard}",
+        "",
+        "## Per transcript",
+        "",
+        "| transcript | total | prose+thinking | prose reduction | tool prose tok | "
+        "tool prose reduction | saved, % of total |",
+        "|---|---|---|---|---|---|---|",
+        *per,
+        "",
+        "## Excerpts",
+    ]
+    picks = pool_neg[:3] + pool_prose[::3][:5] + pool_tool[::2][:2]
+    for label, o, n in picks:
+        md += [
+            "",
+            f"### {label} ({o.kind}, {count_tokens(o.text)} -> {count_tokens(n.text)} tokens)",
+            "",
+            "original:",
+            "```",
+            _clip(o.text),
+            "```",
+            "gentle:",
+            "```",
+            _clip(n.text),
+            "```",
+        ]
+    OUT_GENTLE.parent.mkdir(parents=True, exist_ok=True)
+    OUT_GENTLE.write_text("\n".join(md) + "\n", encoding="utf-8")
+    print("\n".join(md[:14]))
 
 
 def main() -> None:
@@ -169,4 +277,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main_gentle() if "--gentle" in sys.argv else main()

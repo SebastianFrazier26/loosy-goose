@@ -25,11 +25,18 @@ from loosy_goose.tokens import count_tokens
 
 if TYPE_CHECKING:
     from spacy.language import Language
-    from spacy.tokens import Span, Token
+    from spacy.tokens import Doc, Span, Token
 
 SLOT_VERSION = 2
+GENTLE_VERSION = 3
 
 Mode = Literal["direct", "english"]
+Profile = Literal["v2", "gentle"]
+
+
+def version_for(profile: Profile) -> int:
+    return GENTLE_VERSION if profile == "gentle" else SLOT_VERSION
+
 
 LEGEND = (
     "Rows: [agent: ][flags]act obj [to recipient] [because/if cause]; agent holds until changed; "
@@ -429,6 +436,7 @@ class _Unit:
     raw: str | None
     rows: list[Row]
     drop: bool = False
+    text: str = ""
 
 
 class Stats:
@@ -437,9 +445,11 @@ class Stats:
         self.fallback = 0
         self.dropped = 0
         self.passthrough_tokens = 0
+        self.atom_guard = 0
 
     def reset(self) -> None:
         self.rowed = self.fallback = self.dropped = self.passthrough_tokens = 0
+        self.atom_guard = 0
 
 
 STATS = Stats()
@@ -517,10 +527,205 @@ def _sent_rows(sent: Span) -> list[Row]:
     return [_fragment_row(sent)]
 
 
-def _units_for_line(atoms: list[str], doc: object) -> list[_Unit]:
+_G_STRONG_LEAD = (
+    r"great|perfect|excellent|good|nice|ok|okay|alright|sure|yes|yeah|thanks|awesome|wonderful|"
+    r"fine|right|got it|understood|indeed"
+)
+_G_WEAK_LEAD = r"now|well|hmm+|oh|ah|thank you"
+_G_PHRASE_LEAD = (
+    r"let me|let us|let's|i'll|i will|i'm going to|i am going to|i can see that|i see that|"
+    r"i notice that|please"
+)
+_GENTLE_LEAD_RE = re.compile(
+    rf"^(?:(?:(?:{_G_STRONG_LEAD})[,!.:;]+\s*|(?:{_G_WEAK_LEAD})(?:[,!.:;]+\s*|\s+))"
+    rf"|(?:{_G_PHRASE_LEAD})\s+(?:(?:first|now|also|just|then)\s+)*)+",
+    re.I,
+)
+_NEED_NOT_RES = (
+    re.compile(r"\b(?:there(?:'s|’s| is)|it(?:'s|’s| is)) no need to\b", re.I),
+    re.compile(r"\bno need to\b", re.I),
+    re.compile(r"\b(?:do|does)(?:n['’]t| not)\s+(?:even\s+)?(?:have|need) to\b", re.I),
+)
+_G_FLUFF = frozenset(
+    {"just", "really", "actually", "basically", "simply", "quite", "literally", "totally",
+     "kinda", "somewhat", "essentially", "very", "please", "okay", "ok"}
+)  # fmt: skip
+_G_HEDGE = frozenset({"maybe", "perhaps", "probably", "possibly", "apparently", "presumably"})
+_G_EXPAND = {"'s": "is", "’s": "is", "'re": "are", "’re": "are", "'m": "am",
+             "’m": "am", "'ll": "will", "’ll": "will", "'d": "would", "’d": "would",
+             "'ve": "have", "’ve": "have"}  # fmt: skip
+_G_AGENTS = frozenset({"i", "we", "you"})
+_G_ARTICLES = frozenset({"the", "a", "an"})
+_G_DEMONS = frozenset({"this", "that", "these", "those"})
+_G_PROSE_MIN_WORDS = 25
+_G_PROSE_TERMINAL = 0.4
+_G_PROSE_CODE_MAX = 0.2
+_G_TRACEBACK_RE = re.compile(r"Traceback \(most recent call last\)|^\s*File \".+\", line \d+", re.M)
+_G_TAG_RE = re.compile(r"<[^<>\n]*\s[^<>\n]*>|</?[A-Z][A-Za-z_]*>")
+_G_GREP_RE = re.compile(r"^\s*(?:\S+?:\d+(?::\d+)?[:-]|\d+[:\t|→])")
+
+
+def _g_need_not(text: str) -> str:
+    for pat in _NEED_NOT_RES:
+        text = pat.sub("need not", text)
+    return text
+
+
+def _g_main_clause(tok: Token) -> bool:
+    head = tok.head
+    while head.dep_ == "conj" and head.head is not head:
+        head = head.head
+    return head.dep_ == "ROOT"
+
+
+def _g_droppable_aux(t: Token, nxt_neg: bool) -> bool:
+    """Active-voice progressive/perfect/do-support only. Passive, modal-chained, to-infinitive
+    and negated auxiliaries stay: dropping them yields 'cannot used' or moves the negation."""
+    head = t.head
+    if t.dep_ != "aux" or t.lemma_ not in ("be", "have", "do") or nxt_neg:
+        return False
+    if head.tag_ not in ("VBG", "VBN", "VB", "VBP", "VBD", "VBZ"):
+        return False
+    for c in head.children:
+        if (
+            c.dep_ == "nsubj"
+            and c.pos_ == "PRON"
+            and not (c.lower_ in _G_AGENTS and _g_main_clause(c))
+        ):
+            return False
+        if c.dep_ == "auxpass" or c.tag_ == "MD" or (c.lower_ == "to" and c.dep_ == "aux"):
+            return False
+        if c.lower_ in _NEG_WORDS or c.lower_ == "n't":
+            return False
+    return True
+
+
+def _g_keep(t: Token, state: dict[str, bool], question: bool) -> str | None:
+    """Gentle token filter: the text to emit for `t`, or None to drop it."""
+    low = t.lower_
+    if _is_ph(t):
+        return t.text
+    if t.pos_ in ("SPACE", "INTJ"):
+        return None
+    if t.pos_ == "PUNCT":
+        return None if t.text in ('"', "`", "*", "_", "“", "”") else t.text
+    if low == "n't" or low == "not":
+        return "not"
+    nxt = t.doc[t.i + 1] if t.i + 1 < len(t.doc) else None
+    nxt_neg = nxt is not None and nxt.lower_ in ("n't", "not")
+    if low in _G_EXPAND:
+        if t.dep_ == "aux" and _g_droppable_aux(t, nxt_neg):
+            return None
+        return t.text
+    if low in _G_ARTICLES or (low in _G_DEMONS and t.dep_ == "det"):
+        return None
+    if low in _G_FLUFF and t.pos_ in ("ADV", "INTJ", "ADJ", "VERB", "PART"):
+        return None
+    if low in _G_HEDGE or (low == "likely" and t.pos_ == "ADV"):
+        if state["hedged"]:
+            return None
+        state["hedged"] = True
+        return "likely"
+    if low in ("my", "our", "your") and t.dep_ == "poss":
+        return None
+    if t.pos_ == "PRON":
+        if (
+            low in _G_AGENTS
+            and t.dep_ == "nsubj"
+            and not question
+            and _g_main_clause(t)
+            and t.head.lemma_ != "be"
+        ):
+            return None
+        return t.text
+    if t.pos_ == "AUX" and t.dep_ == "aux" and _g_droppable_aux(t, nxt_neg):
+        return None
+    if low == "that" and t.dep_ == "mark":
+        prev = t.doc[t.i - 1] if t.i else None
+        return t.text if prev is not None and prev.lower_ == "so" else None
+    return t.text
+
+
+def _g_render(span: Span) -> str:
+    state = {"hedged": False}
+    question = span.text.rstrip().endswith("?")
+    out = ""
+    prev: Token | None = None
+    for t in span:
+        emit = _g_keep(t, state, question)
+        if emit is None:
+            continue
+        if emit.lower() in _G_EXPAND and (prev is None or prev.i + 1 != t.i):
+            emit = _G_EXPAND[emit.lower()]
+        if not out:
+            out = emit
+        else:
+            glue = (
+                prev is not None
+                and prev.i + 1 == t.i
+                and not prev.whitespace_
+                and t.lower_ != "n't"
+            )
+            closing = t.pos_ == "PUNCT" and t.text in ",.;:!?)]%}"
+            opening = prev is not None and prev.pos_ == "PUNCT" and prev.text in "([{"
+            out += ("" if glue or closing or opening else " ") + emit
+        prev = t
+    out = out.strip()
+    return out[:1].upper() + out[1:]
+
+
+def is_prose_like(seg: Segment) -> bool:
+    """Heuristic for tool_result chunks that are natural-language text (issue text, docs, README
+    output, error explanations) rather than listings, logs, diffs or code."""
+    if seg.kind != "tool_result":
+        return False
+    text = seg.text
+    lines = [ln for ln in text.split("\n") if ln.strip()]
+    if len(text.split()) < _G_PROSE_MIN_WORDS or not lines or _G_TRACEBACK_RE.search(text):
+        return False
+    code = sum(_G_GREP_RE.match(ln) is not None or _codeish(ln) for ln in lines)
+    if code / len(lines) > _G_PROSE_CODE_MAX:
+        return False
+    terminal = len(re.findall(r"[.!?](?:\s|$)", text))
+    return terminal / len(lines) >= _G_PROSE_TERMINAL
+
+
+def _gentle_units(atoms: list[str], doc: Doc) -> list[_Unit]:
+    units: list[_Unit] = []
+    for sent in doc.sents:
+        stripped = sent.text.strip()
+        orig = _restore(stripped, atoms)
+        if not orig:
+            continue
+        spans: list[Span] = [sent]
+        lead = _GENTLE_LEAD_RE.match(stripped)
+        if lead and not _PH_RE.search(lead.group(0)):
+            rest = stripped[lead.end() :].strip()
+            if _FILLER_ONLY_RE.match(rest):
+                units.append(_Unit(orig, [], drop=True))
+                continue
+            spans = list(_nlp()(rest[0].upper() + rest[1:]).sents)
+        rendered = [_g_render(sp) for sp in spans]
+        text = " ".join(r for r in rendered if r)
+        if not text:
+            units.append(_Unit(orig, [], drop=True))
+            continue
+        out = _restore(text, atoms)
+        present = {int(m) for m in _PH_RE.findall(stripped)}
+        if any(atoms[i] not in out for i in present):
+            STATS.atom_guard += 1
+            units.append(_Unit(orig, [], text=orig))
+            continue
+        units.append(_Unit(orig, [], text=out))
+    return units
+
+
+def _units_for_line(atoms: list[str], doc: object, profile: Profile = "v2") -> list[_Unit]:
     from spacy.tokens import Doc
 
     assert isinstance(doc, Doc)
+    if profile == "gentle":
+        return _gentle_units(atoms, doc)
     units: list[_Unit] = []
     for sent in doc.sents:
         orig = _restore(sent.text.strip(), atoms)
@@ -583,7 +788,7 @@ class _Item:
     units: list[_Unit] | None = None
 
 
-def _items(text: str) -> list[_Item]:
+def _items(text: str, profile: Profile = "v2", tool_result: bool = False) -> list[_Item]:
     lines = text.split("\n")
     all_atoms = extract_atoms(text)
     in_fence = False
@@ -593,7 +798,7 @@ def _items(text: str) -> list[_Item]:
             in_fence = not in_fence
             items.append(_Item(ln))
             continue
-        if in_fence or _is_structural(ln):
+        if in_fence or _is_structural(ln) or (tool_result and _G_GREP_RE.match(ln)):
             items.append(_Item(ln))
             continue
         prev = items[-1] if items else None
@@ -617,16 +822,22 @@ def _items(text: str) -> list[_Item]:
             items.append(_Item(ln))
             continue
         items.append(_Item(ln, marker, body))
+    if profile == "gentle":
+        for it in items:
+            if it.text and _G_TAG_RE.search(it.text):
+                it.text = ""
     todo = [it for it in items if it.text]
     if not todo:
         return items
     prepared: list[tuple[_Item, list[str]]] = []
     for it in todo:
+        if profile == "gentle":
+            it.text = _g_need_not(it.text)
         atoms = [a for a in all_atoms if a in it.text]
         prepared.append((it, atoms))
     docs = _nlp().pipe([_mask(it.text, a) for it, a in prepared], batch_size=32)
     for (it, atoms), doc in zip(prepared, docs, strict=True):
-        it.units = _units_for_line(atoms, doc)
+        it.units = _units_for_line(atoms, doc, profile)
     return items
 
 
@@ -657,7 +868,34 @@ def _encode_run(run: list[Row], mode: Mode, carry: str) -> tuple[list[str], str]
     return out, carry
 
 
-def slot_text(text: str, mode: Mode) -> str:
+def _gentle_text(items: list[_Item]) -> str:
+    out: list[str] = []
+    for it in items:
+        if it.units is None:
+            out.append(it.raw)
+            STATS.passthrough_tokens += count_tokens(it.raw)
+            continue
+        parts: list[str] = []
+        for u in it.units:
+            if u.drop:
+                STATS.dropped += 1
+                continue
+            raw = u.raw or ""
+            if not u.text or count_tokens(u.text) >= count_tokens(raw):
+                STATS.fallback += 1
+                parts.append(raw)
+            else:
+                STATS.rowed += 1
+                parts.append(u.text)
+        if parts:
+            out.append((f"{it.marker} " if it.marker else "") + " ".join(parts))
+    return "\n".join(out)
+
+
+def slot_text(text: str, mode: Mode, profile: Profile = "v2", tool_result: bool = False) -> str:
+    """`profile="gentle"` (stamped GENTLE_VERSION) emits terse English and ignores `mode`."""
+    if profile == "gentle":
+        return _gentle_text(_items(text, profile, tool_result))
     seen: set[tuple[bool, bool, str, str, str, str, str, str]] = set()
     out: list[str] = []
     carry = ""
@@ -715,13 +953,26 @@ def _join_english(parts: list[str]) -> str:
     return " ".join(p if p.endswith("?") else p + "." for p in parts)
 
 
-def slot_segments(segs: list[Segment], mode: Mode) -> list[Segment]:
+def slot_segments(
+    segs: list[Segment],
+    mode: Mode,
+    profile: Profile = "v2",
+    include_tool_prose: bool = False,
+) -> list[Segment]:
+    """tool_use is never touched; tool_result only under gentle + include_tool_prose, and only
+    when `is_prose_like`."""
     out: list[Segment] = []
     for s in segs:
-        if s.kind not in ("prose", "thinking"):
+        tool_prose = (
+            profile == "gentle"
+            and include_tool_prose
+            and s.kind == "tool_result"
+            and is_prose_like(s)
+        )
+        if s.kind not in ("prose", "thinking") and not tool_prose:
             out.append(s)
             continue
-        new = slot_text(s.text, mode)
+        new = slot_text(s.text, mode, profile, tool_result=tool_prose)
         if new != s.text and count_tokens(new) < count_tokens(s.text):
             out.append(replace(s, text=new))
         else:

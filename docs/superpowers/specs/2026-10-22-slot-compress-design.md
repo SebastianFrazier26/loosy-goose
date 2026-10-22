@@ -96,3 +96,28 @@ Downstream probe QA only (offline string-match survival ranked variants backward
 - Productising anything. Shipped `/loosy` stays untouched on this branch's main-merged code paths.
 - Touching code, tool_result or tool_use content with the slot transform.
 - Fine-tuning a model (a later arm only if a prompted/deterministic arm shows signal).
+
+## v3 gentle (agent's calls) - 2026-10-22
+
+v2 cut prose 41% but hurt downstream QA at light (-0.09..-0.12 vs loosy, p=0.008), and prose is only 12-19% of
+tokens. `profile="gentle"` (stamped `GENTLE_VERSION = 3`; v2 stays `SLOT_VERSION = 2`, `version_for(profile)`) is a
+token filter over the spaCy parse, not a row schema: sentence order, clause structure and every content word survive.
+
+- **Dropped:** leading discourse filler ("Great,", "Now", "Let me", "I'll", "Perfect!"), articles and demonstrative
+  determiners, I/we/you as main-clause subjects (kept in questions, subordinate clauses and before a copula),
+  my/our/your, `that` complementisers, fluff adverbs (just/really/actually/very/please...), active progressive/perfect
+  auxiliaries whose subject is a noun or a dropped agent.
+- **Kept:** cause/purpose/condition/contrast markers with their clauses, all conjuncts, all prepositional phrases,
+  inflected verb forms (tense) and modals; passive, modal-chained and negated auxiliaries stay (dropping them gives
+  "cannot used"). Hedges maybe/perhaps/probably/possibly collapse to a single `likely` per sentence.
+- **Negation scope:** "don't/doesn't have|need to" and "no need to" are rewritten to "need not" before parsing; `n't`
+  becomes `not` adjacent to its verb ("isn't" -> "is not"); do-support is kept next to a negator; "not only" is just
+  text, no flag.
+- **Guards:** a unit is kept verbatim if any atom would be lost or the rewrite is not shorter in tokens; lines holding
+  markup tags with spaces or upper-case tags (`<response clipped>`, `<NOTE>`) pass through whole.
+- **Tool prose:** `is_prose_like(seg)` (tool_result only, >=25 words, sentence terminals >= 0.4 per line, code-like or
+  `path:line:` lines <= 20%, no traceback) gates `include_tool_prose=True`; code-like and grep lines inside such a
+  result pass through verbatim; `tool_use` is never touched.
+- **Mode:** gentle emits English and ignores `mode`.
+
+Offline numbers: experiments/output/slot_compress/offline_gentle.md (`offline.py --gentle`).
