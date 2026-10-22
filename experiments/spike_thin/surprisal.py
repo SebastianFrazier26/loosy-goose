@@ -115,7 +115,11 @@ class Scorer:
         t0 = time.perf_counter()
         self.tok = AutoTokenizer.from_pretrained(spec.repo, revision=spec.revision)
         self.model = AutoModelForCausalLM.from_pretrained(
-            spec.repo, revision=spec.revision, dtype=getattr(torch, spec.dtype)
+            spec.repo,
+            revision=spec.revision,
+            # bf16 matmuls on CPU are far slower than fp32 (a 0.6B timing pass ran >15 min for
+            # 5 transcripts, 2026-10-22), so CPU always runs fp32.
+            dtype=getattr(torch, spec.dtype) if self.dev != "cpu" else torch.float32,
         ).to(self.dev)
         self.model.eval()
         self.load_s = time.perf_counter() - t0
