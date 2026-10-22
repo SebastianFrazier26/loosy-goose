@@ -3,6 +3,12 @@ import type { Bundle, DemoTranscript, Level, Segment } from "./bundle";
 import { DOWNSTREAM, RATE_DISTORTION, REPO_URL } from "./results";
 
 type Stop = "full" | Level;
+
+interface Fold {
+  body: HTMLOListElement;
+  summary: HTMLSpanElement;
+  ticks: HTMLSpanElement;
+}
 const STOPS: readonly Stop[] = ["full", ...LEVELS];
 const CLAMP_CHARS = 420;
 
@@ -46,6 +52,8 @@ function segmentNode(seg: Segment): HTMLLIElement {
     meta.append(h("span", { class: "badge" }, seg.superseded.replace("_", " ")));
   }
   const li = h("li", { class: "seg" }, meta, body);
+  // Short viewports show each segment as one line; a tap on the text opens it.
+  body.addEventListener("click", () => li.classList.toggle("open"));
   if (long) {
     const more = h("button", { class: "more", type: "button", "aria-expanded": "false" }, "more");
     more.addEventListener("click", () => {
@@ -53,6 +61,7 @@ function segmentNode(seg: Segment): HTMLLIElement {
       body.textContent = open ? `${seg.text.slice(0, CLAMP_CHARS)}…` : seg.text;
       more.setAttribute("aria-expanded", String(!open));
       more.textContent = open ? "more" : "less";
+      li.classList.toggle("open", !open);
     });
     li.append(more);
   }
@@ -63,6 +72,7 @@ class Demo {
   private current: DemoTranscript;
   private nodes: HTMLLIElement[] = [];
   private stop: Stop = "medium";
+  private fold: Fold | null = null;
 
   constructor(private readonly bundle: Bundle) {
     const first = bundle.transcripts[0];
@@ -89,6 +99,29 @@ class Demo {
     }
   }
 
+  private buildFold(list: HTMLElement, role: string): Fold {
+    const summary = h("span", { class: "fold-sum" });
+    const ticks = h("span", { class: "ticks-strip", "aria-hidden": "true" });
+    const toggle = h(
+      "button",
+      { class: "fold-head", type: "button", "aria-expanded": "false" },
+      h("span", { class: `role r-${role}` }, role),
+      summary,
+      ticks,
+      h("span", { class: "fold-cue" }, "show"),
+    );
+    const body = h("ol", { class: "fold-body", hidden: "" });
+    toggle.addEventListener("click", () => {
+      const open = toggle.getAttribute("aria-expanded") === "true";
+      toggle.setAttribute("aria-expanded", String(!open));
+      body.hidden = open;
+      const cue = toggle.querySelector(".fold-cue");
+      if (cue) cue.textContent = open ? "show" : "hide";
+    });
+    list.append(h("li", { class: "fold turn-start" }, toggle, body));
+    return { body, summary, ticks };
+  }
+
   private select(t: DemoTranscript): void {
     this.current = t;
     for (const btn of $("picker").querySelectorAll("button")) {
@@ -97,9 +130,21 @@ class Demo {
     const list = $("transcript");
     list.replaceChildren();
     this.nodes = [];
+    this.fold = null;
+    const head = t.segments[0];
+    // The agent's system prompt is boilerplate that fills a small iframe's first screen, so it
+    // starts folded and the rows that show compression come into view first.
+    const foldTurn = head?.role === "system" ? head.turn : -1;
     let lastTurn = -1;
     for (const seg of t.segments) {
       const node = segmentNode(seg);
+      if (seg.turn === foldTurn) {
+        this.fold ??= this.buildFold(list, seg.role);
+        this.fold.body.append(node);
+        this.fold.ticks.append(h("i", { class: "tick" }));
+        this.nodes.push(node);
+        continue;
+      }
       if (seg.turn !== lastTurn) {
         node.classList.add("turn-start");
         node.prepend(h("div", { class: `role r-${seg.role}` }, seg.role));
@@ -119,6 +164,24 @@ class Demo {
     this.update();
   }
 
+  private updateFold(fold: Fold, stop: Stop): void {
+    const members = this.current.segments.filter((_, i) => fold.body.contains(this.nodes[i] ?? null));
+    let tokens = 0;
+    let dropped = 0;
+    members.forEach((seg, i) => {
+      tokens += seg.tokens;
+      const isSup = stop !== "full" && seg.superseded !== null;
+      const isKept = stop === "full" || seg.kept[stop];
+      if (!isKept) dropped += 1;
+      const tick = fold.ticks.children[i];
+      tick?.classList.toggle("sup", isSup);
+      tick?.classList.toggle("drop", !isKept && !isSup);
+    });
+    const parts = [`${members.length} segments`, `${fmt(tokens)} tok`];
+    if (dropped) parts.push(`${dropped} cut`);
+    fold.summary.textContent = parts.join(" · ");
+  }
+
   private update(): void {
     const t = this.current;
     const stop = this.stop;
@@ -134,6 +197,7 @@ class Demo {
       if (isKept) kept += seg.tokens;
       if (isSup) sup += seg.tokens;
     });
+    if (this.fold) this.updateFold(this.fold, stop);
     const total = t.input_tokens;
     $("bar-kept").style.width = `${(100 * kept) / total}%`;
     $("bar-sup").style.width = `${(100 * sup) / total}%`;

@@ -336,6 +336,62 @@ h3 {
   cursor: pointer;
 }
 
+.fold {
+  margin: 8px 0 4px;
+}
+
+.fold-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  width: 100%;
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-align: left;
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.fold-head .role {
+  margin: 0;
+}
+
+.fold-cue {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.ticks-strip {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.tick {
+  width: 6px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.tick.drop {
+  background: var(--drop);
+}
+
+.tick.sup {
+  background: var(--sup);
+}
+
+.fold-body {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
 .attribution {
   font-size: 0.72rem;
   color: var(--muted);
@@ -460,6 +516,103 @@ footer code {
 
   .level {
     flex-basis: 100%;
+  }
+}
+
+/* Short iframes (the portfolio embeds this around 420x320): drop the tagline and the filter toggle,
+   keep the picker on one scrollable row, and show each segment as one line (tap to open) so kept
+   and cut rows both land in the first screen. */
+@media (max-height: 520px) {
+  main {
+    padding-top: 8px;
+  }
+
+  h1 {
+    font-size: 1.15rem;
+  }
+
+  .tagline {
+    display: none;
+  }
+
+  .hero {
+    margin-bottom: 6px;
+  }
+
+  .demo {
+    padding: 8px;
+  }
+
+  .controls {
+    gap: 6px 12px;
+  }
+
+  .picker {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .picker button {
+    white-space: nowrap;
+    padding: 3px 9px;
+  }
+
+  .level label {
+    display: none;
+  }
+
+  .meter {
+    margin: 6px 0 4px;
+  }
+
+  .stats {
+    margin: 4px 0 2px;
+  }
+
+  .toggle {
+    margin-top: 2px;
+  }
+
+  .transcript {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .seg {
+    padding: 2px 4px 2px 8px;
+    margin: 2px 0;
+  }
+
+  .seg.turn-start {
+    margin-top: 6px;
+  }
+
+  .seg:not(.open) .seg-meta,
+  .seg:not(.open) .more {
+    display: none;
+  }
+
+  .seg:not(.open) .text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+
+  .stats {
+    gap: 2px 14px;
+  }
+
+  .toggle {
+    display: none;
+  }
+}
+
+/* At iframe heights the host page supplies the title. */
+@media (max-height: 360px) {
+  .hero {
+    display: none;
   }
 }
 

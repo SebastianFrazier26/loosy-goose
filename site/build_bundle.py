@@ -56,12 +56,14 @@ class Demo:
 
 # Picked from the public corpus only (data/local/ is never read here): three upstream repos, and
 # row 97 because supersession removes about a quarter of its tokens, which shows the lossless pass.
+# Order is display order: row 194 leads because its cut segments sit near the top, where a small
+# iframe's first screen can show them.
 DEMOS: tuple[Demo, ...] = (
     Demo(
-        "swe-gym-97",
-        "pydantic: fix the to_snake alias generator",
-        97,
-        "34c4d349af91c4e9c507c0ad6c086efcf8da7a78ca28f65c1f01190614d7b74b",
+        "swe-gym-194",
+        "conan: GNU triplet for os=Linux arch=x86",
+        194,
+        "b67b8ba278b00f99e83120acc28db762ecd2369d750d3f79cc0189d62248747f",
     ),
     Demo(
         "swe-gym-53",
@@ -70,10 +72,10 @@ DEMOS: tuple[Demo, ...] = (
         "b031775ad30a37eed67e9844469ff3cabbecf6ec497e2bd16949b9420fa0c292",
     ),
     Demo(
-        "swe-gym-194",
-        "conan: GNU triplet for os=Linux arch=x86",
-        194,
-        "b67b8ba278b00f99e83120acc28db762ecd2369d750d3f79cc0189d62248747f",
+        "swe-gym-97",
+        "pydantic: fix the to_snake alias generator",
+        97,
+        "34c4d349af91c4e9c507c0ad6c086efcf8da7a78ca28f65c1f01190614d7b74b",
     ),
 )
 
