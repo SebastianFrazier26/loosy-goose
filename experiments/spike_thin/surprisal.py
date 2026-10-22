@@ -6,6 +6,7 @@ Spike code (2026-10-21). Built directly on transformers/torch: no LLMLingua or s
 from __future__ import annotations
 
 import math
+import os
 import re
 import time
 from collections import Counter
@@ -99,6 +100,9 @@ SPECS: dict[str, LMSpec] = {
 
 
 def device() -> str:
+    forced = os.environ.get("SPIKE_DEVICE")
+    if forced:
+        return forced
     return "mps" if torch.backends.mps.is_available() else "cpu"
 
 

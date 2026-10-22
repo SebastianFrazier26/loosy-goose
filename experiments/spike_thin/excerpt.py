@@ -66,7 +66,8 @@ def timing(key: str) -> None:
         "peak_rss_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6,
         "peak_mps_mb": peak / 1e6,
     }
-    (run.OUT / f"meta_{key}.json").write_text(json.dumps(out, indent=1))
+    tag = "" if scorer.dev == "mps" else f"_{scorer.dev}"
+    (run.OUT / f"meta_{key}{tag}.json").write_text(json.dumps(out, indent=1))
     print(
         key,
         f"{sum(walls.values()):.1f}s total, {sum(toks.values()) / sum(walls.values()):.0f} tok/s",
