@@ -19,6 +19,7 @@ import re
 import sys
 import time
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -233,6 +234,11 @@ EXTRA_ARMS = frozenset({"code>sel", "code+tr>sel"})
 # Third pass (2026-10-22): thinned code dumps are force-kept rather than left to the selector,
 # which otherwise still drops most of them; the rest of the budget is selected as usual.
 KEEP_ARMS = frozenset({"code-keep>sel"})
+# Fourth pass (2026-10-22): force-keeping every code skeleton won at light but crowded out prose
+# and tool output at medium/heavy, so the forced set is capped at a share of the budget, filled
+# in order of atoms per token.
+CAP_ARMS = frozenset({"code-cap>sel"})
+CODE_CAPS = (0.3, 0.5)
 SEL_CACHE = OUT / "cache"
 
 
@@ -256,7 +262,7 @@ def arm_outputs(
     """(arm, selection keep, kept segments) per arm, lazily so `arm_s` times each one."""
 
     def want(arm: str) -> bool:
-        return arm in only if only else arm not in EXTRA_ARMS | KEEP_ARMS
+        return arm in only if only else arm not in EXTRA_ARMS | KEEP_ARMS | CAP_ARMS
 
     if want("thin-nocode"):
         yield (
@@ -305,6 +311,25 @@ def arm_outputs(
             pre_budget = pool_tokens - math.ceil((1 - q) * bulk)
             pre = thin.thin_to_budget(pool, words, pre_budget, kinds=code).segments
             yield "code-keep>sel", q, select_from(pre, budget, "code_only")
+    if want("code-cap>sel"):
+        code = frozenset({"code"})
+        bulk = sum(count_tokens(s.text) for s in pool if s.kind == "code")
+        pool_tokens = sum(count_tokens(s.text) for s in pool)
+        pre = thin.thin_to_budget(pool, words, pool_tokens - math.ceil(0.75 * bulk), kinds=code)
+        cost = {s.id: count_tokens(s.text) for s in pre.segments}
+        ranked = sorted(
+            (s for s in pre.segments if s.kind == "code"),
+            key=lambda s: -len(s.atoms) / max(cost[s.id], 1),
+        )
+        for cap in CODE_CAPS:
+            chosen: set[int] = set()
+            used = 0
+            for s in ranked:
+                if used + cost[s.id] <= cap * budget:
+                    chosen.add(s.id)
+                    used += cost[s.id]
+            marked = [replace(s, protected=s.id in chosen) for s in pre.segments]
+            yield "code-cap>sel", cap, select_from(marked, budget, "all")
 
 
 def token_bits_for(key: str) -> thin.TokenBits:
