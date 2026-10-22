@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from loosy_goose.segment import Segment, extract_atoms
+from loosy_goose.segment import Segment, extract_atoms, strip_line_numbers
 from loosy_goose.tokens import count_tokens
 
 THIN_KINDS = frozenset({"prose", "thinking", "tool_result"})
@@ -107,7 +107,33 @@ def score_words(
             ],
             dtype=np.float64,
         )
-        out[s.id] = SegWords(spans, wbits, cost, _protected_mask(s, spans))
+        protected = _protected_mask(s, spans)
+        for k in _line_number_units(s.text, spans):
+            # Read-tool `cat -n` prefixes are scaffolding, not facts: they matched the number atom
+            # pattern, so skeletons kept a column of bare line numbers (fixed 2026-10-22).
+            protected[k] = False
+            wbits[k] = 0.0
+        out[s.id] = SegWords(spans, wbits, cost, protected)
+    return out
+
+
+def _line_number_units(text: str, spans: list[tuple[int, int]]) -> list[int]:
+    numbered = strip_line_numbers(text)
+    if numbered is None:
+        return []
+    ranges: list[tuple[int, int]] = []
+    off = 0
+    for line, prefix in zip(text.split("\n"), numbered[0], strict=True):
+        if prefix:
+            ranges.append((off, off + len(prefix)))
+        off += len(line) + 1
+    out: list[int] = []
+    r = 0
+    for k, (a, b) in enumerate(spans):
+        while r < len(ranges) and ranges[r][1] <= a:
+            r += 1
+        if r < len(ranges) and ranges[r][0] <= a and b <= ranges[r][1]:
+            out.append(k)
     return out
 
 
