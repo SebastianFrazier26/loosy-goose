@@ -25,7 +25,11 @@ from loosy_goose.segment import segment  # noqa: E402
 from loosy_goose.tokens import count_tokens  # noqa: E402
 from loosy_goose.transcript import Transcript  # noqa: E402
 
-LINE_CONDS = {"line-light": "light", "line-medium": "medium", "line-heavy": "heavy"}
+# "line" = line-keep on code dumps; "linetr" (third addendum) also line-keeps long tool_result
+# chunks. Chosen on the command line; the condition names carry it.
+VARIANT = sys.argv[1] if len(sys.argv) > 1 else "line"
+LINE_CONDS = {f"{VARIANT}-{lv}": lv for lv in ("light", "medium", "heavy")}
+BASE_LINE = {f"line-{lv}": lv for lv in ("light", "medium", "heavy")}
 LINE_HEADER = (
     "[Earlier part of the session, compressed: some passages were dropped, and inside long file "
     "and command-output dumps only the lines naming identifiers, paths, numbers or errors were "
@@ -35,7 +39,7 @@ LINE_HEADER = (
 
 
 def line_context(original: list[Any], level: str, tail: str) -> tuple[str, int]:
-    earlier = exi.render_segments(lines.line_segments(original, level, "line"))
+    earlier = exi.render_segments(lines.line_segments(original, level, VARIANT))
     return f"{LINE_HEADER}\n\n{earlier}\n\n{exi.TAIL_HEADER}\n\n{tail}", count_tokens(earlier)
 
 
@@ -53,6 +57,7 @@ def build(rt: exi.Runtime, exp_store: exi.Store) -> tuple[dict[str, Any], dict[s
         ds.log(f"A context {label}")
     b_ctx: dict[str, dict[str, str]] = {}
     b_tok: dict[str, dict[str, int]] = {}
+    b_orig: dict[str, Any] = {}
     selected = ds.select_b()
     for cand, cut in selected:
         prep = exi.load_or_prepare(cand, cut, ds.OUT / "b")
@@ -60,6 +65,7 @@ def build(rt: exi.Runtime, exp_store: exi.Store) -> tuple[dict[str, Any], dict[s
             f"{cand.label}#compressible", list(cand.transcript.turns[: cut.tail_from])
         )
         original = segment(comp)
+        b_orig[cand.label] = original
         b_ctx[cand.label], b_tok[cand.label] = {}, {"full": count_tokens(prep.full_earlier)}
         for cond in exi.LOOSY_LEVELS:
             b_tok[cand.label][cond] = count_tokens(prep.earlier[cond])
@@ -68,8 +74,13 @@ def build(rt: exi.Runtime, exp_store: exi.Store) -> tuple[dict[str, Any], dict[s
                 original, level, prep.tail
             )
         ds.log(f"B context {cand.label}")
-    a = {"labels": list(data), "tokens": a_tok, "ctx": a_ctx}
-    b = {"labels": [c.label for c, _ in selected], "tokens": b_tok, "ctx": b_ctx}
+    a = {
+        "labels": list(data),
+        "tokens": a_tok,
+        "ctx": a_ctx,
+        "orig": {lb: p["original"] for lb, p in data.items()},
+    }
+    b = {"labels": [c.label for c, _ in selected], "tokens": b_tok, "ctx": b_ctx, "orig": b_orig}
     return a, b
 
 
@@ -91,6 +102,44 @@ def phase(rt: exi.Runtime, name: str, info: dict[str, Any], probe_store: exi.Sto
     ds.run_jobs(rt, f"{name} grading", grades)
 
 
+def by_kind(
+    store: exi.Store, exp_store: exi.Store, info: dict[str, Any], filt: exi.Store
+) -> list[str]:
+    """Haiku accuracy per probe, pooled over transcripts, by the kind of the answer's source
+    segment (run.source_kind on the answer's key content)."""
+    acc: dict[tuple[str, str], list[float]] = {}
+    conds = [f"{c}-{lv}" for lv in ("light", "medium", "heavy") for c in ("loosy", "line", VARIANT)]
+    conds = list(dict.fromkeys(conds))
+    for lb in info["labels"]:
+        probes = exi.probes_for(filt, lb)
+        if not probes:
+            continue
+        n = len(probes)
+        ref = exi._text(filt, lb, "full", ds.SONNET.name, "grade_probe")
+        ref_g = exi.parse_probe_grades(ref, n) if ref else None
+        keep = [i for i, g in enumerate(ref_g or []) if g == 1.0]
+        kinds = {
+            i: run.source_kind(info["orig"][lb], run.answer_keys(probes[i]["a"])) for i in keep
+        }
+        for cond in conds:
+            for st in (store, exp_store):
+                text = exi._text(st, lb, cond, ds.HAIKU.name, "grade_probe")
+                g = exi.parse_probe_grades(text, n) if text else None
+                if g is not None:
+                    for i in keep:
+                        acc.setdefault((cond, kinds[i]), []).append(g[i])
+                    break
+    kinds_all = ("code", "prose", "tool_result", "tool_use")
+    out = ["", "| condition | " + " | ".join(kinds_all) + " |", "|---" * 5 + "|"]
+    for cond in conds:
+        cells = [
+            f"{sum(v) / len(v):.2f} ({len(v)})" if (v := acc.get((cond, k))) else "—"
+            for k in kinds_all
+        ]
+        out.append(f"| {cond} | " + " | ".join(cells) + " |")
+    return out
+
+
 def tables(store: exi.Store, exp_store: exi.Store, a: dict[str, Any], b: dict[str, Any]) -> str:
     out = ["Line-keep downstream run: Haiku 5.5 probe QA accuracy, Sonnet 5.5 grading"]
     if ds.STOP.is_set():
@@ -99,7 +148,7 @@ def tables(store: exi.Store, exp_store: exi.Store, a: dict[str, Any], b: dict[st
         ("Phase A (Exp I's 20)", a, exp_store, ["full", *exi.LOOSY_LEVELS, *exi.SUMMARY_OF]),
         ("Phase B (held-out 10)", b, store, ["full", *exi.LOOSY_LEVELS]),
     ):
-        conds = [*base, *ds.THIN_CONDS, *LINE_CONDS]
+        conds = list(dict.fromkeys([*base, *ds.THIN_CONDS, *BASE_LINE, *LINE_CONDS]))
         scores: dict[str, dict[str, float]] = {}
         for cond in conds:
             scores[cond] = {}
@@ -114,10 +163,12 @@ def tables(store: exi.Store, exp_store: exi.Store, a: dict[str, Any], b: dict[st
             out.append(f"| {cond} | {ds.cell(list(scores[cond].values()))} | {tk} |")
         out += ["", "| paired | Δ accuracy |", "|---|---|"]
         for level in ("light", "medium", "heavy"):
-            ln = scores[f"line-{level}"]
-            for other in (f"loosy-{level}", f"thin-{level}", f"summary-{level}"):
-                if other in scores:
-                    out.append(f"| line-{level} − {other} | {ds.paired(ln, scores[other])} |")
+            ln = scores[f"{VARIANT}-{level}"]
+            others = (f"loosy-{level}", f"line-{level}", f"thin-{level}", f"summary-{level}")
+            for other in others:
+                if other in scores and other != f"{VARIANT}-{level}":
+                    out.append(f"| {VARIANT}-{level} − {other} | {ds.paired(ln, scores[other])} |")
+        out += by_kind(store, exp_store, info, filt)
     return "\n".join(out) + "\n"
 
 
@@ -136,9 +187,12 @@ def main() -> None:
             phase(rt, "B", b, store)
     finally:
         text = tables(store, exp_store, a, b)
-        (ds.OUT / "tables_lines.md").write_text(text, encoding="utf-8")
+        (ds.OUT / f"tables_{VARIANT}.md").write_text(text, encoding="utf-8")
         print(text, flush=True)
-        ds.log(f"LINES DONE: {rt.new_calls} new calls, {rt.failed} failed, stop={ds.STOP.is_set()}")
+        ds.log(
+            f"{VARIANT.upper()} DONE: {rt.new_calls} new calls, {rt.failed} failed, "
+            f"stop={ds.STOP.is_set()}"
+        )
 
 
 if __name__ == "__main__":

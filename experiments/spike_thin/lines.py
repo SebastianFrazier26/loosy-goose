@@ -62,6 +62,15 @@ def atom_band(seg: Segment, quality: float) -> Segment:
     return replace(seg, text=text, atoms=extract_atoms(text))
 
 
+# Third addendum (2026-10-22): tool_result chunks are line-chunked at 600 characters, so "long"
+# means several lines; a 1-3 line chunk has nothing worth eliding.
+LONG_RESULT_LINES = 4
+
+
+def _long_result(seg: Segment) -> bool:
+    return seg.kind == "tool_result" and seg.text.count("\n") + 1 >= LONG_RESULT_LINES
+
+
 def force_select(segs: list[Segment], budget: int, rule: str, value: float) -> list[Segment]:
     if rule == "keep":
         return run.select_from(segs, budget, "code_only")
@@ -84,19 +93,24 @@ def line_segments(original: list[Segment], level: str, variant: str = "line") ->
     pool = apply_supersession(original)
     if variant == "line":
         pre = [line_keep(s) if s.kind == "code" else s for s in pool]
+    elif variant == "linetr":
+        pre = [line_keep(s) if s.kind == "code" or _long_result(s) else s for s in pool]
     else:
         pre = [atom_band(s, k) if s.kind == "code" else s for s in pool]
     rule, value = FORCE[level]
     return force_select(pre, budget, rule, value)
 
 
-def offline() -> None:
+VARIANTS = ("line", "aband")
+
+
+def offline(variants: tuple[str, ...] = VARIANTS, name: str = "lines") -> None:
     data: dict[str, Any] = pickle.loads(run.PREP.read_bytes())
     rows = []
     for label, p in data.items():
         for level, k in LEVELS.items():
             budget = math.ceil(p["total"] * k)
-            for variant in ("line", "aband"):
+            for variant in variants:
                 kept = line_segments(p["original"], level, variant)
                 row = {
                     "label": label,
@@ -109,8 +123,11 @@ def offline() -> None:
                 row.update(run.evaluate(p, kept))
                 rows.append(row)
         print(label, flush=True)
-    (run.OUT / "results_lines.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    (run.OUT / f"results_{name}.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
 
 
 if __name__ == "__main__":
-    offline()
+    if len(sys.argv) > 1:
+        offline(tuple(sys.argv[1].split(",")), sys.argv[2])
+    else:
+        offline()
