@@ -121,3 +121,16 @@ token filter over the spaCy parse, not a row schema: sentence order, clause stru
 - **Mode:** gentle emits English and ignores `mode`.
 
 Offline numbers: experiments/output/slot_compress/offline_gentle.md (`offline.py --gentle`).
+
+## Outcome — closed 2026-10-22
+
+Closed by the user after two downstream runs (`docs/results/exp_slot_downstream.md`, set C n=10;
+`docs/results/exp_slot_downstream_d.md`, set D n=20).
+
+- Aggressive slot rows (v2) hurt at light (−0.09 to −0.12 vs loosy, p=0.008).
+- The SLM arm (Qwen3-1.7B) and gentle v3 are within noise of loosy at every level.
+- Line-keep was not confirmed on fresh data: pooled C+D at light it is −0.04 vs loosy (p=0.06).
+- Every extractive or rewrite variant sits 0.10–0.14 below a Sonnet summary at equal budget.
+- Cause: prose is 12–19% of tokens, so rewriting it frees at most a few percent of budget. The lost facts sit in dropped code and tool output.
+
+Not productised. Next: revisit the locked "v1 extractive only" decision; the candidate is a small local abstractive model.
