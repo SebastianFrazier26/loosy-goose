@@ -52,13 +52,15 @@ SPECS: dict[str, LMSpec] = {
             2048,
             "float32",
         ),
+        # smol_llama-81M was the first ~80M pick; its tokenizer needs sentencepiece, which this
+        # env lacks (2026-10-22), so distilgpt2 stands in at that size.
         LMSpec(
-            "smol_llama-81m",
-            "BEE-spoke-data/smol_llama-81M-tied",
-            "67de58a6d29358135369390a48871fbbf06d7e8a",
-            81.3,
+            "distilgpt2-82m",
+            "distilbert/distilgpt2",
+            "2290a62682d06624634c1f46a6ad5be0f47f38aa",
+            81.9,
             "Apache-2.0",
-            325,
+            353,
             1024,
             "float32",
         ),

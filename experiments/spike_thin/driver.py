@@ -25,7 +25,7 @@ MODELS = (
     "random",
     "pythia-31m",
     "pythia-70m",
-    "smol_llama-81m",
+    "distilgpt2-82m",
     "smollm2-135m",
     "qwen3-0.6b",
 )
@@ -33,7 +33,7 @@ EXTRA_MODELS = (
     "unigram",
     "pythia-31m",
     "pythia-70m",
-    "smol_llama-81m",
+    "distilgpt2-82m",
     "smollm2-135m",
     "qwen3-0.6b",
 )
