@@ -23,6 +23,10 @@ def boot(vals: list[float], reps: int = 2000) -> tuple[float, float]:
     return float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
 
 
+def groups_select(groups: dict[tuple[str, str, str, float], list[dict[str, Any]]]) -> list[Any]:
+    return [r for k, g in groups.items() if k[1] == "select" for r in g]
+
+
 def main() -> None:
     prep: dict[str, Any] = pickle.loads((OUT / "prep.pkl").read_bytes())
     kinds = {label: p["probe_kind"] for label, p in prep.items()}
@@ -64,6 +68,32 @@ def main() -> None:
                 f"| {np.mean([r['atom_recall'] for r in g]):.3f} "
                 f"| {np.mean([r['coverage'] for r in g]):.3f} "
                 f"| {np.mean(surv):.3f} [{lo:.2f},{hi:.2f}] | " + " | ".join(kcells) + " |"
+            )
+    lines.append(
+        "\n### paired vs select (same transcripts; within-budget arms only; mean diff [95% CI])\n"
+    )
+    lines.append("| level | arm | model | sel keep | n | d survival | d atom recall | d coverage |")
+    lines.append("|---|---|---|---|---|---|---|---|")
+    base = {(r["level"], r["label"]): r for r in groups_select(groups)}
+    for level in LEVELS:
+        cand = []
+        for key, g in groups.items():
+            if key[0] != level or key[1] in ("select", "full"):
+                continue
+            if any(r["tokens"] > r["budget"] * 1.01 for r in g):
+                continue
+            pairs = [(r, base[(level, r["label"])]) for r in g if (level, r["label"]) in base]
+            ds = [r["probe_survival"] - b["probe_survival"] for r, b in pairs]
+            da = [r["atom_recall"] - b["atom_recall"] for r, b in pairs]
+            dc = [r["coverage"] - b["coverage"] for r, b in pairs]
+            cand.append((float(np.mean(ds)), key, ds, da, dc))
+        for m, key, ds, da, dc in sorted(cand, key=lambda x: -x[0]):
+            lo, hi = boot(ds)
+            alo, ahi = boot(da)
+            lines.append(
+                f"| {level} | {key[1]} | {key[2]} | {key[3]:.2f} | {len(ds)} "
+                f"| {m:+.3f} [{lo:+.2f},{hi:+.2f}] | {np.mean(da):+.3f} [{alo:+.2f},{ahi:+.2f}] "
+                f"| {np.mean(dc):+.3f} |"
             )
     lines.append("\n### model cost\n")
     lines.append(
