@@ -5,13 +5,19 @@ drawn with seed exi.SEED + 2. Probes are written by a model other than the Sonne
 (Codex gpt-6-sol; Haiku only if the codex CLI is missing, recorded in the report). A probe counts
 only if Haiku answers it correctly from the full context. Haiku answers, Sonnet grades.
 
+Set D (2026-10-22, `--set D`): a larger fresh swe-gym set (n=20, seed exi.SEED + 3, disjoint from
+Phase A, Phase B and set C) comparing loosy / line-keep with and without the "gentle" slot profile:
+gloosy (supersede -> gentle slot english -> the shipped loosy leverage + per-token novelty
+selection) and gline (supersede -> gentle slot english -> line-keep code -> select). Own store and
+report in output/slot_compress/d/; line/loosy keys are the set C pipeline, so the sets pool.
+
 Conditions per level: loosy (shipped pipeline), line (supersede -> line-keep code -> select),
 slotd / slote (supersede -> slot prose -> line-keep code -> select; direct rows with a legend, or
 rows re-realised as English), slme (same order, prose rewritten by a local qwen3-1.7b SLM in
 english mode; rewrites are precomputed in the main thread before any call so workers never load
 torch), summary (Sonnet at loosy's rendered size), plus full once.
 
-  uv run python experiments/slot_compress/downstream.py --plan
+  uv run python experiments/slot_compress/downstream.py --plan [--set D]
   uv run python experiments/slot_compress/downstream.py --dry-run [--conditions loosy,line]
   nohup caffeinate -i uv run python experiments/slot_compress/downstream.py \\
       >> experiments/output/slot_compress/run.log 2>&1 &
@@ -47,8 +53,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lines  # noqa: E402
 
 from experiments import exp_i_downstream as exi  # noqa: E402
+from loosy_goose.novelty_select import novelty_select  # noqa: E402
+from loosy_goose.pipeline import NOVELTY_ALPHA  # noqa: E402
 from loosy_goose.rate import LEVELS  # noqa: E402
 from loosy_goose.segment import Segment, segment  # noqa: E402
+from loosy_goose.select import CompressConfig, embed_segments, score_segments  # noqa: E402
 from loosy_goose.supersede import apply_supersession  # noqa: E402
 from loosy_goose.tokens import count_tokens  # noqa: E402
 from loosy_goose.transcript import Transcript  # noqa: E402
@@ -62,10 +71,15 @@ SONNET = exi.HELPER
 CODEX_PROBER = exi.MODEL_BY_NAME["gpt-6-sol"]
 C_SEED = exi.SEED + 2
 C_N = 10
+D_SEED = exi.SEED + 3
+D_N = 20
 FAMILIES = ("loosy", "line", "slotd", "slote", "slme", "summary")
-SLOT_MODE = {"slotd": "direct", "slote": "english"}
+D_FAMILIES = ("loosy", "line", "gloosy", "gline", "summary")
+GENTLE_FAMILIES = ("gloosy", "gline")
+ALL_FAMILIES = tuple(dict.fromkeys(FAMILIES + D_FAMILIES))
+SLOT_MODE = {"slotd": "direct", "slote": "english", "gloosy": "english", "gline": "english"}
 SLM_MODEL = "qwen3-1.7b"
-PROSE_FAMILIES = ("slotd", "slote", "slme")
+PROSE_FAMILIES = ("slotd", "slote", "slme", "gloosy", "gline")
 LEVEL_NAMES = ("light", "medium", "heavy")
 STOP = threading.Event()
 # 429s are deliberately absent: a plain rate limit is transient and exi backs off through it.
@@ -77,10 +91,48 @@ LINE_HEADER = (
     "kept (gaps are marked with '… (N lines elided)'; line numbers were removed). Every line that "
     "remains is verbatim"
 )
+GLOOSY_HEADER = (
+    "[Earlier part of the session, compressed extractively: some passages were dropped, and "
+    "prose and reasoning sentences were mechanically shortened and re-worded, with identifiers, "
+    "paths and numbers kept exactly; what remains is otherwise verbatim]"
+)
 SLOTE_NOTE = (
     "prose and reasoning sentences were mechanically shortened and re-worded, with identifiers, "
     "paths and numbers kept exactly"
 )
+
+
+@dataclass(frozen=True)
+class SetCfg:
+    name: str
+    families: tuple[str, ...]
+    calls: Path
+    prep_dir: Path
+    report: Path
+    selection: Path
+    max_calls: int
+
+
+SETS = {
+    "C": SetCfg(
+        "C",
+        FAMILIES,
+        OUT / "calls.jsonl",
+        OUT / "c",
+        OUT / "report.md",
+        OUT / "c_selection.json",
+        450,
+    ),
+    "D": SetCfg(
+        "D",
+        D_FAMILIES,
+        OUT / "d" / "calls.jsonl",
+        OUT / "d",
+        OUT / "d" / "report.md",
+        OUT / "d_selection.json",
+        750,
+    ),
+}
 
 
 def log(msg: str) -> None:
@@ -100,8 +152,11 @@ class Plan:
     levels: list[str]
     slot_version: Any = None
     slm_version: Any = None
+    gentle_version: Any = None
 
     def cond(self, family: str, level: str) -> str:
+        if family in GENTLE_FAMILIES:
+            return f"{family}.v{self.gentle_version}-{level}"
         if family in SLOT_MODE:
             return f"{family}.v{self.slot_version}-{level}"
         if family == "slme":
@@ -112,8 +167,10 @@ class Plan:
 def header_for(family: str, slot: Any) -> str:
     if family == "slotd":
         return f"{LINE_HEADER}; {slot.LEGEND}]"
-    if family in ("slote", "slme"):
+    if family in ("slote", "slme", "gline"):
         return f"{LINE_HEADER}; {SLOTE_NOTE}]"
+    if family == "gloosy":
+        return GLOOSY_HEADER
     return f"{LINE_HEADER}]"
 
 
@@ -125,6 +182,8 @@ def load_slm() -> Any:
 
 
 def transform_pool(pool: list[Segment], fam: str, slot: Any, slm: Any) -> list[Segment]:
+    if fam in GENTLE_FAMILIES:
+        return slot.slot_segments(pool, SLOT_MODE[fam], profile="gentle", include_tool_prose=True)
     if fam in SLOT_MODE:
         return slot.slot_segments(pool, SLOT_MODE[fam])
     if fam == "slme":
@@ -180,13 +239,25 @@ def exclusions() -> set[str]:
     return taken
 
 
-def select_c() -> list[tuple[exi.Candidate, exi.Cut]]:
+def select_set(name: str) -> list[tuple[exi.Candidate, exi.Cut]]:
     taken = exclusions()
+    n, seed = (C_N, C_SEED) if name == "C" else (D_N, D_SEED)
+    if name == "D":
+        taken |= set(json.loads(SETS["C"].selection.read_text(encoding="utf-8")))
     cands = (c for c in exi.iter_candidates() if c.source == "swe-gym" and c.label not in taken)
-    return exi.select_transcripts(cands, n=C_N, per_source=C_N, seed=C_SEED)
+    return exi.select_transcripts(cands, n=n, per_source=n, seed=seed)
 
 
 # --------------------------------------------------------------------------- contexts
+
+
+def loosy_select(pool: list[Segment], budget: int) -> list[Segment]:
+    """The shipped selection (pipeline.compress_transcript: leverage scores, per-token novelty at
+    alpha 0.5, no protect) on an arbitrary pool, so a slotted pool is selected exactly as loosy
+    selects the plain supersession pool."""
+    config = CompressConfig(strategy="leverage")
+    scores = score_segments(embed_segments(pool, config.model_name, exi.CACHE), config)
+    return novelty_select(pool, scores, budget, NOVELTY_ALPHA, "none", per_token=True)
 
 
 def kept_segments(original: list[Segment], level: str, pool: list[Segment]) -> list[Segment]:
@@ -212,8 +283,10 @@ class Item:
     pools: dict[str, list[Segment]]
 
 
-def build_item(cand: exi.Candidate, cut: exi.Cut, plan: Plan, slot: Any, slm: Any) -> Item:
-    prep = exi.load_or_prepare(cand, cut, OUT / "c")
+def build_item(
+    cand: exi.Candidate, cut: exi.Cut, plan: Plan, slot: Any, slm: Any, prep_dir: Path
+) -> Item:
+    prep = exi.load_or_prepare(cand, cut, prep_dir)
     comp = Transcript(f"{cand.label}#compressible", list(cand.transcript.turns[: cut.tail_from]))
     original = segment(comp)
     total = sum(count_tokens(s.text) for s in original)
@@ -239,7 +312,10 @@ def build_item(cand: exi.Candidate, cut: exi.Cut, plan: Plan, slot: Any, slm: An
                 it.earlier_tokens[cond] = count_tokens(prep.earlier[f"loosy-{level}"])
                 it.seg_tokens[cond] = prep.kept_segment_tokens[f"loosy-{level}"]
                 continue
-            kept = kept_segments(original, level, it.pools[fam])
+            if fam == "gloosy":
+                kept = loosy_select(it.pools[fam], budget)
+            else:
+                kept = kept_segments(original, level, it.pools[fam])
             earlier = exi.render_segments(kept)
             hdr = header_for(fam, slot)
             it.ctx[cond] = f"{hdr}\n\n{earlier}\n\n{exi.TAIL_HEADER}\n\n{prep.tail}"
@@ -398,24 +474,29 @@ def call_plan(n: int, plan: Plan) -> dict[str, int]:
     }
 
 
-def print_plan(labels: Sequence[str], plan: Plan, max_calls: int, gen: exi.Model) -> int:
+def print_plan(
+    labels: Sequence[str], plan: Plan, max_calls: int, gen: exi.Model, set_name: str = "C"
+) -> int:
     cp = call_plan(len(labels), plan)
     total = sum(v for k, v in cp.items() if not k.startswith("_"))
-    log(f"set C ({len(labels)}): {', '.join(labels)}")
+    log(f"set {set_name} ({len(labels)}): {', '.join(labels)}")
     log(f"probe generator: {gen.name}; answers: {HAIKU.name}; grader/summariser: {SONNET.name}")
     log(f"families={plan.families} levels={plan.levels}")
     for k, v in cp.items():
         if not k.startswith("_"):
             log(f"  {k:20s} {v}")
-    log(f"  {'TOTAL (upper bound)':20s} {total}   (cap --max-calls {max_calls})")
+    probe_gen = cp["probe_gen"]
+    log(
+        f"  {'TOTAL (upper bound)':20s} {total}   (cap --max-calls {max_calls}; "
+        f"{total - probe_gen} Claude + {probe_gen} probe-gen)"
+    )
     return total
 
 
 # --------------------------------------------------------------------------- dry run
 
 
-def dry_run(items: list[Item], plan: Plan) -> None:
-    sample_dir = OUT / "contexts"
+def dry_run(items: list[Item], plan: Plan, sample_dir: Path) -> None:
     sample_dir.mkdir(parents=True, exist_ok=True)
     log(
         "tokens: mean rendered earlier-stretch / mean kept-segment tokens vs budget (n over budget)"
@@ -493,11 +574,58 @@ def paired(a: dict[str, float], b: dict[str, float]) -> str:
     return f"{m:+.3f} [{lo:+.2f},{hi:+.2f}] sign p={sign_p(d):.3f} n={len(common)}"
 
 
+D_PAIRS = (
+    ("line", "loosy"),
+    ("gloosy", "loosy"),
+    ("gline", "line"),
+    ("gline", "loosy"),
+    ("summary", "loosy"),
+    ("summary", "line"),
+    ("summary", "gloosy"),
+    ("summary", "gline"),
+)
+
+
+def pooled_line_loosy(
+    plan: Plan, gen: exi.Model, d_store: exi.Store, d_labels: list[str]
+) -> list[str]:
+    """line - loosy over set C + D. The line-/loosy- condition keys come from the same pipeline in
+    both sets; transcripts are disjoint, so the pooled n is the sum."""
+    c_cfg = SETS["C"]
+    if not (c_cfg.calls.exists() and c_cfg.selection.exists()):
+        return []
+    c_store = exi.Store(c_cfg.calls)
+    c_labels = json.loads(c_cfg.selection.read_text(encoding="utf-8"))
+    rows = [
+        "",
+        "Pooled line - loosy over sets C + D:",
+        "",
+        "| level | delta accuracy |",
+        "|---|---|",
+    ]
+    for lv in plan.levels:
+        got: dict[str, dict[str, float]] = {"line": {}, "loosy": {}}
+        for st, labs in ((c_store, c_labels), (d_store, d_labels)):
+            for fam in got:
+                for lb in labs:
+                    v = per_transcript(st, gen, lb, f"{fam}-{lv}")
+                    if v is not None:
+                        got[fam][lb] = v
+        rows.append(f"| {lv} | {paired(got['line'], got['loosy'])} |")
+    return rows
+
+
 def report(
-    store: exi.Store, labels: list[str], plan: Plan, gen: exi.Model, items: list[Item] | None
+    store: exi.Store,
+    labels: list[str],
+    plan: Plan,
+    gen: exi.Model,
+    items: list[Item] | None,
+    set_name: str = "C",
 ) -> str:
     out = [
-        f"# Slot-compression downstream QA, set C, written {time.strftime('%Y-%m-%d %H:%M')}",
+        f"# Slot-compression downstream QA, set {set_name}, written "
+        f"{time.strftime('%Y-%m-%d %H:%M')}",
         "",
     ]
     out.append(
@@ -533,11 +661,19 @@ def report(
     out += [f"| {c} | {cell(list(scores[c].values()))} | {tok(c)} |" for c in conds]
     out += ["", "| paired difference | delta accuracy |", "|---|---|"]
     for lv in plan.levels:
+        if set_name == "D":
+            for a, b in D_PAIRS:
+                if a in plan.families and b in plan.families:
+                    ca, cb = plan.cond(a, lv), plan.cond(b, lv)
+                    out.append(f"| {ca} - {cb} | {paired(scores[ca], scores[cb])} |")
+            continue
         for fam in plan.families:
             c = plan.cond(fam, lv)
             for ref in ("line", "loosy"):
                 if ref in plan.families and fam != ref:
                     out.append(f"| {c} - {ref}-{lv} | {paired(scores[c], scores[f'{ref}-{lv}'])} |")
+    if set_name == "D" and {"line", "loosy"} <= set(plan.families):
+        out += pooled_line_loosy(plan, gen, store, labels)
     out.append("")
     out.append(f"Calls recorded in checkpoint: {len(store.records)}")
     return "\n".join(out) + "\n"
@@ -550,38 +686,50 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--plan", action="store_true", help="print the call plan and exit")
     ap.add_argument("--dry-run", action="store_true", help="build contexts, no model calls")
-    ap.add_argument("--max-calls", type=int, default=450)
-    ap.add_argument("--conditions", default=",".join(FAMILIES))
+    ap.add_argument("--set", dest="set_name", choices=sorted(SETS), default="C")
+    ap.add_argument("--max-calls", type=int, default=None, help="default 450 (C) / 750 (D)")
+    ap.add_argument("--conditions", default=None, help="default: the set's families")
     ap.add_argument("--levels", default=",".join(LEVEL_NAMES))
-    ap.add_argument("--limit", type=int, default=None, help="first N transcripts of set C")
+    ap.add_argument("--limit", type=int, default=None, help="first N transcripts of the set")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--probe-model", default=None, help="override probe generator (model name)")
     args = ap.parse_args()
 
-    fams = [f for f in args.conditions.split(",") if f]
+    cfg = SETS[args.set_name]
+    if args.max_calls is None:
+        args.max_calls = cfg.max_calls
+    fams = [f for f in (args.conditions or ",".join(cfg.families)).split(",") if f]
     levels = [lv for lv in args.levels.split(",") if lv]
-    if bad := [f for f in fams if f not in FAMILIES] + [lv for lv in levels if lv not in LEVELS]:
+    if bad := [f for f in fams if f not in ALL_FAMILIES] + [
+        lv for lv in levels if lv not in LEVELS
+    ]:
         raise SystemExit(f"unknown condition/level: {bad}")
     slot = load_slot() if any(f in SLOT_MODE for f in fams) else None
     slm = load_slm() if "slme" in fams else None
+    if slot is None and any(f in GENTLE_FAMILIES for f in fams):
+        slot = load_slot()
     plan = Plan(
-        fams, levels, getattr(slot, "SLOT_VERSION", None), getattr(slm, "SLM_VERSION", None)
+        fams,
+        levels,
+        getattr(slot, "SLOT_VERSION", None),
+        getattr(slm, "SLM_VERSION", None),
+        getattr(slot, "GENTLE_VERSION", None) if any(f in GENTLE_FAMILIES for f in fams) else None,
     )
+    if any(f in GENTLE_FAMILIES for f in fams) and plan.gentle_version is None and not args.plan:
+        raise SystemExit("gentle conditions need slot.GENTLE_VERSION (slot.py has no gentle yet)")
 
     if args.probe_model:
         gen = exi.MODEL_BY_NAME[args.probe_model]
     else:
         gen = CODEX_PROBER if shutil.which("codex") else HAIKU
 
-    OUT.mkdir(parents=True, exist_ok=True)
-    selected = select_c()
-    (OUT / "c_selection.json").write_text(
-        json.dumps([c.label for c, _ in selected]), encoding="utf-8"
-    )
+    cfg.report.parent.mkdir(parents=True, exist_ok=True)
+    selected = select_set(args.set_name)
+    cfg.selection.write_text(json.dumps([c.label for c, _ in selected]), encoding="utf-8")
     if args.limit:
         selected = selected[: args.limit]
     labels = [c.label for c, _ in selected]
-    total = print_plan(labels, plan, args.max_calls, gen)
+    total = print_plan(labels, plan, args.max_calls, gen, args.set_name)
     if args.plan:
         return
     if total > args.max_calls and not args.dry_run:
@@ -589,22 +737,24 @@ def main() -> None:
 
     items = []
     for cand, cut in selected:
-        items.append(build_item(cand, cut, plan, slot, slm))
+        items.append(build_item(cand, cut, plan, slot, slm, cfg.prep_dir))
         log(f"context {cand.label}")
     if args.dry_run:
-        dry_run(items, plan)
+        dry_run(items, plan, OUT / "contexts" if args.set_name == "C" else OUT / "d" / "samples")
         return
 
-    store = exi.Store(OUT / "calls.jsonl")
+    store = exi.Store(cfg.calls)
     guard = Guard(args.max_calls)
-    rt = exi.Runtime(store, guard.runner, OUT / "failures.jsonl", workers=args.workers)
+    rt = exi.Runtime(
+        store, guard.runner, cfg.report.parent / "failures.jsonl", workers=args.workers
+    )
     rt.sleep = guarded_sleep
     rt.log = lambda m: print(m, flush=True)
     try:
         run_all(rt, items, plan, gen)
     finally:
-        text = report(store, labels, plan, gen, items)
-        (OUT / "report.md").write_text(text, encoding="utf-8")
+        text = report(store, labels, plan, gen, items, args.set_name)
+        cfg.report.write_text(text, encoding="utf-8")
         print(text, flush=True)
         log(
             f"DONE: {rt.new_calls} new calls, {rt.failed} failed, runner invocations "
