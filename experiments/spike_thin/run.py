@@ -228,6 +228,8 @@ def random_bits(doc: str) -> tuple[np.ndarray, np.ndarray]:
 
 
 THIN_THEN_SELECT_Q = (0.7, 0.5)
+KIND_THIN_Q = (0.5, 0.25)
+EXTRA_ARMS = frozenset({"code>sel", "code+tr>sel"})
 SEL_CACHE = OUT / "cache"
 
 
@@ -251,7 +253,7 @@ def arm_outputs(
     """(arm, selection keep, kept segments) per arm, lazily so `arm_s` times each one."""
 
     def want(arm: str) -> bool:
-        return not only or arm in only
+        return arm in only if only else arm not in EXTRA_ARMS
 
     if want("thin-nocode"):
         yield (
@@ -278,6 +280,20 @@ def arm_outputs(
         banded = p["band_pool"][k]
         bw = thin.score_words(banded, token_bits)
         yield "band>thin", 1.0, thin.thin_to_budget(banded, bw, budget).segments
+    # Added after the first pass (2026-10-22): prose thinning cost prose-sourced probes, and the
+    # diagnosed loss sits in code dumps, so these thin only the bulky kinds, then select.
+    for arm, kinds in (
+        ("code>sel", frozenset({"code"})),
+        ("code+tr>sel", frozenset({"code", "tool_result"})),
+    ):
+        if not want(arm):
+            continue
+        bulk = sum(count_tokens(s.text) for s in pool if s.kind in kinds)
+        pool_tokens = sum(count_tokens(s.text) for s in pool)
+        for q in KIND_THIN_Q:
+            pre_budget = pool_tokens - math.ceil((1 - q) * bulk)
+            pre = thin.thin_to_budget(pool, words, pre_budget, kinds=kinds).segments
+            yield arm, q, select_from(pre, budget)
 
 
 def token_bits_for(key: str) -> thin.TokenBits:
@@ -290,11 +306,11 @@ def token_bits_for(key: str) -> thin.TokenBits:
     return surprisal.Scorer(surprisal.SPECS[key]).token_bits
 
 
-def run_model(key: str, only: set[str] | None = None) -> None:
+def run_model(key: str, only: set[str] | None = None, suffix: str = "") -> None:
     """Appends one line per (transcript, level, arm) to results_<key>.jsonl after each transcript
     finishes; a rerun skips transcripts already there."""
     data: dict[str, Any] = pickle.loads(PREP.read_bytes())
-    path = OUT / f"results_{key}.jsonl"
+    path = OUT / f"results_{key}{suffix}.jsonl"
     done: set[str] = set()
     if path.exists():
         for line in path.read_text().splitlines():

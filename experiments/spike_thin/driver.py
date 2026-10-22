@@ -29,6 +29,14 @@ MODELS = (
     "smollm2-135m",
     "qwen3-0.6b",
 )
+EXTRA_MODELS = (
+    "unigram",
+    "pythia-31m",
+    "pythia-70m",
+    "smol_llama-81m",
+    "smollm2-135m",
+    "qwen3-0.6b",
+)
 # Only a quality ceiling, so it runs after the report already exists.
 CEILING = "qwen3-1.7b"
 EXCERPTS = (
@@ -73,7 +81,11 @@ def main() -> None:
         lm_stages(key)
     stage("excerpts", excerpts)
     stage("report", report.main)
+    for key in EXTRA_MODELS:
+        stage(f"extra arms {key}", run.run_model, key, set(run.EXTRA_ARMS), "__x")
+    stage("report (with extra arms)", report.main)
     lm_stages(CEILING)
+    stage(f"extra arms {CEILING}", run.run_model, CEILING, set(run.EXTRA_ARMS), "__x")
     stage("report (with ceiling)", report.main)
     print(f"{time.strftime('%H:%M:%S')} ALL DONE", flush=True)
 
