@@ -76,7 +76,7 @@ per sentence, so v2 trades nuance for brevity (negation, modality, atoms still s
   joined when the next starts lowercase and the previous has no terminal punctuation; `**bold**` is unwrapped; all-caps
   `DON'T` is lowercased so spaCy sees the negation; code-like lines (comments, `;`/`{` endings, symbol-dense,
   traceback `E   ` lines, `---` rules) pass through verbatim; the atom-heavy passthrough threshold rose 0.5 -> 0.75.
-- **Measured, no effect:** leading-filler strip and row merge each move <0.1 point (Anthropic-style prose rarely
+- **Measured, no effect:** leading-filler strip and row merge each move <0.1 point (the corpus rarely
   has the patterns; spaCy already drops interjections); unwrapping ~1 point.
 
 ## Evaluation
