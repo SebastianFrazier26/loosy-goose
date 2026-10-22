@@ -53,6 +53,32 @@ User-decided constraints:
   mostly atoms) passes through unchanged.
 - **Version stamp:** `SLOT_VERSION` per the repo rule; any change to schema, quantizer or coder bumps it.
 
+## v2 changes (agent's calls, 2026-10-22; `SLOT_VERSION` 2 — review these)
+
+v1 cut only 12.7% (direct) / 19.3% (english) of prose+thinking tokens offline; the user's goal is fewest words
+per sentence, so v2 trades nuance for brevity (negation, modality, atoms still survive). Offline: 40.9% direct /
+40.0% english, atoms 100%, verbatim fallback 3.9% / 11.5% of slotted units.
+
+- **Row format:** the `ACT|AGT|OBJ|TO|X` pipe layout is gone (pipes and `-` placeholders cost tokens). Direct:
+  `[agent: ][flags]act obj [to recipient] [cause/atoms]`; the agent is written only when non-pronoun and different
+  from the last one written (it "holds until changed"); copula is `subj=attr`; flags unchanged (`~ ! ^ + ?`).
+  English: the same row as `agent [modal] [not] act obj ...` with periods, agent repeated. LEGEND is 60 tokens.
+- **Row merge:** consecutive rows with equal agent/flags/act merge objects (`fix a, b`).
+- **X slot:** only atom-bearing or cause/condition (`because/if/when/...`) material, reduced to content words
+  (no "try", "which", "that"). Keeping short plain prepositional extras (<=2 or <=3 content words) was measured and
+  costs 1-2 points of reduction; left off.
+- **Filler:** leading "Great,/Now,/Let me/Let's/I'll/Looks like/please..." stripped before parsing (meta-narration
+  falls to act+obj); filler-only sentences dropped. Expletive subjects (it/this/there) dropped; a verb with no object
+  and a generic preposition (at/in/into/for...) promotes the preposition's object to OBJ ("look at the file" -> `look file`).
+- **Fragments:** verbless or very short sentences become content-word fragments (modals and negations kept) instead
+  of verbatim fallback.
+- **Lines:** list items are slotted behind their marker (the largest single gain, ~14 points); soft-wrapped lines are
+  joined when the next starts lowercase and the previous has no terminal punctuation; `**bold**` is unwrapped; all-caps
+  `DON'T` is lowercased so spaCy sees the negation; code-like lines (comments, `;`/`{` endings, symbol-dense,
+  traceback `E   ` lines, `---` rules) pass through verbatim; the atom-heavy passthrough threshold rose 0.5 -> 0.75.
+- **Measured, no effect:** leading-filler strip and row merge each move <0.1 point (Anthropic-style prose rarely
+  has the patterns; spaCy already drops interjections); unwrapping ~1 point.
+
 ## Evaluation
 
 Downstream probe QA only (offline string-match survival ranked variants backwards twice):

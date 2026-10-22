@@ -50,6 +50,7 @@ def main() -> None:
     data: dict[str, Any] = pickle.loads(PREP.read_bytes())
     rows: list[str] = []
     agg: dict[str, list[float]] = {m: [0, 0, 0, 0, 0.0] for m in MODES}
+    fb: dict[str, list[int]] = {m: [0, 0] for m in MODES}
     grand_total = 0
     grand_prose = 0
     excerpts: list[tuple[str, Segment, dict[str, str]]] = []
@@ -62,6 +63,7 @@ def main() -> None:
         cells = []
         outs: dict[str, list[Segment]] = {}
         for m in MODES:
+            slot.STATS.reset()
             t0 = time.perf_counter()
             new = slot.slot_segments(orig, m)
             dt = time.perf_counter() - t0
@@ -74,6 +76,8 @@ def main() -> None:
             a[2] += atot
             a[3] += before - after
             a[4] += dt
+            fb[m][0] += slot.STATS.rowed
+            fb[m][1] += slot.STATS.fallback
             cells.append(
                 f"{after} ({(before - after) / total:.1%} of total) | {kept}/{atot}"
                 if atot
@@ -121,6 +125,13 @@ def main() -> None:
             f"{kept / max(atot, 1):.2%} ({int(kept)}/{int(atot)}) | {secs:.1f} |"
         )
     md += [
+        "",
+        "Sentence units with a row kept vs verbatim fallback (row not shorter): "
+        + ", ".join(
+            f"{m} {fb[m][0]} rows / {fb[m][1]} fallback ({fb[m][1] / max(sum(fb[m]), 1):.1%})"
+            for m in MODES
+        )
+        + ".",
         "",
         f"Throughput (direct, includes parse): ~{n_sent / max(agg['direct'][4], 1e-9):.0f} "
         f"sentence-units/s ({n_sent} units).",

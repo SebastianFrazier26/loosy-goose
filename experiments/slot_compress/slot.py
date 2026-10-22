@@ -1,12 +1,15 @@
-"""Slot compression (spike, 2026-10-22): prose and thinking -> one terse row per sentence.
+"""Slot compression (spike, 2026-10-22; v2 same day): prose and thinking -> terse rows.
 
 Design: docs/superpowers/specs/2026-10-22-slot-compress-design.md. spaCy only finds the verb,
 subject and object; the schema, quantizer and cross-row coder are ours. Deterministic.
 
-Row (direct mode): `[flags]ACT|AGT|OBJ|TO|X` with `-` for a slot that is genuinely absent and an
-empty slot meaning "same as the previous row's slot". Trailing absent slots are trimmed.
-Lines the parser cannot slot (no verb root, headings, lists, tables, code, mostly atoms) pass
-through verbatim, as does any sentence whose row would not be shorter.
+Row (direct mode): `[agent: ][flags]act obj [to recipient] [cause/condition/atoms]`; the agent is
+written only when it is a non-pronoun and differs from the last one written. Copulas are
+`subj=attr`. Consecutive rows with the same agent, flags and act merge (`fix a, b`). Soft-wrapped
+lines are joined first, list items are slotted behind their marker, filler ("Great,", "Let me",
+"I'll") is stripped, verbless fragments are reduced to content words. Headings, tables, tags,
+code and mostly-atom lines pass through verbatim, as does any sentence whose row would not be
+shorter.
 """
 
 from __future__ import annotations
@@ -24,13 +27,14 @@ if TYPE_CHECKING:
     from spacy.language import Language
     from spacy.tokens import Span, Token
 
-SLOT_VERSION = 1
+SLOT_VERSION = 2
 
 Mode = Literal["direct", "english"]
 
 LEGEND = (
-    "Rows: ACT|AGT|OBJ|TO|X. Flags before ACT: ~ negated, ! must/should, ^ may/can, "
-    "+ will, ? question. Empty slot = same as previous row; - = none. Other lines verbatim."
+    "Rows: [agent: ][flags]act obj [to recipient] [because/if cause]; agent holds until changed; "
+    "a=b is copula. Flags: ~ not, ! must/should, ^ may/can, + will, ? question. "
+    "Telegraphic; other lines verbatim."
 )
 
 _NEG_WORDS = frozenset({"not", "n't", "never", "no", "cannot", "neither", "nor"})
@@ -72,11 +76,37 @@ _DESCEND_XCOMP = {
     "get": "",
 }  # fmt: skip
 _X_DEPS = frozenset({"prep", "advcl", "xcomp", "ccomp", "npadvmod", "acl"})
-_X_CAP = 10
+_X_CAP = 8
+_X_SMALL = 0
+_QUANT = frozenset({"any", "all", "some", "each", "both", "none", "one"})
+_ATOM_LINE = 0.75
+_X_DROP = frozenset({"try", "attempt", "get", "be", "have", "do", "which", "that", "what", "who"})
+_EXPLETIVE = frozenset({"it", "this", "that", "there", "which", "who", "what"})
+_PREP_OBJ = frozenset({"at", "into", "in", "on", "through", "for", "with", "from", "about", "over"})
+_LEAD_RE = re.compile(
+    r"^(?:(?:great|perfect|excellent|good|nice|ok|okay|alright|right|sure|yes|yeah|thanks|"
+    r"thank you|awesome|wonderful|fine|now|so|well|first|next|then|also|finally|actually|"
+    r"hmm+|oh|ah|indeed|interesting|understood|got it|great news)\b[,!.:;-]*\s*"
+    r"|(?:let me|let us|let's|i'll|i will|i'm going to|i am going to|i can see that|"
+    r"i see that|i notice that|i can see|looks like|it looks like|it seems like|"
+    r"it seems that|it appears that|please)\s+"
+    r"(?:(?:first|now|also|just|then|try to|start by|begin by|go ahead and)\s+)*)",
+    re.I,
+)
+_FILLER_ONLY_RE = re.compile(r"^[\W_]*$")
 _OBJ_DEPS = frozenset({"dobj", "attr", "acomp", "oprd"})
 _PH_RE = re.compile(r"Zqatm(\d+)z")
 _LIST_RE = re.compile(r"^\s*(?:[-*+•]\s|\d+[.)]\s|>\s?)")
 _FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
+_RULE_RE = re.compile(r"^\s*(?:-{3,}|={3,}|\*{3,}|_{3,})")
+_CODE_START_RE = re.compile(
+    r"^\s*(?://|/\*|\*/|def |class |import |from \S+ import |return\b|int |const |void |var |"
+    r"function |@\w+|\w+\s*=[^=]|\w+\()"
+)
+_CODE_CHARS = re.compile(r"[{}()\[\];=<>$\\]")
+_CAPS_NT_RE = re.compile(r"\b[A-Z]{2,}N['\u2019]T\b")
+_TRACE_RE = re.compile(r"^(?:E\s{3,}|>\s{3,})|\S\s{4,}\S")
+_EMPH_RE = re.compile(r"(\*\*)(.+?)\1")
 
 
 @lru_cache(maxsize=1)
@@ -113,7 +143,9 @@ def _is_ph(tok: Token) -> bool:
     return _PH_RE.fullmatch(tok.text) is not None
 
 
-def _quantize(tokens: Iterable[Token]) -> list[str]:
+def _quantize(
+    tokens: Iterable[Token], keep_modal: bool = False, drop_lemmas: frozenset[str] = frozenset()
+) -> list[str]:
     kept: list[tuple[Token, str]] = []
     for t in tokens:
         low = t.lower_
@@ -125,8 +157,10 @@ def _quantize(tokens: Iterable[Token]) -> list[str]:
             continue
         elif low in _NEG_WORDS:
             kept.append((t, "not" if low == "n't" else low))
-        elif low in _HEDGES:
+        elif low in _HEDGES or (drop_lemmas and t.lemma_.lower() in drop_lemmas):
             continue
+        elif keep_modal and low in _MODALS:
+            kept.append((t, t.text))
         elif t.pos_ == "PRON":
             if low not in _DROP_PRON and t.dep_ != "poss":
                 kept.append((t, t.text))
@@ -181,6 +215,13 @@ def _phrase(head: Token, depth: int = 0) -> str:
     text = " ".join(words)
     if depth < 1:
         for c in head.rights:
+            if c.dep_ == "prep" and c.lower_ != "of" and head.pos_ in ("NOUN", "PROPN"):
+                pobj = [
+                    p for p in c.children if p.dep_ == "pobj" and any(_is_ph(t) for t in p.subtree)
+                ]
+                if pobj:
+                    text += f" {c.lower_} {_phrase(pobj[0], depth + 1)}"
+        for c in head.rights:
             if c.dep_ == "prep" and c.lower_ == "of":
                 pobj = [p for p in c.children if p.dep_ == "pobj"]
                 if pobj:
@@ -189,25 +230,24 @@ def _phrase(head: Token, depth: int = 0) -> str:
                         text += f" of {sub}"
         if head.dep_ != "conj":
             conj = [_phrase(cj, depth + 1) for cj in head.conjuncts if cj.pos_ != "VERB"]
-            conj = [c for c in conj if c]
+            conj = [c for c in conj if c and c not in _QUANT]
             if conj:
                 text = ", ".join([text, *conj]) if text else ", ".join(conj)
     return text
 
 
 def _x_text(tok: Token) -> str:
-    words = _quantize(tok.subtree)
+    words = _quantize(tok.subtree, drop_lemmas=_X_DROP)
     return " ".join(words[:_X_CAP])
 
 
-def _x_score(tok: Token) -> int:
+def _x_keep(tok: Token) -> bool:
     sub = list(tok.subtree)
-    score = 0
     if any(_is_ph(t) for t in sub):
-        score += 2
+        return True
     if any(t.lower_ in _CAUSE and t.dep_ in ("mark", "prep", "advmod") for t in sub):
-        score += 2
-    return score
+        return True
+    return _X_SMALL > 0 and len(_quantize(sub, drop_lemmas=_X_DROP)) <= _X_SMALL
 
 
 def _modal_of(verb: Token) -> str:
@@ -248,17 +288,24 @@ def _row(verbs: list[Token], q: bool, agt_default: str, modal_default: str) -> R
         pobj = next((p for p in agent_prep.children if p.dep_ == "pobj"), None)
         agt = _phrase(pobj) if pobj is not None else ""
     elif subj is not None:
-        agt = _phrase(subj)
+        agt = "" if subj.lower_ in _EXPLETIVE else _phrase(subj)
     else:
         agt = agt_default
 
     obj = ""
+    promoted: int | None = None
     if passive is not None:
         obj = _phrase(passive)
     else:
         o = next((c for c in v.children if c.dep_ in _OBJ_DEPS), None)
         if o is not None:
             obj = _phrase(o)
+        elif v.lemma_ != "be":
+            prep = next((c for c in v.children if c.dep_ == "prep" and c.lower_ in _PREP_OBJ), None)
+            pobj = next((p for p in prep.children if p.dep_ == "pobj"), None) if prep else None
+            if prep is not None and pobj is not None and not _x_keep(prep):
+                obj = _phrase(pobj)
+                promoted = prep.i
 
     to = ""
     dative = next((c for c in v.children if c.dep_ == "dative"), None)
@@ -273,24 +320,28 @@ def _row(verbs: list[Token], q: bool, agt_default: str, modal_default: str) -> R
                     break
 
     used = {c.i for c in v.children if c.dep_ == "prep" and c.lower_ == "to" and to}
-    best: Token | None = None
-    best_score = -1
+    if promoted is not None:
+        used.add(promoted)
+    xs: list[str] = []
     for x_verb in verbs:
         for c in x_verb.children:
             if c.dep_ not in _X_DEPS or c.i in used or (c.dep_ == "prep" and c.lower_ == "of"):
                 continue
-            if any(c.i == vv.i for vv in verbs):
+            if any(c.i == vv.i for vv in verbs) or not _x_keep(c):
                 continue
-            s = _x_score(c)
-            if s > best_score:
-                best, best_score = c, s
-    x = _x_text(best) if best is not None else ""
+            if t := _x_text(c):
+                xs.append(t)
+    x = " ".join(xs[:2])
 
     act = v.lemma_.lower()
     parts = [c.lower_ for c in v.children if c.dep_ == "prt" and c.lower_ in _PARTICLES]
     if parts:
         act += " " + parts[0]
     return Row(neg, q, modal, act, agt, obj, to, x)
+
+
+def _has_subj(v: Token) -> bool:
+    return any(c.dep_ in ("nsubj", "nsubjpass") for c in v.children)
 
 
 def _clause_rows(sent: Span) -> list[Row] | None:
@@ -312,52 +363,133 @@ def _clause_rows(sent: Span) -> list[Row] | None:
         chain.insert(0, kids[0])
     rows = [_row(chain, q, "", modal_default)]
     outer_subj = rows[0].agt
-    for cj in chain[0].conjuncts:
-        if cj.pos_ == "VERB" and cj.dep_ == "conj" and cj.i > chain[0].i:
-            rows.append(_row([cj], q, outer_subj, rows[0].modal if not _modal_of(cj) else ""))
+    done = {chain[0].i}
+    for base in chain:
+        for cj in base.conjuncts:
+            if (
+                cj.dep_ == "conj"
+                and cj.i > base.i
+                and cj.i not in done
+                and (cj.pos_ == "VERB" or (cj.pos_ == "AUX" and _has_subj(cj)))
+            ):
+                done.add(cj.i)
+                rows.append(_row([cj], q, outer_subj, rows[0].modal if not _modal_of(cj) else ""))
     return rows
 
 
-def _row_text_direct(r: Row) -> str:
-    return "|".join(r.fields())
+def _flat(r: Row) -> str:
+    return " ".join(filter(None, [r.act, r.agt, r.obj, r.to, r.x]))
 
 
-def _english(r: Row) -> str:
-    act = "is" if r.act == "be" and not r.modal else r.act
-    parts = [r.agt, r.modal, "not" if r.neg else "", act, r.obj, f"to {r.to}" if r.to else "", r.x]
-    return " ".join(p for p in parts if p)
+def _is_cop(r: Row) -> bool:
+    return r.act == "be" and bool(r.obj)
+
+
+def _enc_direct(r: Row, carry: str) -> tuple[str, str]:
+    if _is_cop(r):
+        core = f"{r.agt}={r.obj}" if r.agt else r.obj
+        return f"{r.flags()}{core}" + (f" {r.x}" if r.x else ""), carry
+    prefix = f"{r.agt}: " if r.agt and r.agt != carry else ""
+    act = "" if r.act == "be" else r.act
+    body = " ".join(filter(None, [r.flags() + act, r.obj, f"to {r.to}" if r.to else "", r.x]))
+    return prefix + body, r.agt or carry
+
+
+def _enc_english(r: Row) -> str:
+    if r.act == "be" and not r.modal:
+        verb = "is not" if r.neg else "is"
+    else:
+        verb = " ".join(filter(None, [r.modal, "not" if r.neg else "", r.act]))
+    parts = [r.agt, verb, r.obj, f"to {r.to}" if r.to else "", r.x]
+    return " ".join(p for p in parts if p) + ("?" if r.q else "")
+
+
+def _merge(rows: list[Row]) -> list[Row]:
+    out: list[Row] = []
+    for r in rows:
+        p = out[-1] if out else None
+        if (
+            p is not None
+            and not p.to
+            and not p.x
+            and not _is_cop(r)
+            and r.act
+            and (p.neg, p.q, p.modal, p.act, p.agt) == (r.neg, r.q, r.modal, r.act, r.agt)
+            and p.obj
+            and r.obj
+        ):
+            out[-1] = replace(p, obj=f"{p.obj}, {r.obj}", to=r.to, x=r.x)
+        else:
+            out.append(r)
+    return out
 
 
 @dataclass
 class _Unit:
     raw: str | None
     rows: list[Row]
-    atoms: list[str]
+    drop: bool = False
+
+
+class Stats:
+    def __init__(self) -> None:
+        self.rowed = 0
+        self.fallback = 0
+        self.dropped = 0
+        self.passthrough_tokens = 0
+
+    def reset(self) -> None:
+        self.rowed = self.fallback = self.dropped = self.passthrough_tokens = 0
+
+
+STATS = Stats()
+
+
+def _is_structural(line: str) -> bool:
+    s = line.strip()
+    return (
+        not s
+        or s.startswith(("#", "|", "<"))
+        or bool(_FENCE_RE.match(line))
+        or bool(_RULE_RE.match(line))
+    )
+
+
+def _codeish(masked: str) -> bool:
+    s = masked.strip()
+    if _TRACE_RE.search(masked.lstrip() if masked[:1] == " " else masked):
+        return True
+    if _CODE_START_RE.match(s) or s.endswith((";", "{", "}")):
+        return True
+    words = s.split()
+    return bool(words) and len(_CODE_CHARS.findall(s)) / len(words) > 0.3
+
+
+def _proseish(line: str) -> bool:
+    words = line.split()
+    if len(words) < 4:
+        return False
+    plain = sum(bool(re.fullmatch(r"[A-Za-z][A-Za-z',.;:!?()\-]*|\d+", w)) for w in words)
+    return plain / len(words) >= 0.8 and not line.rstrip().endswith(("{", "}", ";", ")", ","))
 
 
 def _is_passthrough_line(line: str, atoms: list[str]) -> bool:
     s = line.strip()
-    if not s:
+    if not s or s.startswith(("#", "|", "<")):
         return True
-    if s.startswith(("#", "|", "<")) or _LIST_RE.match(line) or line.startswith(("    ", "\t")):
+    if (line.startswith(("    ", "\t")) and not _LIST_RE.match(line)) and not _proseish(s):
         return True
-    return bool(atoms) and sum(len(a) for a in atoms) / len(s) > 0.5
+    covered = sum(len(a) for a in atoms if not any(a != b and a in b for b in atoms))
+    return bool(atoms) and covered / len(s) > _ATOM_LINE
 
 
-def _mask(line: str, atoms: list[str]) -> tuple[str, dict[str, str]]:
-    ph: dict[str, str] = {}
+def _mask(line: str, atoms: list[str]) -> str:
     if not atoms:
-        return line, ph
+        return line
     order = sorted(atoms, key=len, reverse=True)
     pat = re.compile("|".join(re.escape(a) for a in order))
     index = {a: i for i, a in enumerate(atoms)}
-
-    def sub(m: re.Match[str]) -> str:
-        key = f"Zqatm{index[m.group(0)]}z"
-        ph[key] = m.group(0)
-        return key
-
-    return pat.sub(sub, line), ph
+    return pat.sub(lambda m: f"Zqatm{index[m.group(0)]}z", line)
 
 
 def _restore(s: str, atoms: list[str]) -> str:
@@ -373,7 +505,19 @@ def _fields_restore(r: Row, atoms: list[str]) -> Row:
     )
 
 
-def _units_for_line(doc_line: str, atoms: list[str], doc: object) -> list[_Unit]:
+def _fragment_row(sent: Span) -> Row:
+    words = _quantize(sent, keep_modal=True)
+    return Row(False, sent.text.rstrip().endswith("?"), "", "", "", " ".join(words), "", "")
+
+
+def _sent_rows(sent: Span) -> list[Row]:
+    rows = _clause_rows(sent) if len(sent) >= 4 else None
+    if rows and any(r.act for r in rows):
+        return rows
+    return [_fragment_row(sent)]
+
+
+def _units_for_line(atoms: list[str], doc: object) -> list[_Unit]:
     from spacy.tokens import Doc
 
     assert isinstance(doc, Doc)
@@ -382,103 +526,188 @@ def _units_for_line(doc_line: str, atoms: list[str], doc: object) -> list[_Unit]
         orig = _restore(sent.text.strip(), atoms)
         if not orig:
             continue
-        rows = _clause_rows(sent) if len(sent) >= 5 else None
-        if not rows or not any(r.act for r in rows):
-            units.append(_Unit(orig, [], []))
-            continue
-        placed = {int(m) for r in rows for f in r.fields() for m in _PH_RE.findall(f)}
-        present = [int(m) for m in _PH_RE.findall(sent.text)]
-        left = [atoms[i] for i in dict.fromkeys(present) if i not in placed]
-        rows = [_fields_restore(r, atoms) for r in rows]
-        if left:
-            last = rows[-1]
-            rows[-1] = replace(last, x=" ".join(filter(None, [last.x, *left])))
-        has_neg_word = any(t.lower_ in _NEG_WORDS for t in sent)
-        if has_neg_word and not any(r.neg for r in rows):
-            blob = " ".join(_row_text_direct(r) for r in rows).split()
-            if not any(w in _NEG_WORDS or w == "not" for w in blob):
-                rows[0] = replace(rows[0], neg=True)
-        units.append(_Unit(orig, rows, []))
+        spans: list[Span] = [sent]
+        stripped = sent.text.strip()
+        lead = _LEAD_RE.match(stripped)
+        if lead and not _PH_RE.search(lead.group(0)):
+            rest = stripped[lead.end() :].strip()
+            if _FILLER_ONLY_RE.match(rest):
+                units.append(_Unit(orig, [], drop=True))
+                continue
+            rest = rest[0].upper() + rest[1:]
+            spans = list(_nlp()(rest).sents)
+        for span in spans:
+            rows = _sent_rows(span)
+            placed = {
+                int(m)
+                for r in rows
+                for f in (r.act, r.agt, r.obj, r.to, r.x)
+                for m in _PH_RE.findall(f)
+            }
+            present = [int(m) for m in _PH_RE.findall(span.text)]
+            left = [atoms[i] for i in dict.fromkeys(present) if i not in placed]
+            rows = [_fields_restore(r, atoms) for r in rows]
+            if left:
+                last = rows[-1]
+                rows[-1] = replace(last, x=" ".join(filter(None, [last.x, *left])))
+            if not rows[0].act and not _flat(rows[0]).strip():
+                units.append(_Unit(orig, [], drop=True))
+                continue
+            has_neg = any(t.lower_ in _NEG_WORDS or t.lower_.endswith("n't") for t in span)
+            if has_neg and not any(r.neg for r in rows):
+                blob = set(" ".join(_flat(r) for r in rows).split())
+                if not (blob & _NEG_WORDS) and rows[0].act:
+                    rows[0] = replace(rows[0], neg=True)
+            units.append(_Unit(orig, rows))
     return units
 
 
-def _encode_direct(row: Row, prev: list[str] | None) -> tuple[str, list[str]]:
-    cur = [f if f else "-" for f in row.fields()]
-    out = [
-        "" if (prev is not None and c == p and c != "-") else c
-        for c, p in zip(cur, prev or [None] * 5, strict=True)
-    ]
-    while out and out[-1] == "-":
-        out.pop()
-    return "|".join(out), cur
+def _is_wrapped(prev: str, nxt: str) -> bool:
+    n = nxt.lstrip()
+    return (
+        bool(prev.strip())
+        and not prev.rstrip().endswith((".", "!", "?", ":", ";", "`", ")", "]", ">", "-"))
+        and bool(n)
+        and n[0].islower()
+        and not _is_structural(nxt)
+        and not _LIST_RE.match(nxt)
+        and not (nxt.startswith(("    ", "\t")) and not _proseish(n))
+    )
 
 
-def _slot_line_units(text: str) -> list[tuple[str, list[_Unit] | None]]:
-    """(raw_line, units) per line; units None means the line passes through."""
+@dataclass
+class _Item:
+    raw: str
+    marker: str = ""
+    text: str = ""
+    units: list[_Unit] | None = None
+
+
+def _items(text: str) -> list[_Item]:
     lines = text.split("\n")
     all_atoms = extract_atoms(text)
     in_fence = False
-    todo: list[tuple[int, str, list[str]]] = []
-    result: list[tuple[str, list[_Unit] | None]] = [(ln, None) for ln in lines]
-    for i, ln in enumerate(lines):
+    items: list[_Item] = []
+    for ln in lines:
         if _FENCE_RE.match(ln):
             in_fence = not in_fence
+            items.append(_Item(ln))
             continue
-        if in_fence:
+        if in_fence or _is_structural(ln):
+            items.append(_Item(ln))
             continue
+        prev = items[-1] if items else None
+        if prev is not None and prev.text and _is_wrapped(prev.raw, ln):
+            prev.raw += "\n" + ln
+            prev.text += " " + ln.strip()
+            continue
+        m = _LIST_RE.match(ln)
+        marker = ln[: m.end()].strip() if m else ""
+        body = ln[m.end() :] if m else ln
         atoms = [a for a in all_atoms if a in ln]
-        if _is_passthrough_line(ln, atoms):
+        if (
+            _is_passthrough_line(ln, atoms)
+            or (marker.startswith(">"))
+            or (not m and ln.startswith(("    ", "\t")) and not _proseish(ln.strip()))
+        ):
+            items.append(_Item(ln))
             continue
-        masked, _ = _mask(ln, atoms)
-        todo.append((i, masked, atoms))
+        body = _CAPS_NT_RE.sub(lambda m: m.group(0).lower(), _EMPH_RE.sub(r"\2", body.strip()))
+        if _codeish(_mask(body, [a for a in atoms if a in body])):
+            items.append(_Item(ln))
+            continue
+        items.append(_Item(ln, marker, body))
+    todo = [it for it in items if it.text]
     if not todo:
-        return result
-    docs = _nlp().pipe([m for _, m, _ in todo], batch_size=32)
-    for (i, _, atoms), doc in zip(todo, docs, strict=True):
-        result[i] = (lines[i], _units_for_line(lines[i], atoms, doc))
-    return result
+        return items
+    prepared: list[tuple[_Item, list[str]]] = []
+    for it in todo:
+        atoms = [a for a in all_atoms if a in it.text]
+        prepared.append((it, atoms))
+    docs = _nlp().pipe([_mask(it.text, a) for it, a in prepared], batch_size=32)
+    for (it, atoms), doc in zip(prepared, docs, strict=True):
+        it.units = _units_for_line(atoms, doc)
+    return items
+
+
+def _slot_line_units(text: str) -> list[tuple[str, list[_Unit] | None]]:
+    return [(it.raw, it.units) for it in _items(text)]
+
+
+def _standalone(rows: list[Row], mode: Mode) -> str:
+    rows = _merge(rows)
+    if mode == "direct":
+        carry = ""
+        out = []
+        for r in rows:
+            enc, carry = _enc_direct(r, carry)
+            out.append(enc)
+        return "\n".join(out)
+    return _join_english([_enc_english(r) for r in rows])
+
+
+def _encode_run(run: list[Row], mode: Mode, carry: str) -> tuple[list[str], str]:
+    rs = _merge(run)
+    if mode == "english":
+        return ([_join_english([_enc_english(r) for r in rs])] if rs else []), carry
+    out: list[str] = []
+    for r in rs:
+        enc, carry = _enc_direct(r, carry)
+        out.append(enc)
+    return out, carry
 
 
 def slot_text(text: str, mode: Mode) -> str:
     seen: set[tuple[bool, bool, str, str, str, str, str, str]] = set()
     out: list[str] = []
-    prev: list[str] | None = None
-    for raw, units in _slot_line_units(text):
-        if units is None:
-            out.append(raw)
-            prev = None
+    carry = ""
+    for it in _items(text):
+        if it.units is None:
+            out.append(it.raw)
+            STATS.passthrough_tokens += count_tokens(it.raw)
+            carry = ""
             continue
-        pieces: list[str] = []
-        for u in units:
-            if not u.rows:
-                pieces.append(u.raw or "")
-                prev = None
+        marker = f"{it.marker} " if it.marker else ""
+        pieces: list[tuple[str, list[Row] | None]] = []
+        for u in it.units:
+            if u.drop:
+                STATS.dropped += 1
                 continue
-            kept: list[str] = []
-            cand_prev = prev
+            rows = []
             for r in u.rows:
                 key = (r.neg, r.q, r.modal, r.act, r.agt, r.obj, r.to, r.x)
-                if key in seen:
-                    continue
-                if mode == "direct":
-                    enc, cand_prev = _encode_direct(r, cand_prev)
-                else:
-                    enc = _english(r) + ("?" if r.q else "")
-                kept.append(enc)
-                seen.add(key)
-            if not kept:
+                if key not in seen:
+                    rows.append(r)
+                    seen.add(key)
+            if not rows:
+                STATS.dropped += 1
                 continue
-            candidate = "\n".join(kept) if mode == "direct" else _join_english(kept)
-            if count_tokens(candidate) >= count_tokens(u.raw or ""):
-                pieces.append(u.raw or "")
-                prev = None
+            raw = u.raw or ""
+            if count_tokens(_standalone(rows, mode)) >= count_tokens(raw):
+                STATS.fallback += 1
+                pieces.append((raw, None))
                 continue
-            pieces.append(candidate)
-            prev = cand_prev
+            STATS.rowed += 1
+            pieces.append(("", rows))
+        enc_parts: list[str] = []
+        run: list[Row] = []
+        for raw, rows in pieces:
+            if rows is None:
+                parts, carry = _encode_run(run, mode, carry)
+                enc_parts += [*parts, raw]
+                run = []
+                carry = ""
+            else:
+                run.extend(rows)
+        parts, carry = _encode_run(run, mode, carry)
+        enc_parts += parts
+        if not enc_parts:
+            continue
         if mode == "direct":
-            out.extend(p for p in pieces if p)
+            enc_parts[0] = marker + enc_parts[0]
+            out.extend(enc_parts)
         else:
-            out.append(" ".join(p for p in pieces if p))
+            out.append(marker + " ".join(enc_parts))
     return "\n".join(out)
 
 
