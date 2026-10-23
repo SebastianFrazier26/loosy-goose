@@ -63,6 +63,7 @@ Experiment C (code channel):
 
 Supporting:
 
+- `site/` — demo website (Vite + TypeScript); `build_bundle.py` runs the shipped compressor on pinned public SWE-Gym rows into `public/bundle.json` (gitignored, built by `.github/workflows/pages.yml`); `npm run build` typechecks and bundles; public data only, never `data/local/`
 - `integrations/` — `/loosy` command (Claude Code), `$loosy` skill (Codex), registration README
 - `tests/fixtures/sessions/` — synthetic Claude Code and Codex sessions recorded by `tests/session_recorder.py`
 - `tests/` — pytest

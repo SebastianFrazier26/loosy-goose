@@ -67,3 +67,45 @@ def test_release_checkout_does_not_persist_the_write_token() -> None:
     assert checkouts and all(
         s.get("with", {}).get("persist-credentials") is False for s in checkouts
     )
+
+
+def _pages() -> dict[str, Any]:
+    yaml = pytest.importorskip("yaml")
+    loaded: dict[str, Any] = yaml.safe_load((WORKFLOWS / "pages.yml").read_text("utf-8"))
+    return loaded
+
+
+def test_pages_actions_are_pinned_by_commit_sha() -> None:
+    for ref in _USES.findall((WORKFLOWS / "pages.yml").read_text(encoding="utf-8")):
+        if ref.startswith("./"):
+            continue
+        assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", ref), ref
+
+
+def test_pages_deploys_main_after_the_tests_with_scoped_permissions() -> None:
+    wf = _pages()
+    # PyYAML reads the bare `on:` key as boolean True.
+    on = wf.get("on", wf.get(True))
+    assert on["push"]["branches"] == ["main"] and "workflow_dispatch" in on
+    assert wf["permissions"] == {"contents": "read"}
+    jobs = wf["jobs"]
+    assert jobs["test"]["uses"] == "./.github/workflows/ci.yml"
+    assert jobs["build"]["needs"] == "test" and jobs["deploy"]["needs"] == "build"
+    assert jobs["deploy"]["permissions"] == {"pages": "write", "id-token": "write"}
+    steps = jobs["build"]["steps"]
+    runs = [s.get("run", "") for s in steps]
+    assert any("site/build_bundle.py" in r for r in runs)
+    # Enabling Pages is the owner's call; configure-pages must not flip the repo setting.
+    for s in steps:
+        if str(s.get("uses", "")).startswith("actions/configure-pages@"):
+            assert "enablement" not in s.get("with", {})
+
+
+def test_ci_typechecks_and_builds_the_site() -> None:
+    text = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+    assert "working-directory: site" in text and "npm run build" in text
+
+
+def test_demo_page_can_be_framed() -> None:
+    html = (WORKFLOWS.parents[1] / "site" / "index.html").read_text(encoding="utf-8").lower()
+    assert "frame-ancestors" not in html and "x-frame-options" not in html

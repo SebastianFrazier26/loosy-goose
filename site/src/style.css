@@ -1,0 +1,624 @@
+:root {
+  --bg: #fbfaf7;
+  --surface: #ffffff;
+  --ink: #1d1c1a;
+  --muted: #6b675f;
+  --line: #e4e0d8;
+  --accent: #2f6f5e;
+  --accent-soft: #d9ebe5;
+  --drop: #b9b3a8;
+  --sup: #b5652b;
+  --sup-soft: #f6e6d8;
+  --win: #2f6f5e;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141513;
+    --surface: #1c1d1b;
+    --ink: #ecebe6;
+    --muted: #a29e95;
+    --line: #34352f;
+    --accent: #7cc4ad;
+    --accent-soft: #23362f;
+    --drop: #5d5a54;
+    --sup: #e39a62;
+    --sup-soft: #3a2a1d;
+    --win: #7cc4ad;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #141513;
+  --surface: #1c1d1b;
+  --ink: #ecebe6;
+  --muted: #a29e95;
+  --line: #34352f;
+  --accent: #7cc4ad;
+  --accent-soft: #23362f;
+  --drop: #5d5a54;
+  --sup: #e39a62;
+  --sup-soft: #3a2a1d;
+  --win: #7cc4ad;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 var(--sans);
+}
+
+main {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 20px 16px 32px;
+}
+
+a {
+  color: var(--accent);
+}
+
+h1 {
+  font-size: clamp(1.4rem, 4vw, 2rem);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: 1.15rem;
+  margin: 2rem 0 0.75rem;
+}
+
+h3 {
+  font-size: 0.95rem;
+  margin: 0 0 0.3rem;
+}
+
+.tagline {
+  color: var(--muted);
+  margin: 0.3rem 0 1rem;
+  max-width: 60ch;
+}
+
+.demo {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 320px;
+}
+
+.picker button {
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.picker button[aria-selected="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.level {
+  flex: 0 1 260px;
+  min-width: 200px;
+}
+
+.level label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.level input {
+  width: 100%;
+  accent-color: var(--accent);
+  margin: 4px 0 0;
+}
+
+.ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.meter {
+  margin: 12px 0 8px;
+}
+
+.bar {
+  display: flex;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  transition: width 0.25s ease;
+}
+
+.fill.kept {
+  background: var(--accent);
+}
+
+.fill.sup {
+  background: var(--sup);
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  margin: 8px 0 4px;
+}
+
+.stats div {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.stats dt {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.stats dd {
+  margin: 0;
+  font: 600 0.95rem var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.legend {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.sw {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: -1px;
+}
+
+.sw.kept {
+  background: var(--accent);
+}
+
+.sw.drop {
+  background: var(--drop);
+}
+
+.sw.sup {
+  background: var(--sup);
+}
+
+.toggle {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 0.8rem;
+  margin-top: 6px;
+  cursor: pointer;
+}
+
+.transcript {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+
+.seg {
+  padding: 6px 4px 6px 10px;
+  border-left: 3px solid var(--accent);
+  margin: 4px 0;
+  transition:
+    opacity 0.25s ease,
+    border-color 0.25s ease;
+}
+
+.seg.turn-start {
+  margin-top: 12px;
+}
+
+.seg.drop {
+  opacity: 0.38;
+  border-left-color: var(--drop);
+}
+
+.seg.drop .text {
+  text-decoration: line-through;
+  text-decoration-color: var(--drop);
+}
+
+.seg.sup {
+  opacity: 0.55;
+  border-left-color: var(--sup);
+  background: var(--sup-soft);
+}
+
+.seg.sup .text {
+  text-decoration: line-through;
+  text-decoration-color: var(--sup);
+}
+
+.hide-dropped .seg.drop,
+.hide-dropped .seg.sup {
+  display: none;
+}
+
+.role {
+  font: 600 0.7rem var(--sans);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.seg-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.kind {
+  font-family: var(--mono);
+}
+
+.badge {
+  color: var(--sup);
+  font-weight: 600;
+}
+
+.text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+}
+
+.text.mono {
+  font: 0.76rem/1.45 var(--mono);
+}
+
+.more {
+  font: inherit;
+  font-size: 0.72rem;
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.fold {
+  margin: 8px 0 4px;
+}
+
+.fold-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  width: 100%;
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-align: left;
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.fold-head .role {
+  margin: 0;
+}
+
+.fold-cue {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.ticks-strip {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.tick {
+  width: 6px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.tick.drop {
+  background: var(--drop);
+}
+
+.tick.sup {
+  background: var(--sup);
+}
+
+.fold-body {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.attribution {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin: 10px 0 0;
+}
+
+.steps {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.steps li {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.steps p {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.pill {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 1px 7px;
+  vertical-align: 1px;
+}
+
+.results p {
+  font-size: 0.88rem;
+  max-width: 70ch;
+}
+
+.scroll {
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 100%;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 5px 10px 5px 0;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+thead th {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+td.muted {
+  color: var(--muted);
+}
+
+td.win {
+  color: var(--win);
+  font-weight: 600;
+}
+
+.src {
+  font-size: 0.75rem !important;
+  color: var(--muted);
+}
+
+.caveat {
+  margin-top: 1.25rem;
+  padding: 12px;
+  border: 1px solid var(--sup);
+  border-radius: 10px;
+  background: var(--sup-soft);
+}
+
+.caveat p {
+  margin: 0.4rem 0;
+}
+
+.error {
+  padding: 12px;
+  color: var(--sup);
+}
+
+footer {
+  margin-top: 2rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+footer code {
+  font-family: var(--mono);
+}
+
+@media (max-width: 480px) {
+  html,
+  body {
+    font-size: 14px;
+  }
+
+  main {
+    padding: 12px 12px 24px;
+  }
+
+  .demo {
+    padding: 10px;
+  }
+
+  .level {
+    flex-basis: 100%;
+  }
+}
+
+/* Short iframes (the portfolio embeds this around 420x320): drop the tagline and the filter toggle,
+   keep the picker on one scrollable row, and show each segment as one line (tap to open) so kept
+   and cut rows both land in the first screen. */
+@media (max-height: 520px) {
+  main {
+    padding-top: 8px;
+  }
+
+  h1 {
+    font-size: 1.15rem;
+  }
+
+  .tagline {
+    display: none;
+  }
+
+  .hero {
+    margin-bottom: 6px;
+  }
+
+  .demo {
+    padding: 8px;
+  }
+
+  .controls {
+    gap: 6px 12px;
+  }
+
+  .picker {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .picker button {
+    white-space: nowrap;
+    padding: 3px 9px;
+  }
+
+  .level label {
+    display: none;
+  }
+
+  .meter {
+    margin: 6px 0 4px;
+  }
+
+  .stats {
+    margin: 4px 0 2px;
+  }
+
+  .toggle {
+    margin-top: 2px;
+  }
+
+  .transcript {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .seg {
+    padding: 2px 4px 2px 8px;
+    margin: 2px 0;
+  }
+
+  .seg.turn-start {
+    margin-top: 6px;
+  }
+
+  .seg:not(.open) .seg-meta,
+  .seg:not(.open) .more {
+    display: none;
+  }
+
+  .seg:not(.open) .text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+
+  .stats {
+    gap: 2px 14px;
+  }
+
+  .toggle {
+    display: none;
+  }
+}
+
+/* At iframe heights the host page supplies the title. */
+@media (max-height: 360px) {
+  .hero {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fill,
+  .seg {
+    transition: none;
+  }
+}
