@@ -41,3 +41,10 @@ The idea is retired if all three of the following hold:
 - **Local:** loosy does not beat `lsum` at any level.
 
 Otherwise, report the niche found.
+
+## Deviations (agent's calls, 2026-10-23)
+
+- `lsum` uses the same user turn as the Sonnet summary, plus a system message and the assistant prefill
+  "Summary of the session so far:". Without them Qwen3-1.7B continued the transcript with tool calls instead of
+  summarising. Its outputs often come in far below target, and a looping output is cut at a sentence boundary.
+- `lsum` runs on mlx-lm 0.32.2 (arm64 macOS only, in the `slot` extra).
