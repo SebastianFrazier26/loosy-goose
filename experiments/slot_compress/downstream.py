@@ -22,6 +22,14 @@ torch), summary (Sonnet at loosy's rendered size), plus full once.
   nohup caffeinate -i uv run python experiments/slot_compress/downstream.py \\
       >> experiments/output/slot_compress/run.log 2>&1 &
 
+Falsification arms (set D, 2026-10-23; see the falsify-extractive spec):
+hyb70 / hyb50 (a Sonnet summary at 0.7 / 0.5 of the level budget, the rest filled with the shipped
+loosy selection) and lsum (the summary task by a local Qwen3-1.7B, precomputed):
+
+  uv run python experiments/slot_compress/downstream.py --set D --precompute-lsum [--limit N]
+  uv run python experiments/slot_compress/downstream.py --set D --pending
+  uv run python experiments/slot_compress/downstream.py --set D --conditions hyb70,hyb50,lsum
+
 Resumable: calls are checkpointed in output/slot_compress/calls.jsonl; reruns skip finished keys.
 A spend/usage-limit error or --max-calls stops the driver, which then writes the report from
 whatever exists.
@@ -51,6 +59,7 @@ sys.path.insert(0, str(ROOT / "experiments" / "spike_thin"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import lines  # noqa: E402
+import lsum  # noqa: E402
 
 from experiments import exp_i_downstream as exi  # noqa: E402
 from loosy_goose.novelty_select import novelty_select  # noqa: E402
@@ -74,7 +83,18 @@ C_N = 10
 D_SEED = exi.SEED + 3
 D_N = 20
 FAMILIES = ("loosy", "line", "slotd", "slote", "slme", "summary")
-D_FAMILIES = ("loosy", "line", "gloosy", "gline", "summary")
+HYB_VERSION = 1
+HYB_FRAC = {"hyb70": 0.7, "hyb50": 0.5}
+HYB_FAMILIES = tuple(HYB_FRAC)
+LSUM_FAMILIES = ("lsum",)
+NEW_FAMILIES = HYB_FAMILIES + LSUM_FAMILIES
+D_FAMILIES = ("loosy", "line", "gloosy", "gline", "summary") + NEW_FAMILIES
+LSUM_DIR = OUT / "d" / "lsum_cache"
+HYB_HEADER = (
+    "[Earlier part of the session: a summary of it, followed by passages kept verbatim from it]"
+)
+HYB_SUMMARY_LABEL = "[Summary of the earlier part]"
+HYB_VERBATIM_LABEL = "[Passages kept verbatim from the earlier part]"
 GENTLE_FAMILIES = ("gloosy", "gline")
 ALL_FAMILIES = tuple(dict.fromkeys(FAMILIES + D_FAMILIES))
 SLOT_MODE = {"slotd": "direct", "slote": "english", "gloosy": "english", "gline": "english"}
@@ -130,7 +150,7 @@ SETS = {
         OUT / "d",
         OUT / "d" / "report.md",
         OUT / "d_selection.json",
-        750,
+        520,
     ),
 }
 
@@ -155,6 +175,10 @@ class Plan:
     gentle_version: Any = None
 
     def cond(self, family: str, level: str) -> str:
+        if family in HYB_FAMILIES:
+            return f"{family}.v{HYB_VERSION}-{level}"
+        if family in LSUM_FAMILIES:
+            return f"{family}.v{lsum.LSUM_VERSION}-{level}"
         if family in GENTLE_FAMILIES:
             return f"{family}.v{self.gentle_version}-{level}"
         if family in SLOT_MODE:
@@ -281,6 +305,10 @@ class Item:
     seg_tokens: dict[str, int]
     budget: dict[str, int]
     pools: dict[str, list[Segment]]
+    base: list[Segment]
+    target: dict[str, int]
+    hyb_placeholder: set[str]
+    lsum_missing: list[str]
 
 
 def build_item(
@@ -290,8 +318,8 @@ def build_item(
     comp = Transcript(f"{cand.label}#compressible", list(cand.transcript.turns[: cut.tail_from]))
     original = segment(comp)
     total = sum(count_tokens(s.text) for s in original)
-    it = Item(cand.label, prep, original, {}, {}, {}, {}, {})
     base = apply_supersession(original)
+    it = Item(cand.label, prep, original, {}, {}, {}, {}, {}, base, {}, set(), [])
     for fam in plan.families:
         if fam in PROSE_FAMILIES:
             it.pools[fam] = transform_pool(base, fam, slot, slm)
@@ -307,6 +335,21 @@ def build_item(
                 continue
             cond = plan.cond(fam, level)
             it.budget[cond] = budget
+            if fam in HYB_FAMILIES:
+                it.target[cond] = round(HYB_FRAC[fam] * budget)
+                continue
+            if fam in LSUM_FAMILIES:
+                it.budget[cond] = count_tokens(prep.earlier[f"loosy-{level}"])
+                it.target[cond] = it.budget[cond]
+                text = lsum.cached_text(
+                    LSUM_DIR, cand.label, level, prep.full_earlier, it.target[cond]
+                )
+                if text is None:
+                    it.lsum_missing.append(cond)
+                else:
+                    it.ctx[cond] = exi.assemble("summary", text, prep.tail)
+                    it.earlier_tokens[cond] = count_tokens(text)
+                continue
             if fam == "loosy":
                 it.ctx[cond] = exi.assemble("loosy", prep.earlier[f"loosy-{level}"], prep.tail)
                 it.earlier_tokens[cond] = count_tokens(prep.earlier[f"loosy-{level}"])
@@ -324,6 +367,43 @@ def build_item(
     return it
 
 
+def clip_tokens(text: str, n: int) -> str:
+    return exi.truncate_tokens(text, max(n, 0) / exi.SUMMARY_OVERRUN)[0] if n > 0 else ""
+
+
+def finish_hyb(it: Item, plan: Plan, store: exi.Store, placeholder: bool) -> None:
+    """Builds the hybrid contexts once each summary exists: header, summary block, then the shipped
+    loosy selection at (budget - actual summary tokens), in transcript order, then the tail.
+    `placeholder` substitutes a target-length slice of the transcript for a missing summary so a
+    dry run can check the token arithmetic; such contexts are not for answering."""
+    for fam in HYB_FAMILIES:
+        for lv in plan.levels:
+            if fam not in plan.families:
+                continue
+            cond = plan.cond(fam, lv)
+            text = summary_text(store, it, cond)
+            it.hyb_placeholder.discard(cond)
+            if text is None:
+                if not placeholder:
+                    it.ctx.pop(cond, None)
+                    continue
+                text = exi.truncate_tokens(it.prep.full_earlier, it.target[cond])[0]
+                it.hyb_placeholder.add(cond)
+            budget = it.budget[cond]
+            summary = text
+            while count_tokens(summary) > budget:
+                summary = clip_tokens(summary, budget - 1)
+            s_tok = count_tokens(summary)
+            kept = loosy_select(it.base, budget - s_tok) if budget - s_tok > 0 else []
+            earlier = (
+                f"{HYB_SUMMARY_LABEL}\n{summary}\n\n{HYB_VERBATIM_LABEL}\n"
+                f"{exi.render_segments(kept)}"
+            )
+            it.ctx[cond] = f"{HYB_HEADER}\n\n{earlier}\n\n{exi.TAIL_HEADER}\n\n{it.prep.tail}"
+            it.earlier_tokens[cond] = count_tokens(earlier)
+            it.seg_tokens[cond] = s_tok + sum(count_tokens(x.text) for x in kept)
+
+
 # --------------------------------------------------------------------------- jobs
 
 
@@ -334,14 +414,14 @@ def probes_for(store: exi.Store, label: str, gen: exi.Model) -> list[dict[str, s
 
 def summary_text(store: exi.Store, it: Item, cond: str) -> str | None:
     text = exi._text(store, it.label, cond, SONNET.name, "summary")
-    budget = it.budget[cond]
+    budget = it.target.get(cond, it.budget[cond])
     if text is not None and exi.summary_ok(text, budget):
         return exi.truncate_tokens(text.strip(), budget)[0]
     return None
 
 
 def summary_job(it: Item, cond: str) -> exi.Job:
-    budget = it.budget[cond]
+    budget = it.target.get(cond, it.budget[cond])
     return exi.Job(
         it.label,
         cond,
@@ -384,7 +464,20 @@ def grade_job(
     )
 
 
+PENDING: dict[str, int] | None = None
+
+
+def family_of(cond: str) -> str:
+    return "full" if cond in ("-", "full") else cond.split(".")[0].split("-")[0]
+
+
 def run_jobs(rt: exi.Runtime, name: str, jobs: list[exi.Job]) -> None:
+    if PENDING is not None:
+        for j in jobs:
+            if not j.done_by(rt.store.get(j.key)):
+                k = f"{j.task}:{family_of(j.condition)}"
+                PENDING[k] = PENDING.get(k, 0) + 1
+        return
     todo = sum(1 for j in jobs if not j.done_by(rt.store.get(j.key)))
     log(f"{name}: {len(jobs)} jobs, {todo} to run")
     if todo and not STOP.is_set():
@@ -416,8 +509,11 @@ def run_all(rt: exi.Runtime, items: list[Item], plan: Plan, gen: exi.Model) -> N
     )
     probes = {it.label: probes_for(store, it.label, gen) for it in items}
     live = [it for it in items if probes[it.label]]
-    if "summary" in plan.families:
-        sj = [summary_job(it, plan.cond("summary", lv)) for it in live for lv in plan.levels]
+    sum_fams = [f for f in plan.families if f == "summary" or f in HYB_FAMILIES]
+    if sum_fams:
+        sj = [
+            summary_job(it, plan.cond(f, lv)) for f in sum_fams for it in live for lv in plan.levels
+        ]
         run_jobs(rt, "summaries", sj)
     run_jobs(
         rt,
@@ -431,6 +527,8 @@ def run_all(rt: exi.Runtime, items: list[Item], plan: Plan, gen: exi.Model) -> N
     )
     valid = [it for it in live if valid_indices(store, it.label, len(probes[it.label] or []))]
     log(f"{len(valid)}/{len(items)} transcripts have a valid probe")
+    for it in valid:
+        finish_hyb(it, plan, store, placeholder=False)
     conds: list[tuple[Item, str, str]] = []
     for it in valid:
         for lv in plan.levels:
@@ -441,8 +539,10 @@ def run_all(rt: exi.Runtime, items: list[Item], plan: Plan, gen: exi.Model) -> N
                     if s is None:
                         continue
                     ctx = exi.assemble("summary", s, it.prep.tail)
-                else:
+                elif cond in it.ctx:
                     ctx = it.ctx[cond]
+                else:
+                    continue
                 conds.append((it, cond, ctx))
     run_jobs(
         rt,
@@ -456,12 +556,37 @@ def run_all(rt: exi.Runtime, items: list[Item], plan: Plan, gen: exi.Model) -> N
     )
 
 
+def precompute_lsum(items: list[Item], plan: Plan) -> None:
+    jobs = [
+        (it.label, lv, it.prep.full_earlier, it.target[plan.cond("lsum", lv)])
+        for it in items
+        for lv in plan.levels
+    ]
+    todo = [j for j in jobs if lsum.cached_text(LSUM_DIR, j[0], j[1], j[2], j[3]) is None]
+    log(f"lsum: {len(jobs)} generations, {len(todo)} to run ({lsum.MODEL_ID}, mlx-lm, greedy)")
+    stats = lsum.precompute(jobs, LSUM_DIR, exi.summary_prompt, log)
+    if stats.calls:
+        log(
+            f"lsum throughput: prefill {stats.prompt_tps:.0f} tok/s ({stats.prompt_tokens} tok), "
+            f"decode {stats.gen_tps:.1f} tok/s ({stats.gen_tokens} tok), {stats.calls} model calls"
+        )
+        all_prompt = sum(count_tokens(j[2]) for j in jobs)
+        all_target = sum(j[3] for j in jobs)
+        ratio = stats.gen_tokens / max(sum(j[3] for j in todo), 1)
+        est = all_prompt / max(stats.prompt_tps, 1) + ratio * all_target / max(stats.gen_tps, 1)
+        log(
+            f"estimated total for all {len(jobs)} generations: ~{est / 60:.0f} min "
+            f"({all_prompt} prompt tok, ~{ratio * all_target:.0f} generated tok at the "
+            f"measured {ratio:.2f} of target)"
+        )
+
+
 # --------------------------------------------------------------------------- planning
 
 
 def call_plan(n: int, plan: Plan) -> dict[str, int]:
     fams = [f for f in plan.families if f != "summary"]
-    summ = n * len(plan.levels) if "summary" in plan.families else 0
+    summ = n * len(plan.levels) * sum(f == "summary" or f in HYB_FAMILIES for f in plan.families)
     compressed = n * len(plan.levels) * len(plan.families)
     return {
         "probe_gen": n,
@@ -486,6 +611,14 @@ def print_plan(
         if not k.startswith("_"):
             log(f"  {k:20s} {v}")
     probe_gen = cp["probe_gen"]
+    new = [f for f in plan.families if f in NEW_FAMILIES]
+    if new:
+        n, lv = len(labels), len(plan.levels)
+        gens = n * lv * sum(f in HYB_FAMILIES for f in new)
+        log(
+            f"  new arms {new}: {gens} hybrid summary gens + {2 * n * lv * len(new)} "
+            f"answer/grade = {gens + 2 * n * lv * len(new)} Claude calls (upper bound)"
+        )
     log(
         f"  {'TOTAL (upper bound)':20s} {total}   (cap --max-calls {max_calls}; "
         f"{total - probe_gen} Claude + {probe_gen} probe-gen)"
@@ -510,6 +643,22 @@ def dry_run(items: list[Item], plan: Plan, sample_dir: Path) -> None:
             if fam == "summary":
                 b = np.mean([it.budget[cond] for it in items])
                 log(f"{cond:22s} {'(Sonnet)':>9s} {'':9s} {b:9.0f}  n/a")
+                continue
+            have = [it for it in items if cond in it.earlier_tokens]
+            if fam in LSUM_FAMILIES:
+                b = np.mean([it.budget[cond] for it in items])
+                e = np.mean([it.earlier_tokens[cond] for it in have]) if have else float("nan")
+                log(f"{cond:22s} {e:9.0f} {'':9s} {b:9.0f}  cached {len(have)}/{len(items)}")
+                continue
+            if fam in HYB_FAMILIES:
+                ph = sum(cond in it.hyb_placeholder for it in items)
+                note = f" ({ph} with placeholder summary at target length)" if ph else ""
+                items_h = have
+                e = np.mean([it.earlier_tokens[cond] for it in items_h])
+                s = np.mean([it.seg_tokens[cond] for it in items_h])
+                b = np.mean([it.budget[cond] for it in items_h])
+                over = sum(it.seg_tokens[cond] > it.budget[cond] for it in items_h)
+                log(f"{cond:22s} {e:9.0f} {s:9.0f} {b:9.0f}  {over}{note}")
                 continue
             e = np.mean([it.earlier_tokens[cond] for it in items])
             s = np.mean([it.seg_tokens[cond] for it in items])
@@ -583,6 +732,12 @@ D_PAIRS = (
     ("summary", "line"),
     ("summary", "gloosy"),
     ("summary", "gline"),
+    ("hyb70", "summary"),
+    ("hyb50", "summary"),
+    ("hyb70", "loosy"),
+    ("hyb50", "loosy"),
+    ("loosy", "lsum"),
+    ("lsum", "summary"),
 )
 
 
@@ -687,10 +842,19 @@ def main() -> None:
     ap.add_argument("--plan", action="store_true", help="print the call plan and exit")
     ap.add_argument("--dry-run", action="store_true", help="build contexts, no model calls")
     ap.add_argument("--set", dest="set_name", choices=sorted(SETS), default="C")
-    ap.add_argument("--max-calls", type=int, default=None, help="default 450 (C) / 750 (D)")
+    ap.add_argument("--max-calls", type=int, default=None, help="default 450 (C) / 520 (D)")
     ap.add_argument("--conditions", default=None, help="default: the set's families")
     ap.add_argument("--levels", default=",".join(LEVEL_NAMES))
     ap.add_argument("--limit", type=int, default=None, help="first N transcripts of the set")
+    ap.add_argument(
+        "--precompute-lsum",
+        action="store_true",
+        help="generate and cache the local Qwen3 summaries (no Claude calls), then exit",
+    )
+    ap.add_argument(
+        "--pending", action="store_true", help="count new calls per task and arm; no calls"
+    )
+    ap.add_argument("--only", default=None, help="comma-separated transcript labels (smoke runs)")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--probe-model", default=None, help="override probe generator (model name)")
     args = ap.parse_args()
@@ -699,6 +863,10 @@ def main() -> None:
     if args.max_calls is None:
         args.max_calls = cfg.max_calls
     fams = [f for f in (args.conditions or ",".join(cfg.families)).split(",") if f]
+    if args.precompute_lsum:
+        fams = ["lsum"]
+    if set(fams) & set(NEW_FAMILIES) and args.set_name != "D":
+        raise SystemExit("hyb70/hyb50/lsum are set D arms (--set D)")
     levels = [lv for lv in args.levels.split(",") if lv]
     if bad := [f for f in fams if f not in ALL_FAMILIES] + [
         lv for lv in levels if lv not in LEVELS
@@ -724,26 +892,50 @@ def main() -> None:
         gen = CODEX_PROBER if shutil.which("codex") else HAIKU
 
     cfg.report.parent.mkdir(parents=True, exist_ok=True)
+    guard_none = Guard(0).runner
     selected = select_set(args.set_name)
     cfg.selection.write_text(json.dumps([c.label for c, _ in selected]), encoding="utf-8")
     if args.limit:
         selected = selected[: args.limit]
+    if args.only:
+        keep = set(args.only.split(","))
+        selected = [x for x in selected if x[0].label in keep]
     labels = [c.label for c, _ in selected]
     total = print_plan(labels, plan, args.max_calls, gen, args.set_name)
     if args.plan:
         return
-    if total > args.max_calls and not args.dry_run:
+    if total > args.max_calls and not (args.dry_run or args.pending or cfg.calls.exists()):
         raise SystemExit(f"planned {total} calls exceeds --max-calls {args.max_calls}")
 
     items = []
     for cand, cut in selected:
         items.append(build_item(cand, cut, plan, slot, slm, cfg.prep_dir))
         log(f"context {cand.label}")
+    if args.precompute_lsum:
+        precompute_lsum(items, plan)
+        return
+    store = exi.Store(cfg.calls)
+    for it in items:
+        finish_hyb(it, plan, store, placeholder=args.dry_run or args.pending)
+    if "lsum" in fams and not (args.dry_run or args.pending):
+        if miss := [(it.label, c) for it in items for c in it.lsum_missing]:
+            raise SystemExit(
+                f"{len(miss)} lsum contexts not cached (e.g. {miss[0]}); "
+                "run --precompute-lsum first"
+            )
     if args.dry_run:
         dry_run(items, plan, OUT / "contexts" if args.set_name == "C" else OUT / "d" / "samples")
         return
 
-    store = exi.Store(cfg.calls)
+    if args.pending:
+        global PENDING
+        PENDING = {}
+        rt0 = exi.Runtime(store, guard_none, cfg.report.parent / "failures.jsonl", workers=1)
+        run_all(rt0, items, plan, gen)
+        for k in sorted(PENDING):
+            log(f"pending {k:28s} {PENDING[k]}")
+        log(f"pending total (excl. hyb answers/grades awaiting summaries): {sum(PENDING.values())}")
+        return
     guard = Guard(args.max_calls)
     rt = exi.Runtime(
         store, guard.runner, cfg.report.parent / "failures.jsonl", workers=args.workers
