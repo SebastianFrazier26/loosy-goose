@@ -1,122 +1,61 @@
 # Loosy-Goose
 
-Lossy, JPEG-style compression for LLM conversation context. Model-agnostic: the output is
-plain text any frontier model can read.
+Extractive, lossy compression for LLM conversation context. Loosy-Goose takes a long agent
+session (Claude Code, Codex, or any `[{role, content}]` message list), throws away the parts
+that matter least, and hands back real, unedited pieces of the original at a token budget you
+pick. It runs locally on CPU, makes no model calls, and is deterministic: the same transcript
+and budget always give the same output, and every kept line can be traced to the source.
 
-## What it does
+**The honest bottom line.** On downstream question answering, a frontier-model summary beats
+Loosy-Goose at the same budget. On the largest held-out set a Sonnet-written summary keeps
+0.94–0.97 probe accuracy where Loosy-Goose keeps 0.79–0.86, a gap of 0.11–0.14 that is
+significant at every level (n = 20); on a smaller set of 10 the gap was not significant. Every attempt to close that gap without a frontier
+model (token thinning, line-keep for code dumps, slot-style rewriting of prose, a small local
+rewriter) came out level with plain Loosy-Goose or worse. Where it **does** win clearly is when
+no frontier model is in the loop: against summaries written by local Qwen3 models (1.7B, 4B,
+8B) at the same budget, Loosy-Goose is ahead by 0.26–0.34 (p ≤ 0.004). So it is a tool for
+compaction that must stay local, free, deterministic or auditable, and not a replacement for a
+good model-written summary when one is available. The numbers, and how the project got here,
+are below.
 
-A long conversation is treated the way an image codec treats pixels:
+Contents: [Install and use](#install-and-use) · [How it works](#how-it-works) ·
+[Performance](#performance) · [Course and evolution](#course-and-evolution) ·
+[Methodology and lessons](#methodology-and-lessons-learned) · [Use cases](#use-cases) ·
+[Future research](#future-research) · [Repository layout](#repository-layout) ·
+[License](#license)
 
-| Codec stage | Loosy-Goose |
-| --- | --- |
-| Block split | Segment the transcript into units: whole prose paragraphs (12k-character cap), code blocks and tool calls kept whole, tool results cut into line chunks |
-| Transform (DCT ≈ KLT) | SVD of the context's own semantic matrix — the exact KLT, affordable because a session is small |
-| Quantization matrix | Per-kind quality table plus rank cutoff, dead-zone thresholds and recency weighting — a design idea, not wired; the shipped rate control is `--keep` / `--level` / `--target-tokens` |
-| Coefficient truncation | Drop segments with little weight on the retained dimensions; band-limit the ones we keep |
-| Entropy coding | Emit text; the target model's tokenizer does the lossless part |
-| Chroma subsampling | Opt-in (`--band`, off by default): code bodies and code-shaped tool arguments are banded down to their outline by AST depth rather than dropped wholesale |
+## Install and use
 
-The output is **extractive**: real segments of the original, kept, trimmed or dropped. No
-summarizer rewrites anything, so the result is deterministic and auditable.
+Python 3.12 is required (it is pinned by `.python-version`; 3.13+ had no torch wheels when this
+was set up). Everything runs on CPU.
 
-## Why
+### From a release
 
-Frontier-model context windows fill up. Built-in compaction is opaque, non-configurable, and
-model-specific. Loosy-Goose is grounded in the observation of Shin, Madotto & Fung (2018),
-[*Interpreting Word Embeddings with Eigenvector Analysis*](https://openreview.net/forum?id=rJfJiR5ooX)
-([PDF](https://web.archive.org/web/20250405190331if_/https://openreview.net/pdf?id=rJfJiR5ooX) ·
-[code](https://github.com/HLTCHKUST/eigenvector-analysis)): the eigenvectors of a PPMI-SVD
-embedding form semantically coherent word groups, and the *sparse* eigenvectors (high inverse
-participation ratio) carry the narrow, topical ones. That gives an interpretable basis in which
-to decide what a conversation can afford to lose.
-
-Where that paper meets the codec analogy — and the one point where the analogy inverts, which
-is the reason the paper is load-bearing rather than decorative — is
-[docs/DESIGN.md § Origin](docs/DESIGN.md#origin).
-
-## Status
-
-Pre-alpha. The `compress` command works: it runs the measured default pipeline (supersession,
-then leverage scoring, then selection into a token budget ranked by novelty-discounted leverage
-per token) and writes the kept text as JSONL. Phase 2 is still open; see
-[docs/PHASE2.md](docs/PHASE2.md).
-
-### Current results
-
-The default selector is `supersede+leverage+novelty-per-token@0.5`, decided 2026-10-02 from the
-final grid (run to 2026-10-01). Each candidate's leverage is discounted by the share of its plain
-words the kept set does not hold yet, raised to the power 0.5, and candidates are ranked by that
-gain per token. Measured on 18 transcripts at matched achieved rates
-(`docs/results/exp_g_summary.txt`; the old default's rows come from exp_d's records, the same
-numbers as `docs/results/exp_d_summary.txt`):
-
-| Rate | final-state atom recall | semantic coverage | old default (`supersede+leverage`) recall / coverage |
-| --- | --- | --- | --- |
-| 2x | 0.829 (15 of 18 transcripts reach 2x) | 0.921 | 0.837 / 0.895 (16 of 18) |
-| 3x | 0.655 (17 of 18) | 0.887 | 0.656 / 0.821 (17 of 18) |
-| 4x | 0.577 | 0.872 | 0.568 / 0.796 |
-
-Paired on the transcripts both reach, the new default against the old is −0.011 recall and
-+0.026 coverage at 2x (15 of 18 transcripts only), −0.001 and +0.066 at 3x, and +0.009 and +0.076
-at 4x. Its knee (lowest rate still holding final-state recall of 0.9) is 0.606 on 15 of 18,
-against 0.598 on 16 of 18. It costs 0.24 s per 100k tokens against 0.32. Of the arms the final
-grid tried against the old default, it is the only one ahead on both metrics at any rate: at 4x,
-with 3x a near tie on recall. Why it was chosen, and what was rejected, is in
-[docs/PHASE2.md § Decision log](docs/PHASE2.md#decision-log).
-
-`--no-novelty` restores the old default, `supersede+leverage` with a plain budget fill.
-`--band` and `--paths` fall back to plain leverage selection, because novelty was never measured
-stacked on either.
-
-Tried against the old default, and left out of the default:
-
-- Compression-based selection (Experiment F, zlib and lzma) buys coverage and loses recall at
-  every rate, at up to ~107x the cost.
-- Raw-gain word novelty (Experiment G, alpha 0.5 / 1 / 2) buys recall and loses coverage.
-- Per-kind scoring (Experiment H) loses recall at every rate on all four arms.
-- `--band` loses at 2x (−0.014 recall), gains about one point at 3x and 4x, and is about 47x
-  slower (`docs/results/exp_e_summary.txt`, E4). The new default without banding beats
-  `supersede+band+leverage` at 4x on both metrics.
-- `--paths` full arms on `supersede+leverage` gain recall but lose 4 to 9 coverage points
-  (`docs/results/exp_d_summary.txt`), and recall on the atoms the table does not guarantee falls
-  on every table arm.
-
-### Phase 1
-
-Phase 1 experiments are **complete** — see [docs/PHASE1.md](docs/PHASE1.md) for the full
-results. Headline findings, stated plainly:
-
-- Supersession dedupe removes **25.9% of tokens losslessly** across a 1.5M-token corpus. This
-  is the clearest win so far and it uses no eigenvectors at all. (Phase 1 measured that under the
-  older segmenter; the final grid's `exp_c` C2 reads 24.8%.)
-- AST-depth banding of code beats dropping whole code segments at an equal token budget
-  (atom recall 0.885 vs 0.854 for TF-IDF drop; coverage 0.973 vs 0.735), but only buys 1.33x on
-  its own — it is a quantizer, not a compressor.
-- The PPMI-SVD topical eigenvectors are **not stable** at single-conversation scale
-  (aligned cosine 0.507 against a pre-registered 0.70 threshold), so that basis is demoted to
-  a labeller.
-- **Spectral selection and budget-shaped TF-IDF split the two distortion metrics.** Spectral
-  keeps more concrete facts (atom recall) at every rate measured; TF-IDF better covers the
-  conversation's meaning (semantic coverage) at every rate measured. They are reported as two
-  statistics and deliberately not collapsed into one winner — the metrics were designed to
-  disagree, and averaging them away would hide the thing they exist to show.
-
-## Documentation
-
-- [docs/DESIGN.md](docs/DESIGN.md) — algorithm specification, quality table, distortion metrics
-- [docs/PHASE1.md](docs/PHASE1.md) — experiment designs, pre-registered criteria, results, open defects
-- [docs/PHASE2.md](docs/PHASE2.md) — Phase 2 plan, decisions with the option rejected, verified nulls, what is still open
-- [docs/results/](docs/results/) — raw summary tables as emitted by the experiment scripts, with a note on how stale each one is
-- [integrations/README.md](integrations/README.md) — the /loosy (Claude Code) and $loosy (Codex) session handoff: install, register, use
-- [CLAUDE.md](CLAUDE.md) — repository guide for coding agents
-
-## Run
-
-The CLI needs the `embed` extra, because leverage scoring embeds every segment with
-sentence-transformers:
+Each `v*` tag publishes a GitHub Release with the wheel, the sdist and the integration files.
+With uv 0.11.3 or newer:
 
 ```
-uv sync --extra embed
+uv tool install --torch-backend cpu "loosy-goose[embed,mcp] @ git+https://github.com/SebastianFrazier26/loosy-goose@v0.1.0"
+```
+
+`--torch-backend cpu` keeps Linux from pulling the ~3 GB of CUDA wheels; on macOS it does
+nothing. A plain `pip install` of the package still gets PyPI torch (CUDA on Linux).
+
+### From a clone
+
+```
+git clone https://github.com/SebastianFrazier26/loosy-goose
+cd loosy-goose
+uv sync --extra embed                 # CLI only
+uv sync --dev --extra embed --extra mcp   # CLI, MCP server, tests and experiments
+```
+
+On Linux the lockfile resolves torch from the PyTorch CPU index, so a uv install from the
+clone never pulls CUDA wheels either.
+
+### The CLI
+
+```
 uv run loosy-goose compress path/to/transcript.jsonl                  # level medium, keep 0.33 (~3x)
 uv run loosy-goose compress path/to/transcript.jsonl --level light    # 0.50 (~2x); heavy = 0.25 (~4x)
 uv run loosy-goose compress path/to/transcript.jsonl --keep 0.42      # any ratio in [0.10, 0.80]
@@ -124,14 +63,15 @@ uv run loosy-goose compress path/to/transcript.jsonl --target-tokens 20000
 ```
 
 The first run downloads the selection embedding model, `BAAI/bge-small-en-v1.5`, from Hugging
-Face. The experiments also use a second model, `sentence-transformers/all-MiniLM-L6-v2`, to score
-coverage; the two are kept apart on purpose (see `src/loosy_goose/embed.py`).
+Face. The experiments use a second model, `sentence-transformers/all-MiniLM-L6-v2`, to score
+coverage; the two are kept apart on purpose so the selector is never graded by its own model
+(see `src/loosy_goose/embed.py`).
 
 **Input.** Two formats, picked by file suffix:
 
-- `.jsonl` — a Claude Code session log. Unknown record and block types are counted and skipped,
+- `.jsonl`: a Claude Code session log. Unknown record and block types are counted and skipped,
   never fatal.
-- `.json` — a generic message list, `[{"role": ..., "content": ...}]`, or an object with a
+- `.json`: a generic message list, `[{"role": ..., "content": ...}]`, or an object with a
   `messages` key holding one. Roles `user`, `assistant`, `system` and `tool` are read; `content`
   may be a string or a list of content blocks.
 
@@ -157,66 +97,419 @@ table when `--paths` is on. Every line after that is one kept turn,
 `--level`, `--keep` and `--target-tokens` are mutually exclusive. No preset turns on `--band` or
 `--paths`.
 
-## Handoff from Claude Code or Codex
+### Handoff from Claude Code or Codex
 
-`loosy-goose-mcp` is an MCP server whose `handoff_session` tool forks your live Claude Code or
-Codex session into a compressed copy. The copy holds the kept turns, a verbatim recent tail and
-a marker, and you resume it in place of built-in `/compact`. The original session is never
-modified. Install, registration and the `/loosy` / `$loosy` commands:
-[integrations/README.md](integrations/README.md). The same server's `compress` tool returns
-compressed turns for any transcript and writes nothing.
-Releases: each `v*` tag publishes a GitHub Release with the wheel, the sdist and the integrations files; its notes carry the install command.
+`loosy-goose-mcp` is an MCP server. Its `handoff_session` tool forks your live Claude Code or
+Codex session into a compressed copy: the kept turns, a verbatim recent tail of at least 4,000
+tokens, and a marker message saying what was compressed. You resume the fork in place of the
+built-in `/compact`. The original session file is never modified. The same server's `compress`
+tool returns compressed turns for any transcript and writes nothing.
 
-## Continuing on another machine
+In-session commands: `/loosy [light|medium|heavy]` in Claude Code, `$loosy` in Codex.
+Registration, timeouts and command install are in
+[integrations/README.md](integrations/README.md). Both CLIs' session formats are undocumented;
+the adapters were tested against Claude Code 2.1.296 and codex-cli 0.158.0, and a newer CLI
+still forks, with a warning.
 
-Everything needed is in the repo; nothing depends on the machine Phase 1 ran on.
+## How it works
+
+The design borrows the shape of an image codec. A transcript is split into units, a transform
+finds the directions that carry its meaning, and units with little weight on those directions
+are dropped until the budget is met.
+
+| Codec stage | Loosy-Goose |
+| --- | --- |
+| Block split | Segment the transcript: whole prose paragraphs (12k-character cap), code blocks and tool calls kept whole, tool results cut into line chunks |
+| Lossless pre-pass | Supersession: a file read or edit later superseded by a newer read/edit of the same file, and exact duplicates, are elided. Lossless with respect to the session's final state |
+| Transform | SVD of the session's own segment-embedding matrix. A session is small, so the exact KLT is affordable |
+| Coefficient truncation | Score each segment by its leverage on the top singular directions; fill the budget by leverage times novelty (share of the segment's plain words the kept set lacks, to the power 0.5), per token |
+| Entropy coding | None needed: the output is text, and the reading model's tokenizer does the rest |
+| Chroma subsampling | Opt-in `--band`: code bodies are cut to their outline by AST depth instead of being dropped whole |
+
+The output is **extractive**: real segments of the original, kept or dropped (or banded, with
+`--band`). Nothing is paraphrased, so nothing can be invented.
+
+The theoretical seed is Shin, Madotto & Fung (2018),
+[*Interpreting Word Embeddings with Eigenvector Analysis*](https://openreview.net/forum?id=rJfJiR5ooX)
+([PDF](https://web.archive.org/web/20250405190331if_/https://openreview.net/pdf?id=rJfJiR5ooX) ·
+[code](https://github.com/HLTCHKUST/eigenvector-analysis)): the eigenvectors of a PPMI-SVD
+embedding form coherent word groups, and the sparse ones (high inverse participation ratio)
+carry the narrow, topical meaning. That is also where the JPEG analogy inverts: JPEG's energy
+sits in the top coefficients, while in text embeddings the top directions are bias and meaning
+lives in the sparse tail. See [docs/DESIGN.md § Origin](docs/DESIGN.md#origin).
+
+## Performance
+
+Two kinds of evidence exist, and they disagree in an instructive way (see
+[lessons](#methodology-and-lessons-learned)):
+
+1. **Offline proxies** (Phases 1–2): *atom recall* (share of identifiers, paths, numbers and URLs
+   in the final state that survive) and *semantic coverage* (embedding cosine to the original),
+   at matched achieved compression, on 18 transcripts (13 public, 5 private sessions that
+   contribute counts only).
+2. **Downstream QA** (Experiment I and later): a model answers short factual probes about the
+   compressed part of a session, graded correct / partial / wrong against a reference.
+
+### Downstream probe QA
+
+Setup common to all rows: public agentic transcripts (trace-commons and SWE-Gym/OpenHands); each
+is cut late, before a real assistant action; the last ≥4,000 tokens stay verbatim as `/loosy`
+does, and only the earlier stretch is compressed. A probe is kept only if the answering model gets
+it right from the full context. Cells are means over transcripts with 95% bootstrap CIs; paired
+deltas use a sign test. "Summary" is a Sonnet 5.5 summary of the same stretch, a stand-in for
+built-in `/compact`.
+
+**Held-out set D** (20 SWE-Gym transcripts; probes by gpt-6-sol, Haiku 5.5 answers, Sonnet 5.5
+grades; summaries and local summaries targeted at loosy's actual token count per level):
+
+| condition | light (keep 0.50) | medium (0.33) | heavy (0.25) |
+| --- | --- | --- | --- |
+| full context | 1.000 | 1.000 | 1.000 |
+| **loosy (shipped)** | **0.863** [0.79, 0.93] | **0.817** [0.76, 0.88] | **0.794** [0.73, 0.85] |
+| Sonnet summary | 0.970 [0.95, 0.99] | 0.936 [0.90, 0.96] | 0.935 [0.89, 0.97] |
+| hybrid: summary at 70% of budget + loosy fill | 0.977 [0.96, 0.99] | 0.950 [0.92, 0.98] | 0.936 [0.90, 0.97] |
+| local Qwen3-1.7B summary (bf16) | 0.522 [0.44, 0.61] | 0.507 [0.43, 0.59] | 0.466 [0.41, 0.52] |
+| local Qwen3-4B summary (4-bit) | 0.535 [0.46, 0.61] | 0.529 [0.46, 0.59] | 0.507 [0.43, 0.59] |
+| local Qwen3-8B summary (4-bit) | 0.547 [0.48, 0.62] | 0.556 [0.48, 0.64] | 0.519 [0.45, 0.59] |
+
+Paired, on set D: summary − loosy is +0.106 (p = 0.039, n = 19), +0.118 (p = 0.021), +0.141
+(p = 0.021). Loosy − local 8B is +0.316, +0.261 (p = 0.004), +0.275 (p < 0.001); against 1.7B
+and 4B it is +0.29 to +0.34, all p < 0.001. The hybrid is level with the summary (+0.004 to
++0.015, n.s.). Sources:
+[exp_slot_downstream_d.md](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/results/exp_slot_downstream_d.md)
+(local size curve) and its
+[2026-10-23 version](https://github.com/SebastianFrazier26/loosy-goose/blob/5996d3f/docs/results/exp_slot_downstream_d.md)
+(hybrid, gentle-slot and line-keep rows).
+
+**Experiment I** (20 transcripts: 5 trace-commons, 15 SWE-Gym; probes written and filtered by
+Sonnet, Sonnet grades; four answering models). Mean over the four answerers, with the Haiku row
+and its CI for scale:
+
+| condition | earlier-stretch tokens, share of full | 4-answerer mean | Haiku 5.5 |
+| --- | --- | --- | --- |
+| full | 1.000 | 0.96 | 0.96 [0.94, 0.98] |
+| loosy light / medium / heavy | 0.495 / 0.333 / 0.254 | 0.81 / 0.78 / 0.75 | 0.81 / 0.79 / 0.76 |
+| summary light / medium / heavy | 0.345 / 0.257 / 0.202 | 0.94 / 0.93 / 0.92 | 0.94 / 0.92 / 0.92 |
+
+The summaries here came out *shorter* than their loosy-matched budgets and still won.
+Next-step prediction (does the model choose the same next action as the real agent) was also
+measured and is noise: the CIs are 0.3–0.5 wide and show no consistent ordering across
+answerers. Source:
+[exp_i_downstream.txt](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/downstream-eval/docs/results/exp_i_downstream.txt).
+
+**Set C** (10 SWE-Gym transcripts, same protocol as set D) is the one place the summary did not
+clearly win: loosy 0.974 / 0.909 / 0.888 against summary 0.946 / 0.951 / 0.956, no paired
+difference significant at n = 10.
+[exp_slot_downstream.md](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/results/exp_slot_downstream.md).
+Pooled over C + D (n = 28–30), summary − loosy is +0.06 at light (p = 0.19), +0.09 at medium
+(p = 0.011) and +0.12 at heavy (p = 0.007)
+([exp_probe_types.md](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/results/exp_probe_types.md)).
+
+**Caveats.** n is 10–20 transcripts per set. One grader (Sonnet) for every row. In Experiment I
+Sonnet wrote both the probes and the summaries; sets C and D fixed that by writing probes with
+gpt-6-sol. Probes are short factual questions, which favour fact retention over, for example,
+plan continuity. The local-summary curve mixes precision (1.7B in bf16, 4B and 8B as 4-bit MLX
+builds), and the local summaries undershot their budgets badly (37–67% of target) and sometimes
+looped, so they are a lower bound on what a tuned local summariser could do.
+
+### Offline proxies: selection quality and compression
+
+Final-state atom recall and semantic coverage of the shipped selector at matched achieved rate,
+18 transcripts. A cell marked n/18 averages only the transcripts that reach that rate.
+
+| rate | atom recall (default) | coverage (default) | `--no-novelty` recall / coverage |
+| --- | --- | --- | --- |
+| 2x | 0.829 (15/18) | 0.921 | 0.837 / 0.895 (16/18) |
+| 3x | 0.655 (17/18) | 0.887 | 0.656 / 0.821 (17/18) |
+| 4x | 0.577 | 0.872 | 0.568 / 0.796 |
+
+Cost: 0.24 s per 100k tokens for selection.
+[exp_g_summary.txt](docs/results/exp_g_summary.txt), [exp_d_summary.txt](docs/results/exp_d_summary.txt).
+
+**Lossless supersession** removes **24.8%** of tokens across the 1.50M-token corpus (373,635 of
+1,503,755; 14.3 points from superseded edits, 5.0 from superseded reads, 5.5 from exact
+duplicates). Per transcript it ranges from 0% to 70%, and how much it removes is the best single
+predictor of how far a transcript compresses (Spearman +0.897 against the knee, in the
+`ATOMS_VERSION` 4 analysis). Phase 1 measured 25.9% under the older segmenter.
+[exp_c_summary.txt](docs/results/exp_c_summary.txt), C2.
+
+**Compression ratios** are whatever you ask for: the level sets the keep ratio of the
+compressible stretch (0.50 / 0.33 / 0.25, i.e. ~2x / 3x / 4x on it), and the achieved ratio lands
+on target (Experiment I: 0.495 / 0.333 / 0.254). In a `/loosy` handoff the verbatim tail is not
+compressed, so the whole-session ratio is lower; in Experiment I the tail averaged 5,054 tokens
+against a 20,236-token earlier stretch.
+
+## Course and evolution
+
+### Timeline
+
+| date | phase | decision | yielded |
+| --- | --- | --- | --- |
+| 2026-09-08 | Origin, Phase 1 | Text image compression: transform, quantize, drop. Hybrid core locked: PPMI-SVD topics + embedding-SVD leverage. Extractive only | Scaffold, metrics, baselines |
+| 2026-09-09 | Phase 1 results | Binary "protected" flag replaced by a per-kind quality table | Supersession 25.9% lossless; banding 1.33x; PPMI topics unstable (0.507 vs 0.70 bar), demoted to labeller |
+| 2026-09-10 | Phase 2 | Two distortion metrics are never collapsed into one; defined pointers (`[P<n>]`) are admissible | Version stamps per transform after a staleness trap |
+| 2026-09-15 – 10-01 | Phase 2 grids D–H | Re-baselines after each atom-extractor audit; prose shrink, depth sweep and topics cut on nulls | Final grid, 0 failed jobs |
+| 2026-10-02 | Default | Per-token novelty at α 0.5 becomes the default selector | +0.066 / +0.076 coverage at 3x / 4x, recall level |
+| 2026-10-12 | Close Phase 2 | Remaining Phase 2 extras deferred past v1 (user) | CI green on main again |
+| 2026-10-13/14 | v0.1.0 | MCP server + `/loosy` / `$loosy` fork-and-resume (user's design calls) | Release v0.1.0, tagged 2026-10-14 |
+| 2026-10-14/15 | Experiment I | First downstream evaluation (design approved by user) | Summary wins by 0.13–0.17; loss is drop loss |
+| 2026-10-21/22 | Token-thinning spike | Attack drop loss by thinning inside segments | SLM surprisal deletion fails; line-keep +0.07 at light |
+| 2026-10-22 | Slot compression | User's original rewrite idea tested on fresh sets C and D | Aggressive rewrite hurts; gentle and SLM neutral; line-keep not confirmed |
+| 2026-10-23 | Falsification | Three pre-registered tests before retiring the idea (user) | Niche found: no-frontier-model compaction |
+| 2026-11-15/16 | Local size curve | Qwen3 1.7B → 4B → 8B local summaries | Gap to loosy barely narrows (0.26–0.32 at 8B) |
+
+### Origin: compress text the way JPEG compresses pixels
+
+The project started from the user's idea: compact a conversation the way an image codec compacts
+an image, by mapping word groups into a vector space and reducing them mathematically, with a
+light local model rather than a frontier one. The first design took the codec *architecture*
+literally (segment, transform, quantize, truncate) and took the transform from Shin et al.'s
+eigenvector analysis.
+
+What was fixed at the start, on 2026-09-08, and has held since: the output is text, not latent
+vectors (any model must be able to read it); v1 is extractive, with no LLM in the loop; and
+distortion is measured by atom recall plus semantic coverage, never by reconstruction error. A
+reconstruction decoder returns text of the same length, so it would not compress.
+
+### Phase 1 (2026-09-08 to 09-09): what the eigen-space can and cannot do
+
+Three tracks ran on the same budget contract (every method gets exactly the same token budget,
+or results are not comparable):
+
+- **PPMI-SVD topics** (Experiment A) were meant to be the interpretable basis. At the scale of one
+  conversation they are not stable: aligned cosine 0.507 against a pre-registered 0.70 bar. They
+  were demoted to a labeller, and embedding-SVD leverage (Experiment B) became the selector.
+- **Code channel** (Experiment C): AST-depth banding beat dropping whole code segments at equal
+  budget, but bought only 1.33x on its own. It is a quantizer, not a compressor.
+- **Supersession**, which uses no eigenvectors at all, removed 25.9% of tokens losslessly. It
+  was the clearest win of the phase and still is.
+
+The phase also replaced a binary "protected" flag with a per-kind quality table, because tool
+calls and tool results are 51–91% of tokens in real agent sessions, and protecting them capped
+compression near 1.3x. And it found that spectral selection and TF-IDF **split** the two
+metrics: spectral wins atom recall at every rate, TF-IDF wins coverage at every rate. That split
+was recorded as two statistics, not resolved into a winner.
+
+### Phase 2 (2026-09-09 to 10-02): rate-distortion curves and a measured default
+
+Phase 2 put every method on one rate-distortion curve per transcript, swept over 12 rates. Most
+of its work was making the measurement trustworthy: three atom-extractor audits (escape-sequence
+junk, Windows paths, attribute access read as filenames), each followed by a full re-baseline; a
+fix to an analysis that had been silently averaging variant records into the baseline; and a
+version stamp for every transform downstream of segmentation, after a rewritten transform left
+stored records that looked valid but described code that no longer existed.
+
+Arms tried against `supersede+leverage` and rejected, all on the final grid:
+
+- **Compression-based selection** (Experiment F, zlib/lzma conditional greedy): buys coverage,
+  loses recall at every rate, at up to ~107x the cost.
+- **Raw-gain word novelty** (Experiment G, α 0.5 / 1 / 2): buys recall, loses coverage.
+- **Per-kind scoring** (Experiment H, four arms): loses recall at every rate.
+- **`--band`**: about one recall point at 3x–4x for ~47x the time; stays opt-in.
+- **`--paths`**: gains guaranteed recall but costs 4–9 coverage points; stays opt-in.
+- **Prose shrinking, `drop_top`, tool-depth sweep, `topics`**: nulls, removed from the grid.
+
+The one arm ahead on both metrics was **novelty ranked per token at α 0.5**, which became the
+default on 2026-10-02: against the old default, recall −0.011 / −0.001 / +0.009 and coverage
++0.026 / +0.066 / +0.076 at 2x / 3x / 4x, and cheaper. On 2026-10-12 the user closed Phase 2,
+deferring novelty stacked on `--band`/`--paths` and a predictor re-run past v1. Full decision
+log with the rejected option for each call: [docs/PHASE2.md](docs/PHASE2.md#decision-log).
+
+### Shipping v0.1.0 (2026-10-13 to 10-14): fork-and-resume handoff
+
+The MCP server and the `/loosy` / `$loosy` commands were designed with the user, who made the
+product calls ([spec](docs/superpowers/specs/2026-10-13-mcp-handoff-design.md)):
+
+- **Fork and resume**, accepting that both CLIs' session files are undocumented; rejected was a
+  fresh session reading a handoff file, and injecting after built-in compaction.
+- **Never overwrite** the original session; a failure at any step leaves it untouched.
+- **Protect the recent tail** (from the last user turn, at least 4,000 tokens) verbatim.
+- **A marker** as the fork's first message, naming the source session and the kept share.
+- **Test both CLIs end to end**, including opt-in live drift tests against the real binaries.
+
+The SDK (the official `mcp` 2.x) was settled with the user in the implementation plan. One
+fix found in testing: Claude Code stores parallel tool calls on a side branch, so they are
+spliced back into one linear chain. v0.1.0 was tagged on 2026-10-14.
+
+### Experiment I (2026-10-14 to 10-15): the first downstream test
+
+Until now every number was a proxy. Experiment I asked whether models actually answer as well
+after compression, against a Sonnet summary at the same budget. They do not: the summary won on
+every answering model ([table above](#downstream-probe-qa)), and at fewer tokens. The run took
+11.4 hours, about 2,300 calls, and hit the account's monthly spend limit.
+
+The diagnosis was clear: loosy's misses are **drop loss**. When the segment holding the answer
+was kept, accuracy was about 0.93, the same as the summary. The losses sat in large code and file
+dumps (3–3.5k tokens each, kept at rates of 0.26 at light down to 0.07 at heavy) and in short
+segments dropped whole (about 40% of the loss).
+
+### Token-thinning spike (2026-10-21 to 10-22): shrink inside segments
+
+If whole segments are the problem, thin them instead, the "quantize" step of the codec. The spike
+([code](https://github.com/SebastianFrazier26/loosy-goose/tree/spike/token-thinning/experiments/spike_thin),
+summarised in the
+[handoff note](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/superpowers/handoffs/2026-10-22-slm-rewrite-handoff.md)):
+
+- **Deleting predictable tokens by small-LM surprisal** (pythia-31m to Qwen3-1.7B) failed.
+  Thinning prose cost answers; code skeletons lost the relations between atoms; and model size
+  made no difference, with a zero-parameter unigram scorer doing as well.
+- **Line-keep**, a plain rule: inside code dumps, keep whole lines that hold an atom or an error,
+  elide the rest. Against loosy (Haiku, 30 transcripts) it scored +0.071 [+0.01, +0.14] at light,
+  +0.048 at medium, +0.037 at heavy. It looked like the first transform to beat loosy on real QA.
+
+Offline lexical survival had ranked the variants the other way round (word skeleton first,
+0.94 survival against 0.85 real accuracy), the second time a string-match proxy misled.
+
+### Slot compression (2026-10-22): the original rewrite idea, tested
+
+The user's original idea had still not been tested directly: rewrite sentences into shorter
+equivalents rather than drop them. The user specified the scheme by analogy with Greek case
+endings and with transform → quantize → cross-row coding: each sentence becomes a fixed slot row
+(action, agent, object, recipient, extra), meaning carried by slot position, each slot reduced to
+the fewest words, repeated values carried forward across rows. Negation, modality and cause must
+survive ([spec](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/superpowers/specs/2026-10-22-slot-compress-design.md)).
+The agent built it on a spaCy parse and made the schema and quantizer calls.
+
+| variant | prose+thinking cut | downstream vs loosy |
+| --- | --- | --- |
+| v1 slot rows | 12.7% (direct) / 19.3% (English) | not run |
+| v2 telegraphic rows | 40.9% / 40.0% | **−0.12 / −0.09 at light (p = 0.008)**, set C; n.s. at medium/heavy |
+| SLM rewrite, Qwen3-1.7B | 20.9% | −0.05 at light (n.s.); level elsewhere |
+| v3 gentle (articles, filler, hedges only) | 15.0% | −0.02 to 0.00 (n.s.), set D |
+| line-keep, re-tested | n/a | **−0.04 pooled C+D at light (p = 0.06)**: not confirmed |
+
+The structural reason it could not win: prose and thinking are only 12–19% of tokens in these
+sessions, so even a 41% cut frees a few percent of budget (4.9% of all tokens for v2), while the
+lost facts sit in dropped code and tool output. A negation-scope bug ("don't have to" read as
+"must not") was found in v2 and fixed in v3. The user closed the experiment the same day.
+
+### Falsification (2026-10-23) and the local size curve (2026-11-16)
+
+Every extractive and rewrite variant now sat 0.10–0.14 below the summary. Before retiring the
+idea, the user asked for a test of the places it could still win, with a rule fixed in advance:
+retire only if all three come back negative
+([spec](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/superpowers/specs/2026-10-23-falsify-extractive-design.md)).
+
+1. **Exact-detail probes.** Probes whose answer contains an atom (path, identifier, number)
+   might favour verbatim text. They do not: on set D loosy trails the summary by 0.09–0.14 on
+   exact probes too, significant at every level. Negative.
+2. **Hybrid.** A summary at 70% or 50% of the budget, with loosy filling the rest verbatim.
+   Level with the summary (+0.004 to +0.015, n.s.) and +0.09 to +0.15 over loosy; `hyb70` at light
+   used about 8% fewer tokens than the summary. Negative (no gain over the summary).
+3. **Local summary.** The same summary task given to local Qwen3-1.7B. Loosy beat it by
+   0.31–0.34 (p < 0.001). **Positive.**
+
+So the idea was not retired; its niche is compaction without a frontier model. The obvious
+objection is that 1.7B is too small, so the size curve followed: 4B and 8B (4-bit MLX) gain
+only 0.01–0.05 per step, the 8B run needed an MLX cache cap to fit in 16 GB, and loosy still leads
+8B by 0.26–0.32 (p ≤ 0.004). The local models also used just 37–67% of their budget.
+
+## Methodology and lessons learned
+
+- **Proxies ranked variants backwards, twice.** Offline string-match survival ordered the
+  spike's variants opposite to real QA (the word skeleton led offline, line-keep led on QA) and
+  over-predicted the gain (0.94 survival, 0.85 accuracy). Atom recall and coverage remain useful
+  for tuning a selector, but nothing downstream of it is decided on them any more.
+- **Held-out sets, used once.** Experiment I's 20 transcripts (A) and the spike's 10 (B) were
+  used for decisions, so the slot work drew fresh set C (10) and set D (20). The spike's line-keep
+  gain did not survive the move to fresh data, which is the point of the discipline.
+- **Probes from a model that does not summarise.** In Experiment I Sonnet wrote probes and
+  summaries; from set C on, probes came from gpt-6-sol. The summary's lead held.
+- **Pre-registered decision rules.** Stability (0.70 bar), the falsification rule and fixed
+  hybrid splits were set before the data was seen, and nothing was tuned on set D.
+- **Two metrics, never collapsed.** Recall and coverage were built to disagree, so the project
+  reports both rather than picking a weighted winner.
+- **A version stamp per transform.** The segment digest only fingerprints the segmenter's
+  output; a rewritten downstream transform once left stale records that loaded as valid. Every
+  transform now carries its own stamp in each record's identity ([PHASE2](docs/PHASE2.md#a-silent-staleness-trap-found-by-walking-into-it)).
+- **Holes over bad averages.** A failed grid job is recorded as a failure, never as a zero
+  record, and every summary opens with a loud incomplete-run block.
+- **Cost caps.** After Experiment I hit the monthly spend limit, every later run had a call
+  budget fixed up front, a hard cap, and a stop on the spend-limit error. A few summary calls
+  that failed under the limit were not retried, which is why some cells read n = 18 or 19.
+- **Private data stays private.** Five of the author's own sessions inform Phase 1–2 counts
+  only. They are never committed or quoted; every downstream experiment used public data only.
+
+## Use cases
+
+Loosy-Goose fits when a frontier-model summary is unavailable, unaffordable or unwanted:
+
+- **Offline, local or air-gapped compaction.** No API call, CPU only, and much better than a
+  local 1.7B–8B summary at the same budget.
+- **Privacy-sensitive sessions.** The transcript never leaves the machine, and no third model
+  sees it.
+- **Deterministic, auditable context.** Every kept line is verbatim and traceable; nothing is
+  paraphrased or invented. Useful when you need to show what the model was given.
+- **Cost-free pre-compaction.** Supersession alone removes about a quarter of tokens with no
+  loss, and selection is a fraction of a second per 100k tokens, so it can shrink a transcript
+  before a paid summary or a longer pipeline.
+- **A transparent `/compact` alternative** in Claude Code and Codex, with the original session
+  always kept.
+
+It is the wrong tool when a frontier model can write the summary: at the same budget a Sonnet
+summary keeps 0.11–0.14 more probe accuracy, and adding loosy's verbatim fill to the summary
+gains nothing measurable.
+
+## Future research
+
+Each item states what is known and how it would be tested. All downstream tests should use a
+fresh held-out set, a non-summarising probe writer, and a fixed call cap.
+
+1. **Local hybrid.** Local summaries fill only 37–67% of their budget. Fill the rest with loosy's
+   verbatim selection, as the frontier hybrid did. Known: the frontier hybrid matched the
+   summary; whether a local hybrid beats plain loosy is open. Test: set-D-style run, local
+   Qwen3-8B at its natural length plus loosy fill, against loosy at equal tokens.
+2. **Budget split across kinds at medium/heavy.** The spike found force-kept code taking budget
+   from tool results at tighter levels. Known: Experiment H's pool-share split lost on recall,
+   but it was never judged downstream. Test: a small grid of per-kind slices scored by probe QA.
+3. **Summary-undershoot calibration.** Both frontier and local summaries come in under target,
+   which muddies "equal budget". Test: iterate the length instruction or truncate/pad, then re-run
+   the summary arms at true parity.
+4. **Larger or fine-tuned local summarisers.** The 1.7B → 8B curve is shallow, and it mixes bf16
+   and 4-bit. Test: same-precision runs, a 14B+ model where memory allows, and a small model
+   fine-tuned on (session → summary) pairs from public traces.
+5. **Evaluations beyond probe QA.** Probes reward fact retention. Next-step agreement was noise
+   at n = 20. Test: resume compressed sessions on real agent tasks (e.g. SWE-Gym) and score task
+   completion, which is what compaction is for.
+6. **GPT answerers on the later sets.** Sets C and D used Haiku only; Experiment I showed the
+   ranking held across four answerers, but the later arms were not re-checked. Test: re-answer
+   stored contexts with gpt-6-luna / gpt-6-sol.
+7. **Novelty with `--band` / `--paths`.** Never measured together, so those flags fall back to
+   plain leverage. Test: the existing Experiment G grid with banding and path variants enabled.
+8. **Personalisation prior.** A background prior built from a user's own sessions to stabilise
+   small-context SVD was in the original design and never built. Test: a prior from held-out
+   sessions, measured on proxies and then downstream.
+9. **Packaging.** A PyPI release (with the CUDA-torch problem for plain pip users solved) and a
+   Claude Code plugin/marketplace entry.
+
+## Repository layout
+
+- `src/loosy_goose/`: the library, CLI (`cli.py`), pipeline (`pipeline.py`), session handoff
+  (`sessions/`, `handoff.py`) and MCP server (`mcp_server.py`). Module-by-module guide in
+  [CLAUDE.md](CLAUDE.md#layout).
+- `experiments/`: Phase 1–2 scripts and the grid runner; outputs are gitignored. Downstream
+  drivers live on their branches (`exp/downstream-eval`, `spike/token-thinning`,
+  `exp/slot-compress`).
+- `docs/`: [DESIGN.md](docs/DESIGN.md) (algorithm and quality table),
+  [PHASE1.md](docs/PHASE1.md), [PHASE2.md](docs/PHASE2.md) (decisions with the rejected option),
+  [results/](docs/results/) (committed tables, with a staleness note per file).
+- `integrations/`: the `/loosy` and `$loosy` commands and their [install guide](integrations/README.md).
+- `tests/`: pytest; session fixtures are synthetic.
+
+Development:
 
 ```
-git clone https://github.com/SebastianFrazier26/loosy-goose
-cd loosy-goose
-uv sync --dev --extra embed      # embed extra pulls torch CPU + sentence-transformers;
-                                 # the dev group carries scikit-learn, which the experiments need
-uv run pytest                    # expect a green suite
-uv run python experiments/fetch_public.py    # public corpora into data/public/
-uv run python experiments/corpus_stats.py
+uv sync --dev --extra embed --extra mcp
+uv run pytest                                  # offline suite
+uv run ruff check . && uv run ruff format --check . && uv run mypy src
+uv run pytest -m live                          # opt-in, needs logged-in claude and codex
+uv run python experiments/fetch_public.py      # public corpora into data/public/
 ```
 
-Python is pinned to 3.12 by `.python-version` — 3.13+ has no torch or sentence-transformers
-wheels at time of writing, so do not unpin it casually. Everything runs on CPU; no GPU is
-assumed anywhere.
-
-`data/local/` holds the author's own Claude Code sessions and is gitignored and empty on a
-fresh clone. That is deliberate. To build an equivalent local corpus from your own sessions:
-
-```
-uv run python experiments/pick_local.py
-```
-
-It selects sessions from `~/.claude/projects/*/*.jsonl` nearest 5K, 20K, 50K, 100K and 200K
-tokens. The public corpora alone are enough to reproduce every public row in
-[docs/results/](docs/results/).
-
-## Test
-
-```
-uv run pytest
-```
-
-Lint, format check and type check: `uv run ruff check . && uv run ruff format --check . && uv run mypy src`.
-
-Opt-in drift and end-to-end tests against the real CLIs (needs logged-in `claude` and `codex`, spends a little API use): `uv run pytest -m live`. Re-record the synthetic fixtures with `uv run python tests/session_recorder.py`.
-
-## Roadmap
-
-- **Done** — Phase 1: PPMI-SVD vs embedding-SVD vs code channel, on real and public transcripts
-- **In progress** — Phase 2: unified rate-distortion curves, all methods and baselines at matched
-  budgets. Plan, decisions and open questions in [docs/PHASE2.md](docs/PHASE2.md)
-- **Done** — core pipeline and CLI: segment → supersede → (band) → (paths) → leverage score →
-  novelty-per-token select (plain budget select with `--no-novelty`, `--band` or `--paths`) → emit
-- **Done** — MCP server and session handoff (`/loosy`, `$loosy`) for Claude Code and Codex
-- Claude Code plugin packaging and marketplace entry
-- Personalization prior built from the user's own local sessions
+`data/local/` is gitignored and empty on a fresh clone; `experiments/pick_local.py` builds an
+equivalent corpus from your own sessions. The public corpora alone reproduce every public row in
+`docs/results/`.
 
 ## License
 
-MIT — see `LICENSE`.
+MIT. See [LICENSE](LICENSE).
