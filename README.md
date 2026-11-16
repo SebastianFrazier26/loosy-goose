@@ -177,9 +177,7 @@ Paired, on set D: summary − loosy is +0.106 (p = 0.039, n = 19), +0.118 (p = 0
 and 4B it is +0.29 to +0.34, all p < 0.001. The hybrid is level with the summary (+0.004 to
 +0.015, n.s.). Sources:
 [exp_slot_downstream_d.md](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/results/exp_slot_downstream_d.md)
-(local size curve) and its
-[2026-10-23 version](https://github.com/SebastianFrazier26/loosy-goose/blob/5996d3f/docs/results/exp_slot_downstream_d.md)
-(hybrid, gentle-slot and line-keep rows).
+(every set-D arm: hybrids, gentle slot, line-keep, local size curve).
 
 **Experiment I** (20 transcripts: 5 trace-commons, 15 SWE-Gym; probes written and filtered by
 Sonnet, Sonnet grades; four answering models). Mean over the four answerers, with the Haiku row
