@@ -30,6 +30,15 @@ loosy selection) and lsum (the summary task by a local Qwen3-1.7B, precomputed):
   uv run python experiments/slot_compress/downstream.py --set D --pending
   uv run python experiments/slot_compress/downstream.py --set D --conditions hyb70,hyb50,lsum
 
+Larger local summarisers (2026-11-15): lsum4b / lsum8b (official Qwen3 MLX 4-bit; one model loaded
+at a time). Default --max-calls 260 when both are in --conditions. Include loosy,summary,lsum so
+the report carries the paired rows against them (already-done keys cost no calls):
+
+  uv run python experiments/slot_compress/downstream.py --set D --precompute-lsum \
+      --lsum-models lsum4b,lsum8b
+  uv run python experiments/slot_compress/downstream.py --set D --conditions \
+      loosy,summary,lsum,lsum4b,lsum8b
+
 Resumable: calls are checkpointed in output/slot_compress/calls.jsonl; reruns skip finished keys.
 A spend/usage-limit error or --max-calls stops the driver, which then writes the report from
 whatever exists.
@@ -86,10 +95,18 @@ FAMILIES = ("loosy", "line", "slotd", "slote", "slme", "summary")
 HYB_VERSION = 1
 HYB_FRAC = {"hyb70": 0.7, "hyb50": 0.5}
 HYB_FAMILIES = tuple(HYB_FRAC)
-LSUM_FAMILIES = ("lsum",)
+LSUM_FAMILIES = tuple(lsum.LSUM_MODELS)
 NEW_FAMILIES = HYB_FAMILIES + LSUM_FAMILIES
 D_FAMILIES = ("loosy", "line", "gloosy", "gline", "summary") + NEW_FAMILIES
-LSUM_DIR = OUT / "d" / "lsum_cache"
+
+
+LSUM_BIG_MAX_CALLS = 260
+
+
+def lsum_dir(family: str) -> Path:
+    return OUT / "d" / f"{family}_cache"
+
+
 HYB_HEADER = (
     "[Earlier part of the session: a summary of it, followed by passages kept verbatim from it]"
 )
@@ -342,7 +359,12 @@ def build_item(
                 it.budget[cond] = count_tokens(prep.earlier[f"loosy-{level}"])
                 it.target[cond] = it.budget[cond]
                 text = lsum.cached_text(
-                    LSUM_DIR, cand.label, level, prep.full_earlier, it.target[cond]
+                    lsum_dir(fam),
+                    cand.label,
+                    level,
+                    prep.full_earlier,
+                    it.target[cond],
+                    lsum.LSUM_MODELS[fam],
                 )
                 if text is None:
                     it.lsum_missing.append(cond)
@@ -556,29 +578,45 @@ def run_all(rt: exi.Runtime, items: list[Item], plan: Plan, gen: exi.Model) -> N
     )
 
 
-def precompute_lsum(items: list[Item], plan: Plan) -> None:
-    jobs = [
-        (it.label, lv, it.prep.full_earlier, it.target[plan.cond("lsum", lv)])
-        for it in items
-        for lv in plan.levels
-    ]
-    todo = [j for j in jobs if lsum.cached_text(LSUM_DIR, j[0], j[1], j[2], j[3]) is None]
-    log(f"lsum: {len(jobs)} generations, {len(todo)} to run ({lsum.MODEL_ID}, mlx-lm, greedy)")
-    stats = lsum.precompute(jobs, LSUM_DIR, exi.summary_prompt, log)
-    if stats.calls:
-        log(
-            f"lsum throughput: prefill {stats.prompt_tps:.0f} tok/s ({stats.prompt_tokens} tok), "
-            f"decode {stats.gen_tps:.1f} tok/s ({stats.gen_tokens} tok), {stats.calls} model calls"
-        )
-        all_prompt = sum(count_tokens(j[2]) for j in jobs)
-        all_target = sum(j[3] for j in jobs)
-        ratio = stats.gen_tokens / max(sum(j[3] for j in todo), 1)
-        est = all_prompt / max(stats.prompt_tps, 1) + ratio * all_target / max(stats.gen_tps, 1)
-        log(
-            f"estimated total for all {len(jobs)} generations: ~{est / 60:.0f} min "
-            f"({all_prompt} prompt tok, ~{ratio * all_target:.0f} generated tok at the "
-            f"measured {ratio:.2f} of target)"
-        )
+def precompute_lsum(items: list[Item], plan: Plan, models: list[str]) -> None:
+    for fam in models:
+        model_id = lsum.LSUM_MODELS[fam]
+        cache = lsum_dir(fam)
+        jobs = [
+            (it.label, lv, it.prep.full_earlier, it.target[plan.cond(fam, lv)])
+            for it in items
+            for lv in plan.levels
+        ]
+        todo = [j for j in jobs if lsum.cached_text(cache, *j, model_id) is None]
+        log(f"{fam}: {len(jobs)} generations, {len(todo)} to run ({model_id}, mlx-lm, greedy)")
+        stats = lsum.precompute(jobs, cache, exi.summary_prompt, log, model_id=model_id)
+        if stats.calls:
+            log(
+                f"{fam} throughput: prefill {stats.prompt_tps:.0f} tok/s "
+                f"({stats.prompt_tokens} tok), decode {stats.gen_tps:.1f} tok/s "
+                f"({stats.gen_tokens} tok), {stats.calls} model calls, "
+                f"peak Metal memory {stats.peak_bytes / 1e9:.1f} GB"
+            )
+            all_prompt = sum(count_tokens(j[2]) for j in jobs)
+            all_target = sum(j[3] for j in jobs)
+            ratio = stats.gen_tokens / max(sum(j[3] for j in todo), 1)
+            est = all_prompt / max(stats.prompt_tps, 1) + ratio * all_target / max(stats.gen_tps, 1)
+            log(
+                f"{fam} estimated total for all {len(jobs)} generations: ~{est / 60:.0f} min "
+                f"({all_prompt} prompt tok, ~{ratio * all_target:.0f} generated tok at the "
+                f"measured {ratio:.2f} of target)"
+            )
+        free_mlx()
+
+
+def free_mlx() -> None:
+    """Drop the finished model's weights and KV cache before the next one loads (16 GB machine)."""
+    import gc
+
+    import mlx.core as mx
+
+    gc.collect()
+    mx.clear_cache()
 
 
 # --------------------------------------------------------------------------- planning
@@ -738,6 +776,11 @@ D_PAIRS = (
     ("hyb50", "loosy"),
     ("loosy", "lsum"),
     ("lsum", "summary"),
+    ("loosy", "lsum4b"),
+    ("loosy", "lsum8b"),
+    ("lsum4b", "summary"),
+    ("lsum8b", "summary"),
+    ("lsum8b", "lsum"),
 )
 
 
@@ -814,6 +857,26 @@ def report(
 
     out += ["", "| condition | accuracy | mean earlier tokens |", "|---|---|---|"]
     out += [f"| {c} | {cell(list(scores[c].values()))} | {tok(c)} |" for c in conds]
+    lsum_rows = [
+        f"| {c} | {np.mean([it.earlier_tokens[c] for it in have]):.0f} | "
+        f"{np.mean([it.target[c] for it in have]):.0f} | "
+        f"{np.mean([it.earlier_tokens[c] / it.target[c] for it in have]):.2f} | {len(have)} |"
+        for lv in plan.levels
+        for f in plan.families
+        if f in LSUM_FAMILIES
+        for c in [plan.cond(f, lv)]
+        if (have := [it for it in items or [] if c in it.earlier_tokens])
+    ]
+    if lsum_rows:
+        out += [
+            "",
+            "Local summary fidelity (o200k tokens after sentence truncation; fidelity = mean of "
+            "summary / target per transcript):",
+            "",
+            "| condition | mean summary tokens | mean target | fidelity | n |",
+            "|---|---|---|---|---|",
+            *lsum_rows,
+        ]
     out += ["", "| paired difference | delta accuracy |", "|---|---|"]
     for lv in plan.levels:
         if set_name == "D":
@@ -852,6 +915,11 @@ def main() -> None:
         help="generate and cache the local Qwen3 summaries (no Claude calls), then exit",
     )
     ap.add_argument(
+        "--lsum-models",
+        default=",".join(lsum.LSUM_MODELS),
+        help="families to precompute with --precompute-lsum, one model loaded at a time",
+    )
+    ap.add_argument(
         "--pending", action="store_true", help="count new calls per task and arm; no calls"
     )
     ap.add_argument("--only", default=None, help="comma-separated transcript labels (smoke runs)")
@@ -860,13 +928,18 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = SETS[args.set_name]
+    fams = [f for f in (args.conditions or ",".join(cfg.families)).split(",") if f]
     if args.max_calls is None:
         args.max_calls = cfg.max_calls
-    fams = [f for f in (args.conditions or ",".join(cfg.families)).split(",") if f]
+        if args.set_name == "D" and {"lsum4b", "lsum8b"} <= set(fams):
+            args.max_calls = LSUM_BIG_MAX_CALLS
+    lsum_models = [f for f in args.lsum_models.split(",") if f]
+    if bad_m := [f for f in lsum_models if f not in lsum.LSUM_MODELS]:
+        raise SystemExit(f"unknown --lsum-models: {bad_m}")
     if args.precompute_lsum:
-        fams = ["lsum"]
+        fams = lsum_models
     if set(fams) & set(NEW_FAMILIES) and args.set_name != "D":
-        raise SystemExit("hyb70/hyb50/lsum are set D arms (--set D)")
+        raise SystemExit("hyb70/hyb50/lsum* are set D arms (--set D)")
     levels = [lv for lv in args.levels.split(",") if lv]
     if bad := [f for f in fams if f not in ALL_FAMILIES] + [
         lv for lv in levels if lv not in LEVELS
@@ -912,12 +985,18 @@ def main() -> None:
         items.append(build_item(cand, cut, plan, slot, slm, cfg.prep_dir))
         log(f"context {cand.label}")
     if args.precompute_lsum:
-        precompute_lsum(items, plan)
+        precompute_lsum(items, plan, lsum_models)
         return
     store = exi.Store(cfg.calls)
     for it in items:
         finish_hyb(it, plan, store, placeholder=args.dry_run or args.pending)
-    if "lsum" in fams and not (args.dry_run or args.pending):
+    if args.pending:
+        for it in items:
+            for c in it.lsum_missing:
+                stub = exi.truncate_tokens(it.prep.full_earlier, it.target[c])[0]
+                it.ctx[c] = exi.assemble("summary", stub, it.prep.tail)
+                it.earlier_tokens[c] = count_tokens(stub)
+    if set(fams) & set(LSUM_FAMILIES) and not (args.dry_run or args.pending):
         if miss := [(it.label, c) for it in items for c in it.lsum_missing]:
             raise SystemExit(
                 f"{len(miss)} lsum contexts not cached (e.g. {miss[0]}); "

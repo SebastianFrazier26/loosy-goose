@@ -51,3 +51,9 @@ def test_summarise_chunked_targets_sum_to_target() -> None:
     assert len(seen) > 1
     assert abs(sum(seen) - 300) <= len(seen)
     assert out.count("ok") == len(seen)
+
+
+def test_source_sha_default_is_the_1p7b_and_models_do_not_collide() -> None:
+    assert lsum.source_sha("x", 10) == lsum.source_sha("x", 10, lsum.MODEL_ID)
+    assert lsum.source_sha("x", 10) != lsum.source_sha("x", 10, lsum.LSUM_MODELS["lsum8b"])
+    assert lsum.LSUM_MODELS["lsum"] == lsum.MODEL_ID

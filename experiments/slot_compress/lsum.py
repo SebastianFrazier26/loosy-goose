@@ -1,4 +1,5 @@
-"""Local summary arm `lsum` (2026-10-23): the Sonnet summary task given to Qwen3-1.7B, greedy.
+"""Local summary arms `lsum` / `lsum4b` / `lsum8b` (2026-10-23, larger models 2026-11-15): the
+Sonnet summary task given to a local Qwen3 (1.7B bf16, 4B and 8B official MLX 4-bit), greedy.
 
 Generations are precomputed (`downstream.py --set D --precompute-lsum`) and cached on disk; the
 call phase only reads the cache, so API workers never load a model. mlx-lm on Apple Silicon.
@@ -22,6 +23,14 @@ import tiktoken
 
 LSUM_VERSION = 1
 MODEL_ID = "Qwen/Qwen3-1.7B"
+# Family -> model. The 4B/8B are 4-bit because bf16 8B (16 GB) does not fit this machine, so size
+# is confounded with quantisation against the bf16 1.7B; unquantised 4B (8 GB) was rejected for
+# the same ladder-consistency reason.
+LSUM_MODELS = {
+    "lsum": MODEL_ID,
+    "lsum4b": "Qwen/Qwen3-4B-MLX-4bit",
+    "lsum8b": "Qwen/Qwen3-8B-MLX-4bit",
+}
 # Qwen's context is 32k; o200k counts differ from Qwen's, and the prompt and generation need room.
 CHUNK_TOKENS = 16000
 MAX_NEW_FACTOR = 1.4
@@ -80,8 +89,8 @@ def truncate_sentence(text: str, target: int) -> str:
     return head.strip()
 
 
-def source_sha(earlier: str, target: int) -> str:
-    h = hashlib.sha256(f"{MODEL_ID}|{LSUM_VERSION}|{SYSTEM}|{PREFILL}|{target}|{earlier}".encode())
+def source_sha(earlier: str, target: int, model_id: str = MODEL_ID) -> str:
+    h = hashlib.sha256(f"{model_id}|{LSUM_VERSION}|{SYSTEM}|{PREFILL}|{target}|{earlier}".encode())
     return h.hexdigest()[:16]
 
 
@@ -89,13 +98,15 @@ def cache_path(cache_dir: Path, label: str, level: str) -> Path:
     return cache_dir / f"{label}__{level}.json"
 
 
-def cached_text(cache_dir: Path, label: str, level: str, earlier: str, target: int) -> str | None:
+def cached_text(
+    cache_dir: Path, label: str, level: str, earlier: str, target: int, model_id: str = MODEL_ID
+) -> str | None:
     """The final (sentence-truncated) summary, or None when absent or stale."""
     path = cache_path(cache_dir, label, level)
     if not path.exists():
         return None
     rec = json.loads(path.read_text(encoding="utf-8"))
-    if rec.get("sha") != source_sha(earlier, target):
+    if rec.get("sha") != source_sha(earlier, target, model_id):
         return None
     return truncate_sentence(str(rec["raw"]), target)
 
@@ -107,6 +118,7 @@ class Stats:
     prompt_seconds: float = 0.0
     gen_tokens: int = 0
     gen_seconds: float = 0.0
+    peak_bytes: int = 0
 
     @property
     def prompt_tps(self) -> float:
@@ -118,10 +130,10 @@ class Stats:
 
 
 class MlxGenerator:
-    def __init__(self) -> None:
+    def __init__(self, model_id: str = MODEL_ID) -> None:
         from mlx_lm import load
 
-        self.model, self.tok = load(MODEL_ID)
+        self.model, self.tok = load(model_id)
         self.stats = Stats()
 
     def __call__(self, prompt: str, max_tokens: int) -> str:
@@ -148,6 +160,7 @@ class MlxGenerator:
             st.gen_seconds += (
                 last.generation_tokens / last.generation_tps if last.generation_tps else 0.0
             )
+            st.peak_bytes = max(st.peak_bytes, int(last.peak_memory * 1e9))
         return PREFILL + "".join(pieces)
 
 
@@ -175,23 +188,25 @@ def precompute(
     prompt_fn: Callable[[str, int], str],
     log: Callable[[str], None],
     gen: Any = None,
+    model_id: str = MODEL_ID,
 ) -> Stats:
     """jobs: (label, level, earlier, target). Skips fresh cache entries."""
     cache_dir.mkdir(parents=True, exist_ok=True)
     gen = gen or None
     for label, level, earlier, target in jobs:
-        if cached_text(cache_dir, label, level, earlier, target) is not None:
+        if cached_text(cache_dir, label, level, earlier, target, model_id) is not None:
             continue
-        gen = gen or MlxGenerator()
+        gen = gen or MlxGenerator(model_id)
         t0 = time.perf_counter()
         raw = summarise(earlier, target, prompt_fn, gen)
         rec = {
-            "sha": source_sha(earlier, target),
+            "sha": source_sha(earlier, target, model_id),
             "target": target,
             "raw": raw,
             "raw_tokens": _ntok(raw),
             "seconds": round(time.perf_counter() - t0, 1),
         }
         cache_path(cache_dir, label, level).write_text(json.dumps(rec), encoding="utf-8")
-        log(f"lsum {label} {level}: target {target} raw {rec['raw_tokens']} in {rec['seconds']}s")
+        raw_n, secs = rec["raw_tokens"], rec["seconds"]
+        log(f"{model_id} {label} {level}: target {target} raw {raw_n} in {secs}s")
     return gen.stats if gen is not None else Stats()
