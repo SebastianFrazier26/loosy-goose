@@ -34,6 +34,7 @@ LSUM_MODELS = {
 # Qwen's context is 32k; o200k counts differ from Qwen's, and the prompt and generation need room.
 CHUNK_TOKENS = 16000
 MAX_NEW_FACTOR = 1.4
+CACHE_LIMIT_BYTES = 512 * 1024 * 1024
 # Without it the 1.7B model continued the agent transcript (emitting tool calls) instead of
 # summarising it; the user turn is exactly the Sonnet summary prompt. PREFILL opens the assistant
 # turn for the same reason.
@@ -131,12 +132,19 @@ class Stats:
 
 class MlxGenerator:
     def __init__(self, model_id: str = MODEL_ID) -> None:
+        import mlx.core as mx
         from mlx_lm import load
 
+        # MLX keeps freed buffers (2.6 GB after one 15k-token chunk with the 8B) and counts them
+        # against the Metal working-set limit; on a 16 GB machine shared with other processes the
+        # next chunk's decode then died with kIOGPUCommandBufferCallbackErrorOutOfMemory.
+        # Allocator-only: outputs are unchanged.
+        mx.set_cache_limit(CACHE_LIMIT_BYTES)
         self.model, self.tok = load(model_id)
         self.stats = Stats()
 
     def __call__(self, prompt: str, max_tokens: int) -> str:
+        import mlx.core as mx
         from mlx_lm import stream_generate
 
         text = self.tok.apply_chat_template(
@@ -161,6 +169,7 @@ class MlxGenerator:
                 last.generation_tokens / last.generation_tps if last.generation_tps else 0.0
             )
             st.peak_bytes = max(st.peak_bytes, int(last.peak_memory * 1e9))
+        mx.clear_cache()
         return PREFILL + "".join(pieces)
 
 
