@@ -247,3 +247,8 @@ This separates the two explanations for `cfrz` beating `crec` (+0.065). Either a
   **0.33 was chosen.** It is the same target as `thresh` and gives the same event schedule (2.0 per transcript), and it lands within 5%. Smaller shares fire fewer compactions, which would make the comparison less like-for-like.
 - **Offline uncached tokens per turn:** `tloosy` 1,515, `cfrzm` 1,521, real `thresh` 1,366.
 - **2026-11-16, launched.** 150 new calls, capped at 180.
+- **2026-11-16, result.** 150 calls, 0 failed. **Positive: without a frontier model, continuous loosy beats threshold loosy.**
+  - `cfrzm` − `tloosy` = +0.041 (p=0.027) and `cdec` − `tloosy` = +0.044 (p=0.017), at equal context size (12.4–12.6k) and equal uncached tokens (1,521 vs 1,515).
+  - `tloosy` decays along the transcript (0.930 → 0.876 → 0.812 at 50/75/100%), as compounding re-compression drops more each time. The continuous arms stay at about 0.90–0.92.
+  - The price of having no frontier model: `thresh` − `tloosy` = 0.065 (p=0.003). Continuous freeze closes about two-thirds of that, leaving `thresh` − `cfrzm` = 0.024 (n.s.).
+  - **Implication.** The shipped `/loosy` handoff is threshold-style. A continuous freeze mode is the measured better policy for loosy's niche (no frontier model). Making it a product feature is a user decision.

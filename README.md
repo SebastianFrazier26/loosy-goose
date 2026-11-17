@@ -258,7 +258,7 @@ against a 20,236-token earlier stretch.
 | 2026-10-22 | Slot compression | User's original rewrite idea tested on fresh sets C and D | Aggressive rewrite hurts; gentle and SLM neutral; line-keep not confirmed |
 | 2026-10-23 | Falsification | Three pre-registered tests before retiring the idea (user) | Niche found: no-frontier-model compaction |
 | 2026-11-15/16 | Local size curve | Qwen3 1.7B → 4B → 8B local summaries | Gap to loosy barely narrows (0.26–0.32 at 8B) |
-| 2026-11-16 | Continuous compaction | Run loosy after every turn instead of at a threshold; user picked recompute vs freeze, a replay pilot, no full-context probe filter, then a decaying (recency-biased) arm | Pilot: freeze within 0.03 of `/compact`-style at ~20% fewer uncached tokens; recompute loses; per-chunk budget ablation negative. Scaled run (set F): threshold summary dominates on accuracy and cache cost; decay is null |
+| 2026-11-16 | Continuous compaction | Run loosy after every turn instead of at a threshold; user picked recompute vs freeze, a replay pilot, no full-context probe filter, then a decaying (recency-biased) arm | Pilot: freeze within 0.03 of `/compact`-style at ~20% fewer uncached tokens; recompute loses; per-chunk budget ablation negative. Scaled run (set F): threshold summary dominates on accuracy and cache cost; decay is null. No frontier model: continuous loosy beats threshold loosy by +0.04 (p ≈ 0.02) |
 
 ### Origin: compress text the way JPEG compresses pixels
 
@@ -467,8 +467,29 @@ The pilot did not replicate. At equal context size threshold compaction is ahead
 which made threshold compaction fire 3–7 times. The user's decaying, recency-biased arm made
 no difference against plain freeze at equal size (+0.003, p = 0.50). No arm beat full context,
 so there is no context-rot gain to harvest at these lengths. Continuous loosy is therefore not a
-better way to compact when a frontier model is available. The one case left open is compaction
-without a frontier model, where threshold compaction would also have to use loosy.
+better way to compact when a frontier model is available.
+
+**Without a frontier model (set F, 150 calls).** The user approved one more arm: threshold
+compaction exactly like `/compact`, but with loosy doing the compacting, at the same target and
+event schedule. The table is the same run with that arm added.
+
+| arm | accuracy | context tokens/turn | uncached tokens/turn |
+| --- | --- | --- | --- |
+| threshold summary (Sonnet) | 0.937 | 12.3k | 1.37k |
+| decaying freeze (continuous loosy) | 0.917 | 12.6k | 1.61k |
+| freeze, size-matched (continuous loosy) | 0.913 | 12.4k | 1.52k |
+| threshold loosy | 0.873 | 12.5k | 1.52k |
+
+**This is positive.** At equal context size and equal cache cost, continuous loosy beats threshold loosy
+by +0.041 (p = 0.027) for freeze and +0.044 (p = 0.017) for decaying freeze. Threshold loosy decays
+along the session (0.93 → 0.88 → 0.81 at 50/75/100%), because each compaction re-compresses the
+last one's output and loses more. Continuous freeze compresses each chunk once from the
+original and holds at about 0.90–0.92. Not having a frontier model costs 0.065 under threshold
+compaction; continuous freeze recovers about two-thirds of that.
+
+So the best way to use loosy in its niche (offline, free, deterministic, no frontier model) is
+continuously, in freeze mode, not as a drop-in `/compact`. The shipped `/loosy` handoff is
+threshold-style today; adding a continuous mode is an open product decision (see Future research).
 
 ## Methodology and lessons learned
 
@@ -545,7 +566,11 @@ fresh held-out set, a non-summarising probe writer, and a fixed call cap.
 8. **Personalisation prior.** A background prior built from a user's own sessions to stabilise
    small-context SVD was in the original design and never built. Test: a prior from held-out
    sessions, measured on proxies and then downstream.
-9. **Packaging.** A PyPI release (with the CUDA-torch problem for plain pip users solved) and a
+9. **Continuous freeze mode in the product.** Measured as the better no-frontier policy above.
+   Open: how to run it in a live agent (a per-turn hook, or a proxy between agent and model) and
+   whether live task success agrees with the replay. Test: live SWE-Gym runs with freeze vs
+   threshold loosy vs `/compact`.
+10. **Packaging.** A PyPI release (with the CUDA-torch problem for plain pip users solved) and a
    Claude Code plugin/marketplace entry.
 
 ## Repository layout
