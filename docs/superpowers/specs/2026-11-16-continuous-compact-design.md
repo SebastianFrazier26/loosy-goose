@@ -163,3 +163,14 @@ This separates the two explanations for `cfrz` beating `crec` (+0.065). Either a
   - It is the same rule as the pilot, now at n=25.
   - **Worth adopting:** `cfrz` or `cdec` is within 0.03 of `thresh` (or above it) at lower uncached tokens.
   - **Recency bias:** `cdec` vs `cfrz`, paired.
+
+## Stage 2a log
+
+- **2026-11-16, built.** The `chunk` arm is in `experiments/slot_compress/chunked.py` and is wired into `downstream.py` for sets C and D.
+  - The shares are taken on the pool after supersession, so they sum to the level budget.
+  - Unused share spills forward from chunk to chunk. A final global top-up pass then spends whatever is left.
+  - Without the top-up, `chunk` filled only 85–90% of its budget, against `loosy`'s 99.7%. That would have confounded the comparison, so the top-up was added to keep the repo's equal-budget contract.
+  - With it, `chunk` is within 0.1–0.8% of `loosy` on segment tokens.
+  - Rendered earlier-stretch tokens run 0.5–1.4% higher for `chunk`, probably because it has more segment boundaries. That is a slight context-size edge for `chunk`, and it is noted here.
+  - The report now always covers every arm of a set, which fixes the old `--conditions` overwrite bug.
+- **2026-11-16, launched.** Set C, then set D, with `--conditions chunk`, capped at 70 and 130 calls.

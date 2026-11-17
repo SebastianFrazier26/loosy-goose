@@ -67,6 +67,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "experiments" / "spike_thin"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import chunked  # noqa: E402
 import lines  # noqa: E402
 import lsum  # noqa: E402
 
@@ -91,13 +92,13 @@ C_SEED = exi.SEED + 2
 C_N = 10
 D_SEED = exi.SEED + 3
 D_N = 20
-FAMILIES = ("loosy", "line", "slotd", "slote", "slme", "summary")
+FAMILIES = ("loosy", "line", "slotd", "slote", "slme", "summary", "chunk")
 HYB_VERSION = 1
 HYB_FRAC = {"hyb70": 0.7, "hyb50": 0.5}
 HYB_FAMILIES = tuple(HYB_FRAC)
 LSUM_FAMILIES = tuple(lsum.LSUM_MODELS)
 NEW_FAMILIES = HYB_FAMILIES + LSUM_FAMILIES
-D_FAMILIES = ("loosy", "line", "gloosy", "gline", "summary") + NEW_FAMILIES
+D_FAMILIES = ("loosy", "line", "gloosy", "gline", "summary") + NEW_FAMILIES + ("chunk",)
 
 
 LSUM_BIG_MAX_CALLS = 260
@@ -192,6 +193,8 @@ class Plan:
     gentle_version: Any = None
 
     def cond(self, family: str, level: str) -> str:
+        if family == "chunk":
+            return f"chunk.v{chunked.CHUNK_VERSION}-{level}"
         if family in HYB_FAMILIES:
             return f"{family}.v{HYB_VERSION}-{level}"
         if family in LSUM_FAMILIES:
@@ -376,6 +379,13 @@ def build_item(
                 it.ctx[cond] = exi.assemble("loosy", prep.earlier[f"loosy-{level}"], prep.tail)
                 it.earlier_tokens[cond] = count_tokens(prep.earlier[f"loosy-{level}"])
                 it.seg_tokens[cond] = prep.kept_segment_tokens[f"loosy-{level}"]
+                continue
+            if fam == "chunk":
+                kept = chunked.chunked_select(base, budget, loosy_select)
+                earlier = exi.render_segments(kept)
+                it.ctx[cond] = exi.assemble("loosy", earlier, prep.tail)
+                it.earlier_tokens[cond] = count_tokens(earlier)
+                it.seg_tokens[cond] = sum(count_tokens(s.text) for s in kept)
                 continue
             if fam == "gloosy":
                 kept = loosy_select(it.pools[fam], budget)
@@ -770,6 +780,8 @@ D_PAIRS = (
     ("summary", "line"),
     ("summary", "gloosy"),
     ("summary", "gline"),
+    ("chunk", "loosy"),
+    ("chunk", "summary"),
     ("hyb70", "summary"),
     ("hyb50", "summary"),
     ("hyb70", "loosy"),
@@ -813,6 +825,25 @@ def pooled_line_loosy(
     return rows
 
 
+def report_plan(cfg: SetCfg, plan: Plan) -> Plan:
+    """The report covers every arm of the set whatever --conditions selected, so a partial run
+    cannot overwrite it with only those arms. Scores come from the checkpoint; only the condition
+    names (and their version stamps) are needed, never the slot or SLM models themselves."""
+    full = Plan(list(cfg.families), plan.levels, plan.slot_version, plan.slm_version)
+    full.gentle_version = plan.gentle_version
+    for attr, mod, name in (
+        ("slot_version", "slot", "SLOT_VERSION"),
+        ("slm_version", "slm_slot", "SLM_VERSION"),
+        ("gentle_version", "slot", "GENTLE_VERSION"),
+    ):
+        if getattr(full, attr) is None:
+            try:
+                setattr(full, attr, getattr(importlib.import_module(mod), name, None))
+            except ImportError:
+                pass
+    return full
+
+
 def report(
     store: exi.Store,
     labels: list[str],
@@ -850,7 +881,7 @@ def report(
         if c == "full":
             vals = [it.earlier_tokens["full"] for it in items]
         elif c.startswith("summary"):
-            vals = [it.budget[c] for it in items]
+            vals = [it.budget[c] for it in items if c in it.budget]
         else:
             vals = [it.earlier_tokens[c] for it in items if c in it.earlier_tokens]
         return f"{np.mean(vals):.0f}" if vals else "-"
@@ -887,7 +918,7 @@ def report(
             continue
         for fam in plan.families:
             c = plan.cond(fam, lv)
-            for ref in ("line", "loosy"):
+            for ref in ("line", "loosy") + (("summary",) if fam == "chunk" else ()):
                 if ref in plan.families and fam != ref:
                     out.append(f"| {c} - {ref}-{lv} | {paired(scores[c], scores[f'{ref}-{lv}'])} |")
     if set_name == "D" and {"line", "loosy"} <= set(plan.families):
@@ -1024,7 +1055,7 @@ def main() -> None:
     try:
         run_all(rt, items, plan, gen)
     finally:
-        text = report(store, labels, plan, gen, items, args.set_name)
+        text = report(store, labels, report_plan(cfg, plan), gen, items, args.set_name)
         cfg.report.write_text(text, encoding="utf-8")
         print(text, flush=True)
         log(
