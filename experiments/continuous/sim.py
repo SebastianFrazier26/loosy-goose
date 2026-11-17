@@ -1,10 +1,11 @@
-"""Arm simulation for the continuous-compaction pilot (spec 2026-11-16-continuous-compact-design).
+"""Arm simulation for the continuous-compaction experiments (2026-11-16 spec).
 
-Four arms replay a transcript turn by turn: `full`, `thresh` (threshold summarisation), `crec`
-(loosy recomputed over the whole pre-tail history at every turn) and `cfrz` (loosy applied once per
-F-token chunk, appended to a frozen prefix). A "boundary" is a history length `t` at which the
-model is called; each arm yields a `View` per boundary, from which both the context a model would
-be shown at a checkpoint and the offline cost metrics are derived.
+Five arms replay a transcript turn by turn: `full`, `thresh` (threshold summarisation), `crec`
+(loosy recomputed over the whole pre-tail history at every turn), `cfrz` (loosy applied once per
+F-token chunk, appended to a frozen prefix) and `cdec` (the same chunks, tiered: when a tier holds
+m chunks they are merged and recompressed into one chunk of the next tier). A "boundary" is a
+history length `t` at which the model is called; each arm yields a `View` per boundary, from which
+both the context a model would be shown at a checkpoint and the offline cost metrics are derived.
 """
 
 from __future__ import annotations
@@ -12,15 +13,20 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from experiments import exp_i_downstream as exi
 from loosy_goose.rate import LEVELS
 from loosy_goose.tokens import count_tokens
-from loosy_goose.transcript import Transcript, Turn
+from loosy_goose.transcript import Block, Transcript, Turn
+
+if TYPE_CHECKING:
+    from loosy_goose.segment import Segment
 
 # Covers the freeze, recompute and threshold simulations; goes into every record key.
 CONT_VERSION = 1
+# Covers the tiered decaying-freeze simulation; goes into every cdec record key.
+DEC_VERSION = 1
 
 KEEP = LEVELS["medium"]
 FREEZE_TOKENS = 4_000
@@ -28,9 +34,18 @@ CAP_SHARE = 0.40
 SUMMARY_SHARE = 0.33
 CHECKPOINT_SHARES = (0.5, 0.75, 1.0)
 ARMS = ("full", "thresh", "crec", "cfrz")
+F_ARMS = ("full", "thresh", "cfrz", "cfrzm", "cdec")
 E_SEED = exi.SEED + 4
 E_N = 10
 MIN_THRESH_EVENTS = 2
+F_SEED = exi.SEED + 5
+F_N = 25
+F_CAP_SHARE = 0.65
+# Chosen by experiments/continuous/run.py --calibrate; see the spec's 2b section.
+DEC_KEEP = 0.7
+DEC_M = 4
+# cfrz with its keep raised to thresh's context size; chosen by run.py --calibrate.
+FRZM_KEEP = 0.6
 
 HEADERS = {
     "full": exi.EARLIER_HEADER["full"],
@@ -41,6 +56,11 @@ HEADERS = {
         "were dropped, what remains is verbatim), then the rest verbatim]"
     ),
 }
+HEADERS["cdec"] = (
+    "[Earlier part of the session: its older part compressed extractively (some passages were "
+    "dropped, what remains is verbatim; the oldest parts were compressed more than once and "
+    "kept less), then the rest verbatim]"
+)
 
 Summarizer = Callable[[int, str, int], str]
 Compressor = exi.Compressor
@@ -164,7 +184,7 @@ def checkpoint_turns(
     return out
 
 
-def plan_transcript(label: str, turns: list[Turn]) -> TranscriptPlan:
+def plan_transcript(label: str, turns: list[Turn], cap_share: float = CAP_SHARE) -> TranscriptPlan:
     per_turn = [exi._turn_tokens(t) for t in turns]
     before = [0]
     for x in per_turn:
@@ -175,7 +195,7 @@ def plan_transcript(label: str, turns: list[Turn]) -> TranscriptPlan:
         for s, t in zip(CHECKPOINT_SHARES, checkpoint_turns(turns, per_turn), strict=True)
     ]
     boundaries = sorted(set(action_boundaries(turns)) | {c.t for c in cks})
-    cap = int(CAP_SHARE * total)
+    cap = int(cap_share * total)
     return TranscriptPlan(
         label, turns, per_turn, before, boundaries, total, cap, int(cap * SUMMARY_SHARE), cks
     )
@@ -218,6 +238,18 @@ def uncached_tokens(prev: str, cur: str) -> int:
 # --------------------------------------------------------------------------- arms
 
 
+def next_chunk_end(
+    per_turn: Sequence[int], upto: int, tail_from: int, chunk_tokens: int
+) -> int | None:
+    """End of the next chunk of at least `chunk_tokens` that starts at `upto` and stays before
+    the tail, or None while the pending text is still short of a chunk."""
+    end, acc = upto, 0
+    while end < tail_from and acc < chunk_tokens:
+        acc += per_turn[end]
+        end += 1
+    return end if acc >= chunk_tokens else None
+
+
 class Freezer:
     """Compresses each F-token chunk of pre-tail text once and appends it; `frozen` only grows."""
 
@@ -227,27 +259,112 @@ class Freezer:
         per_turn: Sequence[int],
         compressor: Compressor,
         chunk_tokens: int = FREEZE_TOKENS,
+        keep: float = KEEP,
     ) -> None:
         self.turns, self.per_turn, self.compressor = turns, per_turn, compressor
-        self.chunk_tokens = chunk_tokens
+        self.chunk_tokens, self.keep = chunk_tokens, keep
         self.frozen: list[str] = []
         self.chunks: list[tuple[int, int]] = []
         self.upto = 0
 
     def advance(self, tail_from: int) -> None:
-        while True:
-            end, acc = self.upto, 0
-            while end < tail_from and acc < self.chunk_tokens:
-                acc += self.per_turn[end]
-                end += 1
-            if acc < self.chunk_tokens:
-                return
-            self.frozen.append(compress_text(self.turns[self.upto : end], self.compressor))
+        while end := next_chunk_end(self.per_turn, self.upto, tail_from, self.chunk_tokens):
+            self.frozen.append(
+                compress_text(self.turns[self.upto : end], self.compressor, self.keep)
+            )
             self.chunks.append((self.upto, end))
             self.upto = end
 
     def text(self) -> str:
         return "\n\n".join(self.frozen)
+
+
+@dataclass(frozen=True)
+class DecChunk:
+    segments: tuple[Segment, ...]
+    text: str
+    span: tuple[int, int]
+
+
+def _segments_to_turns(chunks: Sequence[DecChunk]) -> list[Turn]:
+    """Kept segments regrouped into turns and blocks, chunk after chunk, so the shipped compressor
+    can run over them again. A gap between kept segments of one block closes up: the segmenter
+    re-reads the joined text."""
+    turns: list[Turn] = []
+    for ch in chunks:
+        ordered = sorted(ch.segments, key=lambda s: s.id)
+        i = 0
+        while i < len(ordered):
+            first, blocks = ordered[i], []
+            j = i
+            while j < len(ordered) and ordered[j].turn == first.turn:
+                b0 = ordered[j]
+                k = j
+                while k < len(ordered) and (ordered[k].turn, ordered[k].block) == (
+                    b0.turn,
+                    b0.block,
+                ):
+                    k += 1
+                sep = "\n" if b0.kind == "tool_result" else "\n\n"
+                meta = {"name": b0.tool_name} if b0.tool_name else {}
+                blocks.append(
+                    Block(
+                        exi._SEGMENT_BLOCK_KIND.get(b0.kind, b0.kind),
+                        sep.join(s.text for s in ordered[j:k]),
+                        meta,
+                    )
+                )
+                j = k
+            turns.append(Turn(len(turns), first.role, blocks))
+            i = j
+    return turns
+
+
+class Decayer:
+    """LSM-style decaying freeze. A chunk that ages out of the tail is compressed at `keep` into
+    tier 0; when a tier holds `m` chunks they are merged, recompressed at `keep` over their kept
+    segments, and appended to the next tier as one chunk. Tiers are laid out oldest-first (highest
+    tier first), so a merge rewrites the context only from the merged tier's slot onward."""
+
+    def __init__(
+        self,
+        turns: Sequence[Turn],
+        per_turn: Sequence[int],
+        compressor: Compressor,
+        keep: float = DEC_KEEP,
+        m: int = DEC_M,
+        chunk_tokens: int = FREEZE_TOKENS,
+    ) -> None:
+        self.turns, self.per_turn, self.compressor = turns, per_turn, compressor
+        self.keep, self.m, self.chunk_tokens = keep, m, chunk_tokens
+        self.tiers: list[list[DecChunk]] = []
+        self.merges: list[tuple[int, tuple[DecChunk, ...], DecChunk]] = []
+        self.upto = 0
+
+    def _compress(self, turns: list[Turn], span: tuple[int, int]) -> DecChunk:
+        t = Transcript("chunk", [Turn(i, x.role, x.blocks) for i, x in enumerate(turns)])
+        segs = self.compressor(t, self.keep)
+        return DecChunk(tuple(segs), exi.render_segments(segs), span)
+
+    def _push(self, tier: int, chunk: DecChunk) -> None:
+        while len(self.tiers) <= tier:
+            self.tiers.append([])
+        self.tiers[tier].append(chunk)
+        if len(self.tiers[tier]) >= self.m:
+            group, self.tiers[tier] = self.tiers[tier], []
+            span = (group[0].span[0], group[-1].span[1])
+            merged = self._compress(_segments_to_turns(group), span)
+            self.merges.append((tier, tuple(group), merged))
+            self._push(tier + 1, merged)
+
+    def advance(self, tail_from: int) -> None:
+        while end := next_chunk_end(self.per_turn, self.upto, tail_from, self.chunk_tokens):
+            span = (self.upto, end)
+            self._push(0, self._compress(list(self.turns[self.upto : end]), span))
+            self.upto = end
+
+    def text(self) -> str:
+        return "\n\n".join(c.text for tier in reversed(self.tiers) for c in tier)
 
 
 def summary_input(prev: str | None, turns: Sequence[Turn]) -> str:
@@ -281,12 +398,18 @@ def _thresh_views(
 
 
 def _views(
-    arm: str, p: TranscriptPlan, compressor: Compressor, summarize: Summarizer
+    arm: str,
+    p: TranscriptPlan,
+    compressor: Compressor,
+    summarize: Summarizer,
+    dec: tuple[float, int] = (DEC_KEEP, DEC_M),
+    frzm_keep: float = FRZM_KEEP,
 ) -> Iterator[tuple[int, View, Event | None]]:
     if arm == "thresh":
         yield from _thresh_views(p, summarize)
         return
-    freezer = Freezer(p.turns, p.per_turn, compressor)
+    freezer = Freezer(p.turns, p.per_turn, compressor, keep=frzm_keep if arm == "cfrzm" else KEEP)
+    decayer = Decayer(p.turns, p.per_turn, compressor, *dec)
     memo: dict[int, str] = {}
     for t in p.boundaries:
         tail_from = exi.tail_start(p.per_turn, t)
@@ -296,6 +419,9 @@ def _views(
             if tail_from not in memo:
                 memo[tail_from] = compress_text(p.turns[:tail_from], compressor)
             view = View(HEADERS["crec"], memo[tail_from], tail_from, tail_from)
+        elif arm == "cdec":
+            decayer.advance(tail_from)
+            view = View(HEADERS["cdec"], decayer.text(), decayer.upto, tail_from)
         else:
             freezer.advance(tail_from)
             view = View(HEADERS["cfrz"], freezer.text(), freezer.upto, tail_from)
@@ -312,11 +438,13 @@ def run_arm(
     compressor: Compressor,
     summarize: Summarizer = placeholder_summary,
     keep_at: Collection[int] | None = None,
+    dec: tuple[float, int] = (DEC_KEEP, DEC_M),
+    frzm_keep: float = FRZM_KEEP,
 ) -> ArmRun:
     keep = {c.t for c in p.checkpoints} if keep_at is None else set(keep_at)
     run = ArmRun(arm)
     prev = ""
-    for t, view, event in _views(arm, p, compressor, summarize):
+    for t, view, event in _views(arm, p, compressor, summarize, dec, frzm_keep):
         ctx = cost_context(view, p.turns, t)
         run.boundaries.append(t)
         run.ctx_tokens.append(count_tokens(ctx))
@@ -332,10 +460,40 @@ def run_arm(
 # --------------------------------------------------------------------------- set E
 
 
-def qualifies(turns: list[Turn]) -> bool:
-    p = plan_transcript("qualify", turns)
+def qualifies(
+    turns: list[Turn], cap_share: float = CAP_SHARE, min_events: int = MIN_THRESH_EVENTS
+) -> bool:
+    p = plan_transcript("qualify", turns, cap_share)
     last = p.checkpoints[-1].t
-    return sum(e.t <= last for e in thresh_events(p)) >= MIN_THRESH_EVENTS
+    return sum(e.t <= last for e in thresh_events(p)) >= min_events
+
+
+def select_set(
+    candidates: Iterable[exi.Candidate],
+    taken: Collection[str],
+    *,
+    n: int,
+    seed: int,
+    cap_share: float,
+    min_events: int,
+    token_range: tuple[int, int] = exi.TOKEN_RANGE,
+    min_compressible: int = exi.MIN_COMPRESSIBLE_TOKENS,
+) -> list[tuple[exi.Candidate, exi.Cut]]:
+    pool = (
+        c
+        for c in candidates
+        if c.source == "swe-gym"
+        and c.label not in taken
+        and qualifies(c.transcript.turns, cap_share, min_events)
+    )
+    return exi.select_transcripts(
+        pool,
+        token_range=token_range,
+        n=n,
+        per_source=n,
+        seed=seed,
+        min_compressible=min_compressible,
+    )
 
 
 def select_set_e(
@@ -345,16 +503,32 @@ def select_set_e(
     token_range: tuple[int, int] = exi.TOKEN_RANGE,
     min_compressible: int = exi.MIN_COMPRESSIBLE_TOKENS,
 ) -> list[tuple[exi.Candidate, exi.Cut]]:
-    pool = (
-        c
-        for c in candidates
-        if c.source == "swe-gym" and c.label not in taken and qualifies(c.transcript.turns)
-    )
-    return exi.select_transcripts(
-        pool,
-        token_range=token_range,
+    return select_set(
+        candidates,
+        taken,
         n=E_N,
-        per_source=E_N,
         seed=E_SEED,
+        cap_share=CAP_SHARE,
+        min_events=MIN_THRESH_EVENTS,
+        token_range=token_range,
+        min_compressible=min_compressible,
+    )
+
+
+def select_set_f(
+    candidates: Iterable[exi.Candidate],
+    taken: Collection[str],
+    *,
+    token_range: tuple[int, int] = exi.TOKEN_RANGE,
+    min_compressible: int = exi.MIN_COMPRESSIBLE_TOKENS,
+) -> list[tuple[exi.Candidate, exi.Cut]]:
+    return select_set(
+        candidates,
+        taken,
+        n=F_N,
+        seed=F_SEED,
+        cap_share=F_CAP_SHARE,
+        min_events=MIN_THRESH_EVENTS,
+        token_range=token_range,
         min_compressible=min_compressible,
     )

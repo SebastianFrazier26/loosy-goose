@@ -191,3 +191,17 @@ This separates the two explanations for `cfrz` beating `crec` (+0.065). Either a
   - So a size-matched freeze arm, **`cfrzm`**, was added, with its keep calibrated so it lands within 5% of `thresh`. `cfrz` stays as the arm comparable to the pilot.
   - The recency-bias test is now `cdec` − `cfrzm` at equal size. This is the agent's call, and it adds about 150 calls, so the F cap rises from 850 to 1,000.
 - **Known limitation.** When `cdec` merges tiers, the `[…]` gap markers inside partly dropped blocks are lost, so an older-tier tool result can read as contiguous.
+- **`cfrzm` calibration.** Mean context tokens per turn, against `thresh`'s 12,449:
+
+  | keep | context tokens/turn | vs `thresh` |
+  |---|---|---|
+  | 0.40 | 10,783 | −13.4% |
+  | 0.45 | 11,176 | −10.2% |
+  | 0.50 | 11,569 | −7.1% |
+  | 0.55 | 11,955 | −4.0% |
+  | 0.60 | 12,355 | −0.8% |
+
+  **0.60 was chosen.** It is the closest to both `thresh` and `cdec` (12,625), so `cdec` − `cfrzm` is not confounded by size.
+
+  Offline uncached tokens per turn at equal size: `cfrzm` 1,521, `thresh` 1,562, `cdec` 1,611.
+- **2026-11-16, launched.** The F run is 875 planned calls, capped at 1,000.

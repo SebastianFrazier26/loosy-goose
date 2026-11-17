@@ -164,3 +164,117 @@ def test_set_e_disjoint_and_qualified() -> None:
 def test_placeholder_has_target_length() -> None:
     text = sim.placeholder_summary(2, "", 500)
     assert abs(count_tokens(text) - 500) <= 12
+
+
+def _kept_texts(chunks: list[sim.DecChunk]) -> set[str]:
+    return {s.text for ch in chunks for s in ch.segments}
+
+
+def _decayer(m: int = 2) -> tuple[sim.TranscriptPlan, sim.Decayer]:
+    p = _plan(60)
+    return p, sim.Decayer(p.turns, p.per_turn, keep_every_third, keep=0.5, m=m, chunk_tokens=900)
+
+
+def test_dec_merge_triggers_at_m_and_cascades() -> None:
+    p, d = _decayer(m=2)
+    f = sim.Freezer(p.turns, p.per_turn, keep_every_third, chunk_tokens=900)
+    for t in p.boundaries:
+        tail_from = exi.tail_start(p.per_turn, t)
+        d.advance(tail_from)
+        f.advance(tail_from)
+        assert all(len(tier) < 2 for tier in d.tiers)
+    assert d.merges[0][0] == 0 and max(tier for tier, _, _ in d.merges) >= 1
+    assert sum(len(tier) * 2**i for i, tier in enumerate(d.tiers)) == len(f.chunks)
+    assert d.upto == f.upto
+
+
+def test_dec_merged_chunk_is_subset_of_inputs_kept_segments() -> None:
+    p, d = _decayer(m=3)
+    for t in p.boundaries:
+        d.advance(exi.tail_start(p.per_turn, t))
+    assert d.merges
+    for _tier, inputs, merged in d.merges:
+        assert len(inputs) == 3
+        assert merged.span == (inputs[0].span[0], inputs[-1].span[1])
+        assert merged.segments
+        kept_before = {s.text for c in inputs for s in c.segments}
+        assert {s.text for s in merged.segments} <= kept_before
+        assert sum(count_tokens(s.text) for s in merged.segments) < sum(
+            count_tokens(s.text) for c in inputs for s in c.segments
+        )
+
+
+def test_dec_tier0_merge_leaves_older_tiers_unchanged_and_layout_oldest_first() -> None:
+    p, d = _decayer(m=2)
+    seen_high = False
+    for t in p.boundaries:
+        old = [list(tier) for tier in d.tiers]
+        d.advance(exi.tail_start(p.per_turn, t))
+        for i in range(1, len(old)):
+            if len(old[i]) <= len(d.tiers[i]):
+                assert d.tiers[i][: len(old[i])] == old[i]
+        chunks = [c for tier in reversed(d.tiers) for c in tier]
+        spans = [c.span for c in chunks]
+        assert spans == sorted(spans)
+        assert [lo for lo, _ in spans[1:]] == [hi for _, hi in spans[:-1]]
+        assert d.text() == "\n\n".join(c.text for c in chunks)
+        seen_high |= len(d.tiers) > 2
+    assert seen_high
+
+
+def test_dec_uncached_on_merge_rewrites_only_suffix() -> None:
+    p, d = _decayer(m=2)
+    prev = ""
+    checked = False
+    for t in p.boundaries:
+        n_merges = len(d.merges)
+        old_tiers = len(d.tiers)
+        d.advance(exi.tail_start(p.per_turn, t))
+        view = sim.View(sim.HEADERS["cdec"], d.text(), d.upto, exi.tail_start(p.per_turn, t))
+        ctx = sim.cost_context(view, p.turns, t)
+        if len(d.merges) > n_merges and prev and len(d.tiers) == old_tiers and len(d.tiers) > 1:
+            deepest_old = d.tiers[-1]
+            assert deepest_old
+            unc = sim.uncached_tokens(prev, ctx)
+            assert unc < count_tokens(ctx)
+            assert sim.lcp_len(prev, ctx) >= len(sim.HEADERS["cdec"]) + len(d.tiers[-1][0].text)
+            checked = True
+        prev = ctx
+    assert checked
+    run = sim.run_arm("cdec", p, keep_every_third, dec=(0.5, 2))
+    assert sum(run.uncached_tokens[1:]) < sum(run.ctx_tokens[1:])
+
+
+def test_cdec_run_is_cacheable_json_and_distinct_from_cfrz() -> None:
+    p = _plan(60)
+    run = sim.run_arm("cdec", p, keep_every_third, dec=(0.5, 2))
+    again = sim.ArmRun.from_json(run.to_json())
+    assert again.contexts == run.contexts and again.ctx_tokens == run.ctx_tokens
+    assert run.contexts[p.checkpoints[-1].t].startswith(sim.HEADERS["cdec"])
+
+
+def test_set_f_disjoint_from_earlier_sets() -> None:
+    cands = [
+        exi.Candidate(f"swe-gym_row{i}", "swe-gym", Transcript(f"s{i}", _turns(40 + i)))
+        for i in range(60)
+    ]
+    earlier = {f"swe-gym_row{i}" for i in range(0, 30)}
+    # Uniform synthetic turns cannot fire thresh twice at C = 65%, so the event minimum drops to 1.
+    picked = sim.select_set(
+        cands,
+        earlier,
+        n=sim.F_N,
+        seed=sim.F_SEED,
+        cap_share=sim.F_CAP_SHARE,
+        min_events=1,
+        token_range=(1_000, 10**7),
+        min_compressible=500,
+    )
+    labels = [c.label for c, _ in picked]
+    assert len(labels) == sim.F_N
+    assert not set(labels) & earlier
+    assert sim.F_SEED == exi.SEED + 5 and sim.F_CAP_SHARE == 0.65
+    assert (
+        sim.plan_transcript("x", _turns(40), sim.F_CAP_SHARE).cap
+        > sim.plan_transcript("x", _turns(40)).cap
+    )
