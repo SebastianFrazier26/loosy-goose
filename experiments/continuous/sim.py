@@ -1,6 +1,7 @@
 """Arm simulation for the continuous-compaction experiments (2026-11-16 spec).
 
-Five arms replay a transcript turn by turn: `full`, `thresh` (threshold summarisation), `crec`
+Six arms replay a transcript turn by turn: `full`, `thresh` (threshold summarisation), `tloosy`
+(the same threshold, loosy in place of the summary), `crec`
 (loosy recomputed over the whole pre-tail history at every turn), `cfrz` (loosy applied once per
 F-token chunk, appended to a frozen prefix) and `cdec` (the same chunks, tiered: when a tier holds
 m chunks they are merged and recompressed into one chunk of the next tier). A "boundary" is a
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
 CONT_VERSION = 1
 # Covers the tiered decaying-freeze simulation; goes into every cdec record key.
 DEC_VERSION = 1
+# Covers the threshold-compaction-with-loosy simulation; goes into every tloosy record key.
+TLOOSY_VERSION = 1
 
 KEEP = LEVELS["medium"]
 FREEZE_TOKENS = 4_000
@@ -34,7 +37,7 @@ CAP_SHARE = 0.40
 SUMMARY_SHARE = 0.33
 CHECKPOINT_SHARES = (0.5, 0.75, 1.0)
 ARMS = ("full", "thresh", "crec", "cfrz")
-F_ARMS = ("full", "thresh", "cfrz", "cfrzm", "cdec")
+F_ARMS = ("full", "thresh", "cfrz", "cfrzm", "cdec", "tloosy")
 E_SEED = exi.SEED + 4
 E_N = 10
 MIN_THRESH_EVENTS = 2
@@ -46,6 +49,9 @@ DEC_KEEP = 0.7
 DEC_M = 4
 # cfrz with its keep raised to thresh's context size; chosen by run.py --calibrate.
 FRZM_KEEP = 0.6
+# tloosy's compaction target as a share of the cap C (thresh's is SUMMARY_SHARE); chosen by
+# run.py --calibrate against thresh's real mean context.
+TLOOSY_SHARE = 0.33
 
 HEADERS = {
     "full": exi.EARLIER_HEADER["full"],
@@ -61,6 +67,8 @@ HEADERS["cdec"] = (
     "dropped, what remains is verbatim; the oldest parts were compressed more than once and "
     "kept less), then the rest verbatim]"
 )
+
+HEADERS["tloosy"] = HEADERS["cfrz"]
 
 Summarizer = Callable[[int, str, int], str]
 Compressor = exi.Compressor
@@ -397,6 +405,33 @@ def _thresh_views(
         yield t, View(header, summary or "", cstart, tail_from), event
 
 
+def _tloosy_views(
+    p: TranscriptPlan, compressor: Compressor, share: float
+) -> Iterator[tuple[int, View, Event | None]]:
+    """`thresh` with shipped loosy for the summary. The input to a compaction is the previous
+    compacted segments (regrouped into turns) plus the verbatim turns since, compressed to
+    `share` of the cap by handing the compressor that target as its keep ratio."""
+    segs: tuple[Segment, ...] = ()
+    compacted = ""
+    sum_tokens = cstart = 0
+    target = int(p.cap * share)
+    for t in p.boundaries:
+        tail_from = exi.tail_start(p.per_turn, t)
+        event = None
+        if sum_tokens + p.before[t] - p.before[cstart] > p.cap and tail_from > cstart:
+            turns = _segments_to_turns([DecChunk(segs, "", (0, 0))]) if segs else []
+            turns += p.turns[cstart:tail_from]
+            tokens = sum(exi._turn_tokens(x) for x in turns)
+            chunk = Transcript("chunk", [Turn(i, x.role, x.blocks) for i, x in enumerate(turns)])
+            segs = tuple(compressor(chunk, min(1.0, target / tokens)))
+            compacted = exi.render_segments(segs)
+            sum_tokens = count_tokens(compacted)
+            cstart = tail_from
+            event = Event(t, tail_from)
+        header = HEADERS["tloosy"] if segs else HEADERS["full"]
+        yield t, View(header, compacted, cstart, tail_from), event
+
+
 def _views(
     arm: str,
     p: TranscriptPlan,
@@ -404,9 +439,13 @@ def _views(
     summarize: Summarizer,
     dec: tuple[float, int] = (DEC_KEEP, DEC_M),
     frzm_keep: float = FRZM_KEEP,
+    tloosy_share: float = TLOOSY_SHARE,
 ) -> Iterator[tuple[int, View, Event | None]]:
     if arm == "thresh":
         yield from _thresh_views(p, summarize)
+        return
+    if arm == "tloosy":
+        yield from _tloosy_views(p, compressor, tloosy_share)
         return
     freezer = Freezer(p.turns, p.per_turn, compressor, keep=frzm_keep if arm == "cfrzm" else KEEP)
     decayer = Decayer(p.turns, p.per_turn, compressor, *dec)
@@ -440,11 +479,12 @@ def run_arm(
     keep_at: Collection[int] | None = None,
     dec: tuple[float, int] = (DEC_KEEP, DEC_M),
     frzm_keep: float = FRZM_KEEP,
+    tloosy_share: float = TLOOSY_SHARE,
 ) -> ArmRun:
     keep = {c.t for c in p.checkpoints} if keep_at is None else set(keep_at)
     run = ArmRun(arm)
     prev = ""
-    for t, view, event in _views(arm, p, compressor, summarize, dec, frzm_keep):
+    for t, view, event in _views(arm, p, compressor, summarize, dec, frzm_keep, tloosy_share):
         ctx = cost_context(view, p.turns, t)
         run.boundaries.append(t)
         run.ctx_tokens.append(count_tokens(ctx))

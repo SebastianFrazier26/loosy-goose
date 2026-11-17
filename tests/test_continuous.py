@@ -278,3 +278,61 @@ def test_set_f_disjoint_from_earlier_sets() -> None:
         sim.plan_transcript("x", _turns(40), sim.F_CAP_SHARE).cap
         > sim.plan_transcript("x", _turns(40)).cap
     )
+
+
+def budget_keeper(t: Transcript, keep: float) -> list[Segment]:
+    """Keeps every other segment, then trims from the end to `keep` of the input tokens."""
+    segs = segment(t)[::2]
+    budget = keep * sum(count_tokens(s.text) for s in segment(t))
+    out, used = [], 0
+    for s in segs:
+        n = count_tokens(s.text)
+        if used + n > budget:
+            break
+        out.append(s)
+        used += n
+    return out
+
+
+def test_tloosy_fires_at_cap_and_matches_thresh_schedule() -> None:
+    p = _plan(40)
+    run = sim.run_arm("tloosy", p, budget_keeper, tloosy_share=0.33)
+    assert len(run.events) >= 2
+    i = run.boundaries.index(run.events[0].t)
+    assert max(run.ctx_tokens[:i]) <= p.cap + 100
+    assert run.ctx_tokens[i] < run.ctx_tokens[i - 1]
+    assert run.contexts[p.checkpoints[-1].t].startswith(sim.HEADERS["tloosy"])
+    full = sim.run_arm("full", p, budget_keeper)
+    first = run.boundaries.index(run.events[0].t)
+    assert run.ctx_tokens[:first] == full.ctx_tokens[:first]
+
+
+def test_tloosy_recompresses_compacted_text_within_target() -> None:
+    p = _plan(60)
+    calls: list[tuple[set[str], float, list[Segment]]] = []
+
+    def spy(t: Transcript, keep: float) -> list[Segment]:
+        out = budget_keeper(t, keep)
+        calls.append(({s.text for s in segment(t)}, keep, out))
+        return out
+
+    share = 0.33
+    run = sim.run_arm("tloosy", p, spy, tloosy_share=share)
+    target = int(p.cap * share)
+    assert len(calls) == len(run.events) >= 2
+    for inp, _, out in calls:
+        assert {s.text for s in out} <= inp
+        assert sum(count_tokens(s.text) for s in out) <= target
+    first_in, _, first_out = calls[0]
+    second_in = calls[1][0]
+    kept = {s.text for s in first_out}
+    assert kept <= second_in
+    assert not (first_in - kept) & second_in
+
+
+def test_tloosy_cacheable_json_and_distinct_header() -> None:
+    p = _plan(40)
+    run = sim.run_arm("tloosy", p, budget_keeper)
+    again = sim.ArmRun.from_json(run.to_json())
+    assert again.contexts == run.contexts and again.events == run.events
+    assert "tloosy" in sim.F_ARMS and "tloosy" not in sim.ARMS

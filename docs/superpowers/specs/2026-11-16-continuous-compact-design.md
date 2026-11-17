@@ -229,3 +229,21 @@ This separates the two explanations for `cfrz` beating `crec` (+0.065). Either a
   - `cfrzm` − `tloosy` and `cdec` − `tloosy`: continuous vs threshold, both without a frontier model.
   - `thresh` − `tloosy`: the price of having no frontier model in this setting.
 - **Reading.** Continuous loosy is the better no-frontier-model policy if `cfrzm` or `cdec` beats `tloosy` (sign p<0.1) or matches it at lower uncached tokens.
+
+## Stage 3 log
+
+- **2026-11-16, built.** The `tloosy` arm is in `experiments/continuous/sim.py`, with key `tloosy.F.v1.t1.s0.33`.
+- **Real `thresh` mean**, from stored summaries: 12,342 context tokens per turn.
+- **Calibration** of the compaction target as a share of C:
+
+  | share of C | context tokens/turn | vs `thresh` | uncached tokens/turn | events per transcript |
+  |---|---|---|---|---|
+  | 0.20 | 12,295 | −0.4% | 1,308 | 1.5 |
+  | 0.25 | 12,403 | +0.5% | 1,416 | 1.8 |
+  | 0.30 | 12,472 | +1.0% | 1,486 | 1.9 |
+  | 0.33 | 12,482 | +1.1% | 1,515 | 2.0 |
+  | 0.40 | 13,024 | +5.5% | 1,600 | 2.0 |
+
+  **0.33 was chosen.** It is the same target as `thresh` and gives the same event schedule (2.0 per transcript), and it lands within 5%. Smaller shares fire fewer compactions, which would make the comparison less like-for-like.
+- **Offline uncached tokens per turn:** `tloosy` 1,515, `cfrzm` 1,521, real `thresh` 1,366.
+- **2026-11-16, launched.** 150 new calls, capped at 180.

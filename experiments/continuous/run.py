@@ -95,6 +95,10 @@ CFGS = {
             ("cfrz", "thresh"),
             ("cfrzm", "thresh"),
             ("cdec", "cfrzm"),
+            ("cfrzm", "tloosy"),
+            ("cdec", "tloosy"),
+            ("thresh", "tloosy"),
+            ("tloosy", "full"),
             ("thresh", "full"),
             ("cfrz", "full"),
             ("cfrzm", "full"),
@@ -116,6 +120,8 @@ def cond(cfg: SetCfg, arm: str) -> str:
         return f"cfrzm{cfg.tag}.v{V}.k{sim.FRZM_KEEP}"
     if arm == "cdec":
         return f"cdec{cfg.tag}.v{V}.d{sim.DEC_VERSION}.k{sim.DEC_KEEP}.m{sim.DEC_M}"
+    if arm == "tloosy":
+        return f"tloosy{cfg.tag}.v{V}.t{sim.TLOOSY_VERSION}.s{sim.TLOOSY_SHARE}"
     return f"{arm}{cfg.tag}.v{V}"
 
 
@@ -226,6 +232,8 @@ def cached_run(
         params |= {"dec_v": sim.DEC_VERSION, "dec_keep": sim.DEC_KEEP, "dec_m": sim.DEC_M}
     if arm == "cfrzm":
         params["frzm_keep"] = sim.FRZM_KEEP
+    if arm == "tloosy":
+        params |= {"tloosy_v": sim.TLOOSY_VERSION, "tloosy_share": sim.TLOOSY_SHARE}
     path = cfg.out / "sims" / f"{p.label}.{arm}.json"
     if path.exists():
         d = json.loads(path.read_text(encoding="utf-8"))
@@ -273,6 +281,8 @@ def print_plan(cfg: SetCfg, plans: list[sim.TranscriptPlan], gen: exi.Model, max
     log(f"set {cfg.name} ({len(plans)}): {', '.join(p.label for p in plans)}")
     log(f"probe generator: {gen.name}; answers: {HAIKU.name}; grader/summariser: {SONNET.name}")
     log(f"CONT_VERSION={V} KEEP={sim.KEEP} F={sim.FREEZE_TOKENS} cap={cfg.cap_share} of total")
+    if "tloosy" in cfg.arms:
+        log(f"TLOOSY_VERSION={sim.TLOOSY_VERSION} TLOOSY_SHARE={sim.TLOOSY_SHARE} of C")
     if "cdec" in cfg.arms:
         log(f"DEC_VERSION={sim.DEC_VERSION} DEC_KEEP={sim.DEC_KEEP} DEC_M={sim.DEC_M}")
         log(f"FRZM_KEEP={sim.FRZM_KEEP}")
@@ -293,6 +303,34 @@ def print_plan(cfg: SetCfg, plans: list[sim.TranscriptPlan], gen: exi.Model, max
     total = sum(counts.values())
     log(f"  {'TOTAL (placeholder events)':26s} {total}   (cap --max-calls {max_calls})")
     return total
+
+
+def pending_counts(
+    cfg: SetCfg, plans: list[sim.TranscriptPlan], gen: exi.Model, store: exi.Store
+) -> dict[str, int]:
+    """Calls a run would still make against the checkpoint, built from the same jobs `run_all`
+    builds. Grades whose answer is not stored yet count as pending (they follow the answer)."""
+    out = {"probe_gen": 0, "summaries": 0, "answers": 0, "grades": 0}
+    for p in plans:
+        runs: dict[str, sim.ArmRun] = {}
+        for a in cfg.arms:
+            try:
+                runs[a], _ = arm_run(cfg, a, p, store, strict=True)
+            except sim.MissingSummaryError:
+                out["summaries"] += 1
+        for ck in p.checkpoints:
+            label = ck_label(p, ck)
+            probes = probes_for(cfg, store, label, gen)
+            if not probes:
+                out["probe_gen"] += 1
+                continue
+            for a, r in runs.items():
+                ans = dl.answer_job(label, cond(cfg, a), r.contexts[ck.t], probes)
+                answered = ans.done_by(store.get(ans.key))
+                out["answers"] += not answered
+                grade = dl.grade_job(store, label, cond(cfg, a), probes) if answered else None
+                out["grades"] += grade is None or not grade.done_by(store.get(grade.key))
+    return out
 
 
 # --------------------------------------------------------------------------- dry run
@@ -517,6 +555,26 @@ def calibrate(cfg: SetCfg, plans: list[sim.TranscriptPlan]) -> None:
             log(f"{m:3d}{keep:6.2f}{ctx:10.0f}{ctx / ref - 1:+11.1%}{unc:15.0f}{ok}")
 
 
+def calibrate_tloosy(cfg: SetCfg, plans: list[sim.TranscriptPlan], store: exi.Store) -> None:
+    runs = [arm_run(cfg, "thresh", p, store) for p in plans]
+    ref = float(np.mean([r.mean_ctx() for r, _ in runs]))
+    ph = sum(ph for _, ph in runs)
+    log(f"thresh REAL mean ctx/turn {ref:.0f} ({ph} transcripts fell back to placeholders)")
+    log("tloosy (target = share x C):")
+    log(f"{'share':>6s}{'ctx/turn':>10s}{'vs thresh':>11s}{'uncached/turn':>15s}{'events':>8s}")
+    for share in CAL_TLOOSY_SHARES:
+        rs = [
+            sim.run_arm("tloosy", p, exi.loosy_compressor, keep_at=[], tloosy_share=share)
+            for p in plans
+        ]
+        ctx = float(np.mean([r.mean_ctx() for r in rs]))
+        unc = float(np.mean([r.mean_uncached() for r in rs]))
+        ev = float(np.mean([len(r.events) for r in rs]))
+        ok = "  *" if abs(ctx / ref - 1) <= CAL_TOL else ""
+        log(f"{share:6.2f}{ctx:10.0f}{ctx / ref - 1:+11.1%}{unc:15.0f}{ev:8.1f}{ok}")
+
+
+CAL_TLOOSY_SHARES = (0.20, 0.25, 0.30, 0.33, 0.40, 0.50, 0.60)
 CAL_M = (2, 3, 4)
 CAL_KEEPS = (0.3, 0.4, 0.5, 0.6, 0.7, 0.8)
 CAL_FRZM_KEEPS = (0.40, 0.45, 0.50, 0.55, 0.60)
@@ -531,6 +589,9 @@ def main() -> None:
     ap.add_argument(
         "--calibrate", action="store_true", help="offline cfrzm / cdec keep grids, set F"
     )
+    ap.add_argument(
+        "--calibrate-tloosy", action="store_true", help="offline tloosy target grid, set F"
+    )
     ap.add_argument("--report", action="store_true", help="write the report from the checkpoint")
     ap.add_argument("--max-calls", type=int, default=None, help="default 360 (E) / 1000 (F)")
     ap.add_argument("--workers", type=int, default=4)
@@ -542,9 +603,15 @@ def main() -> None:
     plans = select_plans(cfg)
     total = print_plan(cfg, plans, gen, max_calls)
     if args.plan:
+        if cfg.calls.exists():
+            pend = pending_counts(cfg, plans, gen, exi.Store(cfg.calls))
+            log(f"pending against {cfg.calls.name}: {pend} = {sum(pend.values())} new calls")
         return
     if args.calibrate:
         calibrate(cfg, plans)
+        return
+    if args.calibrate_tloosy:
+        calibrate_tloosy(cfg, plans, exi.Store(cfg.calls))
         return
     if args.dry_run:
         dry_run(cfg, plans)
