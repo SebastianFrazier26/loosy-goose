@@ -134,3 +134,32 @@ Harness: `experiments/continuous/` (`sim.py`, `run.py`), tests in `tests/test_co
   - n=10 transcripts.
   - With C=40%, `thresh` fired 3–7 times per transcript, which is harsher than real `/compact` use.
   - Unfiltered probes make `full` about 0.94, not 1.0.
+
+## Stage 2 plan (user-approved 2026-11-16)
+
+The user approved scaling up and running the per-chunk ablation. They also proposed a decaying arm, in which older chunks are recompressed again and again, so they keep shrinking with age and the context gets a recency bias. Documentation is updated at every stage, not only at the end.
+
+### 2a. Per-chunk ablation on one-shot compaction (runs first, cheaper)
+
+This separates the two explanations for `cfrz` beating `crec` (+0.065). Either an even per-chunk budget spreads coverage better, or `cfrz` keeps the not-yet-chunked text verbatim.
+
+- **New arm `chunk`.** The pre-tail text is split into consecutive chunks of about F=4,000 tokens at segment boundaries. Shipped loosy runs inside each chunk, and each chunk gets the same budget share (level budget × chunk tokens / pre-tail tokens). The last chunk is compressed like the others, so there is no extra verbatim text. `CHUNK_VERSION = 1`.
+- **Data.** Sets C (10) and D (20) at light, medium and heavy. It reuses their stored probes, full-context filter and `loosy` and `summary` answers, so only the new arm costs calls.
+- **Calls.** About 180: 30 transcripts × 3 levels × (answer + grade). Cap 220.
+- **Reading.**
+  - If `chunk` beats `loosy` (paired, sign p<0.1), explanation (a) holds, and per-chunk selection is a candidate default for one-shot loosy too.
+  - If it does not, (b) explains the pilot.
+
+### 2b. Scaled continuous run
+
+- **New set F.** 25 swe-gym transcripts, seed `exi.SEED + 5`, disjoint from A–E. There are 3 checkpoints each (50/75/100%), 75 in all.
+- **Cap.** C = 65% of the transcript's tokens. This is more realistic than the pilot's 40%, so `thresh` fires less often.
+- **Arms.**
+  - `full`, `thresh` and `cfrz`, as in the pilot. `crec` is dropped, because the pilot settled it.
+  - A new arm, `cdec` (decaying freeze, LSM-style tiers). A chunk that ages out of the tail is compressed at keep `k` into tier 0. When a tier holds `m` chunks, they are merged and recompressed at keep `k` with shipped loosy over their kept segments, into one chunk of the next tier. Older text is therefore compressed k, k², k³… times. Tiers are laid out oldest-first, so a merge rewrites only the end of the context, and the cached prefix survives most turns. `DEC_VERSION = 1`.
+  - `k` and `m` are calibrated offline, with no calls, so that `cdec`'s mean context tokens per turn match `thresh`'s within 5%. That keeps the comparison at equal context size. The calibration is recorded here.
+- **Calls.** About 75 probe generations, 300 answers, 300 grades and about 50 summaries, roughly 725 in all. Cap 850.
+- **Reading.**
+  - It is the same rule as the pilot, now at n=25.
+  - **Worth adopting:** `cfrz` or `cdec` is within 0.03 of `thresh` (or above it) at lower uncached tokens.
+  - **Recency bias:** `cdec` vs `cfrz`, paired.
