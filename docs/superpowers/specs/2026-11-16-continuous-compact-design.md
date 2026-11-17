@@ -179,3 +179,15 @@ This separates the two explanations for `cfrz` beating `crec` (+0.065). Either a
   - Kept: (b) the pilot's `cfrz` edge comes from its longer verbatim recent window.
   - Results: `docs/results/exp_chunk_ablation.md`. The shared C/D report files were not overwritten, because a run limited to one condition loses the other arms' token columns.
   - Implication for 2b: `cfrz` and `cdec` carry up to 4k more verbatim text than `crec`. This is matched in context size against `thresh`, which also keeps verbatim text since its last compaction, so the 2b comparison stays fair.
+
+## Stage 2b log
+
+- **2026-11-16, built.** Set F has 25 swe-gym transcripts (labels in `experiments/output/continuous/f_selection.json`), disjoint from A–E. It has its own checkpoint under `experiments/output/continuous/f/`, and set E's records are untouched.
+- **`cdec` calibration** (offline, mean ctx/turn vs `thresh` 12,449 with placeholder summaries):
+  - m=2 k=0.8 lands at −0.2%, m=3 k=0.7 at −1.9%, m=4 k=0.7 at +1.4%. Each is within 5%.
+  - **m=4, k=0.7** was chosen, because it has the lowest uncached tokens of the three (1,611 per turn).
+  - Even so, it has no cache advantage over `thresh` (1,562 per turn). Matching `thresh`'s size forces a high k, so each merge rewrites a large suffix.
+- **Size mismatch found, and a fix.** At keep 0.33, `cfrz` is 18% smaller than `thresh` on F (10,177 per turn). That would confound `cdec` vs `cfrz`.
+  - So a size-matched freeze arm, **`cfrzm`**, was added, with its keep calibrated so it lands within 5% of `thresh`. `cfrz` stays as the arm comparable to the pilot.
+  - The recency-bias test is now `cdec` − `cfrzm` at equal size. This is the agent's call, and it adds about 150 calls, so the F cap rises from 850 to 1,000.
+- **Known limitation.** When `cdec` merges tiers, the `[…]` gap markers inside partly dropped blocks are lost, so an older-tier tool result can read as contiguous.
