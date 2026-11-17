@@ -215,3 +215,17 @@ This separates the two explanations for `cfrz` beating `crec` (+0.065). Either a
   - **Context rot: none.** No arm beats `full`, and `thresh` is level with it (−0.015).
   - **Size matters most for the continuous arms.** `cfrz` → `cfrzm` (keep 0.33 → 0.6) gains +0.056.
   - **Closed for frontier-model settings.** The no-frontier-model case (threshold compaction with loosy in place of Sonnet, against continuous loosy) was not tested.
+
+## Stage 3 plan: no frontier model (user-approved 2026-11-16)
+
+**Question.** If no frontier model is available, is it better to run loosy at a threshold, as a drop-in for `/compact`, or continuously?
+
+- **New arm `tloosy`.** Threshold compaction exactly as in `thresh`, with shipped loosy in place of the Sonnet summary.
+  - When the context exceeds C, the pre-tail text (the previous compacted text plus the verbatim text since) is compressed with loosy.
+  - Later events compress the already-compacted text again, so loss compounds.
+  - Its compaction target is calibrated offline so that mean context per turn is within 5% of `thresh`'s real value (12,342). This matches the other arms' sizes. `TLOOSY_VERSION = 1`.
+- **Data.** Set F, reusing its stored probes and the stored `full`, `thresh`, `cfrzm` and `cdec` answers. Only `tloosy` costs calls: about 75 answers and 75 grades, so about 150. Cap 180.
+- **Paired comparisons.**
+  - `cfrzm` − `tloosy` and `cdec` − `tloosy`: continuous vs threshold, both without a frontier model.
+  - `thresh` − `tloosy`: the price of having no frontier model in this setting.
+- **Reading.** Continuous loosy is the better no-frontier-model policy if `cfrzm` or `cdec` beats `tloosy` (sign p<0.1) or matches it at lower uncached tokens.
