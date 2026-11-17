@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 from collections import Counter
 from collections.abc import Iterator
@@ -37,6 +38,20 @@ def _jsonl(path: Path) -> Iterator[dict[str, Any]]:
 
 
 def _alive(pid: int) -> bool:
+    if sys.platform == "win32":
+        # os.kill(pid, 0) on Windows is CTRL_C_EVENT, not a liveness probe: it interrupts the
+        # caller's own console group (2026-11-16, CI KeyboardInterrupt mid-pytest).
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        ok = kernel32.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code))
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+        return bool(ok) and code.value == 259  # STILL_ACTIVE
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
