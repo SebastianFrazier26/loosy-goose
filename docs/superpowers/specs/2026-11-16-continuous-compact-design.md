@@ -174,3 +174,8 @@ This separates the two explanations for `cfrz` beating `crec` (+0.065). Either a
   - Rendered earlier-stretch tokens run 0.5–1.4% higher for `chunk`, probably because it has more segment boundaries. That is a slight context-size edge for `chunk`, and it is noted here.
   - The report now always covers every arm of a set, which fixes the old `--conditions` overwrite bug.
 - **2026-11-16, launched.** Set C, then set D, with `--conditions chunk`, capped at 70 and 130 calls.
+- **2026-11-16, result.** 180 calls, 0 failed.
+  - Rejected: (a) per-chunk budget never beats `loosy`. It is −0.060 at set C light (p=0.031) and level on set D.
+  - Kept: (b) the pilot's `cfrz` edge comes from its longer verbatim recent window.
+  - Results: `docs/results/exp_chunk_ablation.md`. The shared C/D report files were not overwritten, because a run limited to one condition loses the other arms' token columns.
+  - Implication for 2b: `cfrz` and `cdec` carry up to 4k more verbatim text than `crec`. This is matched in context size against `thresh`, which also keeps verbatim text since its last compaction, so the 2b comparison stays fair.
