@@ -258,7 +258,7 @@ against a 20,236-token earlier stretch.
 | 2026-10-22 | Slot compression | User's original rewrite idea tested on fresh sets C and D | Aggressive rewrite hurts; gentle and SLM neutral; line-keep not confirmed |
 | 2026-10-23 | Falsification | Three pre-registered tests before retiring the idea (user) | Niche found: no-frontier-model compaction |
 | 2026-11-15/16 | Local size curve | Qwen3 1.7B → 4B → 8B local summaries | Gap to loosy barely narrows (0.26–0.32 at 8B) |
-| 2026-11-16 | Continuous compaction (in progress) | Run loosy after every turn instead of at a threshold; user picked recompute vs freeze, a replay pilot, no full-context probe filter, then a decaying (recency-biased) arm | Pilot: freeze within 0.03 of `/compact`-style at ~20% fewer uncached tokens; recompute loses; per-chunk budget ablation negative. Scaled run (set F) running |
+| 2026-11-16 | Continuous compaction | Run loosy after every turn instead of at a threshold; user picked recompute vs freeze, a replay pilot, no full-context probe filter, then a decaying (recency-biased) arm | Pilot: freeze within 0.03 of `/compact`-style at ~20% fewer uncached tokens; recompute loses; per-chunk budget ablation negative. Scaled run (set F): threshold summary dominates on accuracy and cache cost; decay is null |
 
 ### Origin: compress text the way JPEG compresses pixels
 
@@ -406,7 +406,7 @@ objection is that 1.7B is too small, so the size curve followed: 4B and 8B (4-bi
 only 0.01–0.05 per step, the 8B run needed an MLX cache cap to fit in 16 GB, and loosy still leads
 8B by 0.26–0.32 (p ≤ 0.004). The local models also used just 37–67% of their budget.
 
-### Continuous compaction (2026-11-16, in progress)
+### Continuous compaction (2026-11-16)
 
 The user asked whether loosy has any use beyond one-shot compaction, and proposed running it
 continuously, after every model turn, instead of at a threshold. That is the one setting where
@@ -448,13 +448,27 @@ never beat plain loosy (−0.06 at set C light, p = 0.03; level on set D), so th
 not the cause; the longer verbatim recent window is.
 [Results](docs/results/exp_chunk_ablation.md).
 
-**Scaled run (set F, 25 transcripts, 75 checkpoints, ~875 calls): running.** The cap is now 65%
-of each transcript, so threshold compaction fires about twice per transcript, closer to real
-use than the pilot's 40%. Arms: full, threshold, freeze (pilot settings), size-matched freeze, and
-decaying freeze, calibrated offline to the threshold arm's context size (merge every 4 chunks,
-keep 0.7). Offline cost before any accuracy data: at equal size the decaying arm has the highest
-uncached tokens (1.61k per turn vs 1.56k threshold and 1.52k size-matched freeze), because
-matching size forces a high keep rate, so each merge rewrites a large suffix.
+**Scaled run (set F, 25 transcripts, 75 checkpoints, 865 calls).**
+[Results](docs/results/exp_continuous_f.md). The cap rose to 65% of each transcript, so threshold
+compaction fires about twice per transcript, closer to real use than the pilot's 40%. The
+continuous arms were calibrated offline to threshold compaction's context size; "decaying" merges
+every 4 chunks at keep 0.7.
+
+| arm | accuracy | context tokens/turn | uncached tokens/turn |
+| --- | --- | --- | --- |
+| full | 0.952 | 18.8k | 0.96k |
+| threshold summary (`/compact`-style) | 0.937 | 12.3k | **1.37k** |
+| decaying freeze | 0.917 | 12.6k | 1.61k |
+| freeze, size-matched (keep 0.6) | 0.913 | 12.4k | 1.52k |
+| freeze, pilot settings (keep 0.33) | 0.857 | 10.2k | 1.41k |
+
+The pilot did not replicate. At equal context size threshold compaction is ahead on accuracy
+(+0.02, not significant) **and** on cache cost. The pilot's cache edge came from the low cap,
+which made threshold compaction fire 3–7 times. The user's decaying, recency-biased arm made
+no difference against plain freeze at equal size (+0.003, p = 0.50). No arm beat full context,
+so there is no context-rot gain to harvest at these lengths. Continuous loosy is therefore not a
+better way to compact when a frontier model is available. The one case left open is compaction
+without a frontier model, where threshold compaction would also have to use loosy.
 
 ## Methodology and lessons learned
 

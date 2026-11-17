@@ -205,3 +205,13 @@ This separates the two explanations for `cfrz` beating `crec` (+0.065). Either a
 
   Offline uncached tokens per turn at equal size: `cfrzm` 1,521, `thresh` 1,562, `cdec` 1,611.
 - **2026-11-16, launched.** The F run is 875 planned calls, capped at 1,000.
+- **2026-11-16, result.** 865 calls, 0 failed. Results: `docs/results/exp_continuous_f.md`.
+  - **Not worth adopting.** With real summaries, `thresh` costs fewer uncached tokens than any continuous arm (1,366 per turn, against 1,411 for `cfrz`, 1,521 for `cfrzm` and 1,611 for `cdec`). It is also more accurate:
+    - `cfrzm` −0.024 (p=0.29) and `cdec` −0.021 (p=1.0), at equal size;
+    - `cfrz` −0.081 (p=0.011), 18% smaller.
+    The accuracy gaps are inside 0.03, but the cost condition fails, so `thresh` dominates on both axes.
+  - **The pilot's cache edge came from the low cap.** At C=40%, `thresh` fired 3–7 times per transcript. At C=65% it fires about twice. The real summaries also came in shorter than the placeholders the offline estimate used.
+  - **Recency bias: null.** `cdec` − `cfrzm` = +0.003 (p=0.50) at equal size. Repeatedly recompressing older chunks neither helps nor hurts.
+  - **Context rot: none.** No arm beats `full`, and `thresh` is level with it (−0.015).
+  - **Size matters most for the continuous arms.** `cfrz` → `cfrzm` (keep 0.33 → 0.6) gains +0.056.
+  - **Closed for frontier-model settings.** The no-frontier-model case (threshold compaction with loosy in place of Sonnet, against continuous loosy) was not tested.
