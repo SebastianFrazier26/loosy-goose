@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="Interactive demo of loosy-goose, extractive lossy compression for agent transcripts."
+    />
+    <title>loosy-goose demo</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%232f6f5e'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main id="app">
+      <header class="hero">
+        <h1>loosy-goose</h1>
+        <p class="tagline">
+          JPEG-style lossy compression for LLM context. It keeps real segments of the transcript
+          and drops the rest; nothing is rewritten.
+        </p>
+      </header>
+
+      <section class="demo" aria-label="Compression demo">
+        <div class="controls">
+          <div class="picker" role="tablist" aria-label="Transcript" id="picker"></div>
+          <div class="level">
+            <label for="level">Compression level</label>
+            <input type="range" id="level" min="0" max="3" step="1" value="2" list="level-ticks" />
+            <datalist id="level-ticks">
+              <option value="0" label="full"></option>
+              <option value="1" label="light"></option>
+              <option value="2" label="medium"></option>
+              <option value="3" label="heavy"></option>
+            </datalist>
+            <div class="ticks" aria-hidden="true">
+              <span>full</span><span>light</span><span>medium</span><span>heavy</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="meter" id="meter" aria-live="polite">
+          <div class="bar" role="img" id="bar">
+            <span class="fill kept" id="bar-kept"></span>
+            <span class="fill sup" id="bar-sup"></span>
+          </div>
+          <dl class="stats">
+            <div><dt>tokens kept</dt><dd id="stat-tokens">-</dd></div>
+            <div><dt>ratio</dt><dd id="stat-ratio">-</dd></div>
+            <div><dt>atom recall</dt><dd id="stat-recall">-</dd></div>
+          </dl>
+          <ul class="legend">
+            <li><i class="sw kept"></i>kept</li>
+            <li><i class="sw drop"></i>dropped (lossy)</li>
+            <li><i class="sw sup"></i>superseded (lossless)</li>
+          </ul>
+          <label class="toggle"><input type="checkbox" id="hide-dropped" /> show only what the model sees</label>
+        </div>
+
+        <ol class="transcript" id="transcript" aria-label="Transcript segments"></ol>
+        <p class="attribution" id="attribution"></p>
+      </section>
+
+      <section class="explain" aria-labelledby="how">
+        <h2 id="how">How it works</h2>
+        <ol class="steps">
+          <li>
+            <h3>1. Supersession <span class="pill">lossless</span></h3>
+            <p>
+              A file read that a later edit replaces, or an exact duplicate, carries nothing the
+              final state does not. Those segments go first, before any lossy step. On the
+              research corpus this alone removes about a quarter of
+              all tokens.
+            </p>
+          </li>
+          <li>
+            <h3>2. Leverage in the session's own basis</h3>
+            <p>
+              Each segment is embedded and the session's segment matrix is factored by SVD. That
+              is the Karhunen&ndash;Lo&egrave;ve transform JPEG approximates with the DCT, and it
+              is affordable exactly because one session is small. A segment's leverage score is
+              how strongly it loads on the retained principal directions.
+            </p>
+          </li>
+          <li>
+            <h3>3. Novelty per token</h3>
+            <p>
+              The budget is filled greedily. Each candidate's leverage is discounted by the share
+              of its words the kept set already has (to the power 0.5), then ranked per token, so
+              a long segment does not win on size and repeats lose to fresh content.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="results" aria-labelledby="results">
+        <h2 id="results">Results</h2>
+        <div id="results-body"></div>
+      </section>
+
+      <footer id="footer"></footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

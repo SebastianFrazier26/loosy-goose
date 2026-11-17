@@ -18,6 +18,9 @@ compaction that must stay local, free, deterministic or auditable, and not a rep
 good model-written summary when one is available. The numbers, and how the project got here,
 are below.
 
+**Interactive demo:** <https://sebastianfrazier26.github.io/loosy-goose/> (pending: goes live once
+GitHub Pages is enabled for the repo; see [Demo site](#demo-site)).
+
 Contents: [Install and use](#install-and-use) · [How it works](#how-it-works) ·
 [Performance](#performance) · [Course and evolution](#course-and-evolution) ·
 [Methodology and lessons](#methodology-and-lessons-learned) · [Use cases](#use-cases) ·
@@ -507,6 +510,28 @@ uv run python experiments/fetch_public.py      # public corpora into data/public
 `data/local/` is gitignored and empty on a fresh clone; `experiments/pick_local.py` builds an
 equivalent corpus from your own sessions. The public corpora alone reproduce every public row in
 `docs/results/`.
+
+## Demo site
+
+`site/` is a static Vite + TypeScript page: pick a transcript, slide the level, and watch which
+segments the shipped compressor keeps, drops, or supersedes. Its data, `site/public/bundle.json`, is
+not committed. `site/build_bundle.py` produces it by running the default selector at light, medium
+and heavy on three SWE-Gym/OpenHands-SFT-Trajectories rows (MIT), fetched from the Hugging Face
+hub at the revision `experiments/fetch_public.py` pins and checked against per-row hashes.
+`.github/workflows/pages.yml` rebuilds and deploys it on every push to `main`, after the CI suite.
+
+```
+uv sync --dev --extra embed
+uv run python site/build_bundle.py      # add --parquet data/public/swe-gym/data/<file>.parquet to skip the download
+cd site && npm ci && npm run dev        # or: npm run build && npm run preview
+```
+
+The page sends no frame-blocking headers, so it can be embedded in an iframe; `?theme=light` or
+`?theme=dark` overrides the system colour scheme.
+
+**One-time owner step:** enable Pages under *Settings → Pages → Build and deployment → Source:
+GitHub Actions*. Until then the `Pages` workflow's `configure-pages` step fails; nothing in the
+workflow turns the setting on by itself.
 
 ## License
 
