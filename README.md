@@ -179,7 +179,7 @@ Paired, on set D: summary − loosy is +0.106 (p = 0.039, n = 19), +0.118 (p = 0
 (p = 0.021). Loosy − local 8B is +0.316, +0.261 (p = 0.004), +0.275 (p < 0.001); against 1.7B
 and 4B it is +0.29 to +0.34, all p < 0.001. The hybrid is level with the summary (+0.004 to
 +0.015, n.s.). Sources:
-[exp_slot_downstream_d.md](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/results/exp_slot_downstream_d.md)
+[exp_slot_downstream_d.md](docs/results/exp_slot_downstream_d.md)
 (every set-D arm: hybrids, gentle slot, line-keep, local size curve).
 
 **Experiment I** (20 transcripts: 5 trace-commons, 15 SWE-Gym; probes written and filtered by
@@ -196,15 +196,15 @@ The summaries here came out *shorter* than their loosy-matched budgets and still
 Next-step prediction (does the model choose the same next action as the real agent) was also
 measured and is noise: the CIs are 0.3–0.5 wide and show no consistent ordering across
 answerers. Source:
-[exp_i_downstream.txt](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/downstream-eval/docs/results/exp_i_downstream.txt).
+[exp_i_downstream.txt](docs/results/exp_i_downstream.txt).
 
 **Set C** (10 SWE-Gym transcripts, same protocol as set D) is the one place the summary did not
 clearly win: loosy 0.974 / 0.909 / 0.888 against summary 0.946 / 0.951 / 0.956, no paired
 difference significant at n = 10.
-[exp_slot_downstream.md](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/results/exp_slot_downstream.md).
+[exp_slot_downstream.md](docs/results/exp_slot_downstream.md).
 Pooled over C + D (n = 28–30), summary − loosy is +0.06 at light (p = 0.19), +0.09 at medium
 (p = 0.011) and +0.12 at heavy (p = 0.007)
-([exp_probe_types.md](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/results/exp_probe_types.md)).
+([exp_probe_types.md](docs/results/exp_probe_types.md)).
 
 **Caveats.** n is 10–20 transcripts per set. One grader (Sonnet) for every row. In Experiment I
 Sonnet wrote both the probes and the summaries; sets C and D fixed that by writing probes with
@@ -350,7 +350,7 @@ segments dropped whole (about 40% of the loss).
 If whole segments are the problem, thin them instead, the "quantize" step of the codec. The spike
 ([code](https://github.com/SebastianFrazier26/loosy-goose/tree/spike/token-thinning/experiments/spike_thin),
 summarised in the
-[handoff note](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/superpowers/handoffs/2026-10-22-slm-rewrite-handoff.md)):
+[handoff note](docs/superpowers/handoffs/2026-10-22-slm-rewrite-handoff.md)):
 
 - **Deleting predictable tokens by small-LM surprisal** (pythia-31m to Qwen3-1.7B) failed.
   Thinning prose cost answers; code skeletons lost the relations between atoms; and model size
@@ -369,7 +369,7 @@ equivalents rather than drop them. The user specified the scheme by analogy with
 endings and with transform → quantize → cross-row coding: each sentence becomes a fixed slot row
 (action, agent, object, recipient, extra), meaning carried by slot position, each slot reduced to
 the fewest words, repeated values carried forward across rows. Negation, modality and cause must
-survive ([spec](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/superpowers/specs/2026-10-22-slot-compress-design.md)).
+survive ([spec](docs/superpowers/specs/2026-10-22-slot-compress-design.md)).
 The agent built it on a spaCy parse and made the schema and quantizer calls.
 
 | variant | prose+thinking cut | downstream vs loosy |
@@ -390,7 +390,7 @@ lost facts sit in dropped code and tool output. A negation-scope bug ("don't hav
 Every extractive and rewrite variant now sat 0.10–0.14 below the summary. Before retiring the
 idea, the user asked for a test of the places it could still win, with a rule fixed in advance:
 retire only if all three come back negative
-([spec](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/superpowers/specs/2026-10-23-falsify-extractive-design.md)).
+([spec](docs/superpowers/specs/2026-10-23-falsify-extractive-design.md)).
 
 1. **Exact-detail probes.** Probes whose answer contains an atom (path, identifier, number)
    might favour verbatim text. They do not: on set D loosy trails the summary by 0.09–0.14 on

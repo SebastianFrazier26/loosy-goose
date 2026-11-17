@@ -445,3 +445,13 @@ def test_a_changed_upstream_summary_reruns_its_answers_and_their_grading(tmp_pat
     # summary-light: 4 models x (probe + next) answers rerun; only the next-step replies differ
     # (the stub's probe answers ignore the context), so only those 4 gradings rerun.
     assert rt.new_calls == 4 * 2 + 4
+
+
+def test_alive_is_a_probe_not_a_signal() -> None:
+    import os
+    import subprocess
+
+    assert exp_i_status._alive(os.getpid())
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    assert not exp_i_status._alive(p.pid)
