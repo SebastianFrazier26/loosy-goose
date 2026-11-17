@@ -179,7 +179,7 @@ Paired, on set D: summary − loosy is +0.106 (p = 0.039, n = 19), +0.118 (p = 0
 (p = 0.021). Loosy − local 8B is +0.316, +0.261 (p = 0.004), +0.275 (p < 0.001); against 1.7B
 and 4B it is +0.29 to +0.34, all p < 0.001. The hybrid is level with the summary (+0.004 to
 +0.015, n.s.). Sources:
-[exp_slot_downstream_d.md](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/results/exp_slot_downstream_d.md)
+[exp_slot_downstream_d.md](docs/results/exp_slot_downstream_d.md)
 (every set-D arm: hybrids, gentle slot, line-keep, local size curve).
 
 **Experiment I** (20 transcripts: 5 trace-commons, 15 SWE-Gym; probes written and filtered by
@@ -196,15 +196,15 @@ The summaries here came out *shorter* than their loosy-matched budgets and still
 Next-step prediction (does the model choose the same next action as the real agent) was also
 measured and is noise: the CIs are 0.3–0.5 wide and show no consistent ordering across
 answerers. Source:
-[exp_i_downstream.txt](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/downstream-eval/docs/results/exp_i_downstream.txt).
+[exp_i_downstream.txt](docs/results/exp_i_downstream.txt).
 
 **Set C** (10 SWE-Gym transcripts, same protocol as set D) is the one place the summary did not
 clearly win: loosy 0.974 / 0.909 / 0.888 against summary 0.946 / 0.951 / 0.956, no paired
 difference significant at n = 10.
-[exp_slot_downstream.md](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/results/exp_slot_downstream.md).
+[exp_slot_downstream.md](docs/results/exp_slot_downstream.md).
 Pooled over C + D (n = 28–30), summary − loosy is +0.06 at light (p = 0.19), +0.09 at medium
 (p = 0.011) and +0.12 at heavy (p = 0.007)
-([exp_probe_types.md](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/results/exp_probe_types.md)).
+([exp_probe_types.md](docs/results/exp_probe_types.md)).
 
 **Caveats.** n is 10–20 transcripts per set. One grader (Sonnet) for every row. In Experiment I
 Sonnet wrote both the probes and the summaries; sets C and D fixed that by writing probes with
@@ -258,6 +258,7 @@ against a 20,236-token earlier stretch.
 | 2026-10-22 | Slot compression | User's original rewrite idea tested on fresh sets C and D | Aggressive rewrite hurts; gentle and SLM neutral; line-keep not confirmed |
 | 2026-10-23 | Falsification | Three pre-registered tests before retiring the idea (user) | Niche found: no-frontier-model compaction |
 | 2026-11-15/16 | Local size curve | Qwen3 1.7B → 4B → 8B local summaries | Gap to loosy barely narrows (0.26–0.32 at 8B) |
+| 2026-11-16 | Continuous compaction | Run loosy after every turn instead of at a threshold; user picked recompute vs freeze, a replay pilot, no full-context probe filter, then a decaying (recency-biased) arm | Pilot: freeze within 0.03 of `/compact`-style at ~20% fewer uncached tokens; recompute loses; per-chunk budget ablation negative. Scaled run (set F): threshold summary dominates on accuracy and cache cost; decay is null. No frontier model: continuous loosy beats threshold loosy by +0.04 (p ≈ 0.02) |
 
 ### Origin: compress text the way JPEG compresses pixels
 
@@ -349,7 +350,7 @@ segments dropped whole (about 40% of the loss).
 If whole segments are the problem, thin them instead, the "quantize" step of the codec. The spike
 ([code](https://github.com/SebastianFrazier26/loosy-goose/tree/spike/token-thinning/experiments/spike_thin),
 summarised in the
-[handoff note](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/superpowers/handoffs/2026-10-22-slm-rewrite-handoff.md)):
+[handoff note](docs/superpowers/handoffs/2026-10-22-slm-rewrite-handoff.md)):
 
 - **Deleting predictable tokens by small-LM surprisal** (pythia-31m to Qwen3-1.7B) failed.
   Thinning prose cost answers; code skeletons lost the relations between atoms; and model size
@@ -368,7 +369,7 @@ equivalents rather than drop them. The user specified the scheme by analogy with
 endings and with transform → quantize → cross-row coding: each sentence becomes a fixed slot row
 (action, agent, object, recipient, extra), meaning carried by slot position, each slot reduced to
 the fewest words, repeated values carried forward across rows. Negation, modality and cause must
-survive ([spec](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/superpowers/specs/2026-10-22-slot-compress-design.md)).
+survive ([spec](docs/superpowers/specs/2026-10-22-slot-compress-design.md)).
 The agent built it on a spaCy parse and made the schema and quantizer calls.
 
 | variant | prose+thinking cut | downstream vs loosy |
@@ -389,7 +390,7 @@ lost facts sit in dropped code and tool output. A negation-scope bug ("don't hav
 Every extractive and rewrite variant now sat 0.10–0.14 below the summary. Before retiring the
 idea, the user asked for a test of the places it could still win, with a rule fixed in advance:
 retire only if all three come back negative
-([spec](https://github.com/SebastianFrazier26/loosy-goose/blob/exp/slot-compress/docs/superpowers/specs/2026-10-23-falsify-extractive-design.md)).
+([spec](docs/superpowers/specs/2026-10-23-falsify-extractive-design.md)).
 
 1. **Exact-detail probes.** Probes whose answer contains an atom (path, identifier, number)
    might favour verbatim text. They do not: on set D loosy trails the summary by 0.09–0.14 on
@@ -404,6 +405,91 @@ So the idea was not retired; its niche is compaction without a frontier model. T
 objection is that 1.7B is too small, so the size curve followed: 4B and 8B (4-bit MLX) gain
 only 0.01–0.05 per step, the 8B run needed an MLX cache cap to fit in 16 GB, and loosy still leads
 8B by 0.26–0.32 (p ≤ 0.004). The local models also used just 37–67% of their budget.
+
+### Continuous compaction (2026-11-16)
+
+The user asked whether loosy has any use beyond one-shot compaction, and proposed running it
+continuously, after every model turn, instead of at a threshold. That is the one setting where
+loosy's cost profile matters: it is free and local, so it can run every turn, which a frontier
+summary cannot do cheaply. Spec and running log:
+[2026-11-16-continuous-compact-design.md](docs/superpowers/specs/2026-11-16-continuous-compact-design.md).
+
+The user made four design calls:
+- test two continuous modes: **recompute** (re-run loosy over the whole history every turn) and
+  **freeze** (compress each 4k chunk once as it ages out of the verbatim tail, never touch it
+  again, so the prompt-cache prefix survives);
+- replay a small pilot on public transcripts before any live agent runs;
+- drop the full-context probe filter, so that a gain from trimming context ("context rot")
+  could show up;
+- after the pilot, add a **decaying** arm: older chunks are recompressed again and again (LSM-style
+  tiers), giving the context a recency bias.
+
+The new metric is cost over the whole trajectory, not just accuracy at one point: context tokens
+per turn and uncached tokens per turn, the latter standing in for prompt-cache misses.
+
+**Pilot (set E, 10 transcripts, 30 checkpoints, 310 calls).**
+[Results](docs/results/exp_continuous_pilot.md).
+
+| arm | accuracy | context tokens/turn | uncached tokens/turn |
+| --- | --- | --- | --- |
+| full | 0.940 | 21.6k | 1.1k |
+| threshold summary (`/compact`-style) | 0.932 | 10.0k | 1.9k |
+| freeze | 0.900 | 10.0k | 1.5k |
+| recompute | 0.835 | 10.6k | 4.0k |
+
+Freeze trails threshold compaction by 0.032 (not significant) at about 20% fewer uncached tokens,
+inside the pre-set 0.05 bar for scaling up, and the gap closes to 0 by the end of the transcript.
+Recompute loses on both accuracy (−0.10, p = 0.02) and cache cost. Nothing beat full context.
+
+**Per-chunk ablation (sets C and D, one-shot, 180 calls).** Freeze beat recompute by +0.065 at
+equal size. Either its even per-chunk budget spread coverage better, or it kept up to 4k more
+recent text verbatim. Running loosy per chunk at the same total budget on one-shot compaction
+never beat plain loosy (−0.06 at set C light, p = 0.03; level on set D), so the even budget is
+not the cause; the longer verbatim recent window is.
+[Results](docs/results/exp_chunk_ablation.md).
+
+**Scaled run (set F, 25 transcripts, 75 checkpoints, 865 calls).**
+[Results](docs/results/exp_continuous_f.md). The cap rose to 65% of each transcript, so threshold
+compaction fires about twice per transcript, closer to real use than the pilot's 40%. The
+continuous arms were calibrated offline to threshold compaction's context size; "decaying" merges
+every 4 chunks at keep 0.7.
+
+| arm | accuracy | context tokens/turn | uncached tokens/turn |
+| --- | --- | --- | --- |
+| full | 0.952 | 18.8k | 0.96k |
+| threshold summary (`/compact`-style) | 0.937 | 12.3k | **1.37k** |
+| decaying freeze | 0.917 | 12.6k | 1.61k |
+| freeze, size-matched (keep 0.6) | 0.913 | 12.4k | 1.52k |
+| freeze, pilot settings (keep 0.33) | 0.857 | 10.2k | 1.41k |
+
+The pilot did not replicate. At equal context size threshold compaction is ahead on accuracy
+(+0.02, not significant) **and** on cache cost. The pilot's cache edge came from the low cap,
+which made threshold compaction fire 3–7 times. The user's decaying, recency-biased arm made
+no difference against plain freeze at equal size (+0.003, p = 0.50). No arm beat full context,
+so there is no context-rot gain to harvest at these lengths. Continuous loosy is therefore not a
+better way to compact when a frontier model is available.
+
+**Without a frontier model (set F, 150 calls).** The user approved one more arm: threshold
+compaction exactly like `/compact`, but with loosy doing the compacting, at the same target and
+event schedule. The table is the same run with that arm added.
+
+| arm | accuracy | context tokens/turn | uncached tokens/turn |
+| --- | --- | --- | --- |
+| threshold summary (Sonnet) | 0.937 | 12.3k | 1.37k |
+| decaying freeze (continuous loosy) | 0.917 | 12.6k | 1.61k |
+| freeze, size-matched (continuous loosy) | 0.913 | 12.4k | 1.52k |
+| threshold loosy | 0.873 | 12.5k | 1.52k |
+
+**This is positive.** At equal context size and equal cache cost, continuous loosy beats threshold loosy
+by +0.041 (p = 0.027) for freeze and +0.044 (p = 0.017) for decaying freeze. Threshold loosy decays
+along the session (0.93 → 0.88 → 0.81 at 50/75/100%), because each compaction re-compresses the
+last one's output and loses more. Continuous freeze compresses each chunk once from the
+original and holds at about 0.90–0.92. Not having a frontier model costs 0.065 under threshold
+compaction; continuous freeze recovers about two-thirds of that.
+
+So the best way to use loosy in its niche (offline, free, deterministic, no frontier model) is
+continuously, in freeze mode, not as a drop-in `/compact`. The shipped `/loosy` handoff is
+threshold-style today; adding a continuous mode is an open product decision (see Future research).
 
 ## Methodology and lessons learned
 
@@ -480,7 +566,11 @@ fresh held-out set, a non-summarising probe writer, and a fixed call cap.
 8. **Personalisation prior.** A background prior built from a user's own sessions to stabilise
    small-context SVD was in the original design and never built. Test: a prior from held-out
    sessions, measured on proxies and then downstream.
-9. **Packaging.** A PyPI release (with the CUDA-torch problem for plain pip users solved) and a
+9. **Continuous freeze mode in the product.** Measured as the better no-frontier policy above.
+   Open: how to run it in a live agent (a per-turn hook, or a proxy between agent and model) and
+   whether live task success agrees with the replay. Test: live SWE-Gym runs with freeze vs
+   threshold loosy vs `/compact`.
+10. **Packaging.** A PyPI release (with the CUDA-torch problem for plain pip users solved) and a
    Claude Code plugin/marketplace entry.
 
 ## Repository layout

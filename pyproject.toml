@@ -25,6 +25,11 @@ embed = [
 mcp = [
     "mcp>=2.3,<3",
 ]
+slot = [
+    "mlx-lm==0.32.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "spacy==3.8.16",
+    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+]
 
 [project.scripts]
 loosy-goose = "loosy_goose.cli:main"

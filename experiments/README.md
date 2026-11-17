@@ -87,6 +87,31 @@ nothing:
 uv run python experiments/grid_status.py --grid exp_d --methods A,B --variants base --log PATH --watch --interval 10
 ```
 
+## Experiment I: downstream performance
+
+**`exp_i_downstream.py`** — does a model do as well from a loosy-compressed context as from the
+full one, and versus a Sonnet summary at the same token budget? About 20 public transcripts
+(20k–60k tokens) are cut before a real assistant action late in the session; the last 4,000 tokens
+stay verbatim and the earlier stretch is rendered seven ways (full, loosy light/medium/heavy,
+summary at each loosy level's size). Haiku 5.5 and Sonnet 5.5 (`claude -p`) and gpt-6-luna and
+gpt-6-sol (`codex exec`) answer factual probes and predict the next action; Sonnet grades blind.
+Design: `docs/superpowers/specs/2026-10-14-exp-i-downstream-design.md`.
+
+It calls the real CLIs and spends subscription usage. Every call is checkpointed to
+`experiments/output/exp_i/calls.jsonl`, so a rerun skips finished calls and retries failed ones;
+usage-limit errors back off to a 30-minute sleep instead of aborting. `--limit N` / `--only NAME`
+make a partial run, which writes `experiments/output/exp_i/summary.txt` only; a full run also
+writes `docs/results/exp_i_downstream.txt`. `--dry-run` selects and renders without calling.
+
+```
+nohup caffeinate -i uv run python experiments/exp_i_downstream.py --workers 4 \
+  >> experiments/output/exp_i/run.log 2>&1 &
+uv run python experiments/exp_i_status.py --watch
+```
+
+**`exp_i_status.py`** — read-only progress for the run: done/planned per task and model, tokens so
+far, rate and rough ETA, failures awaiting a retry, NOT RUNNING / stall warnings.
+
 ## Surveys
 
 **`survey_paths.py`** — how much of a transcript is file paths, and what a substitution table
