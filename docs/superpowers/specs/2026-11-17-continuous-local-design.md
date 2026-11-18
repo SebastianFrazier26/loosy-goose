@@ -157,3 +157,27 @@ its own code.
     arm is skipped. The run goes on.
   - **Nemo tokenizer.** It loads with `fix_mistral_regex=True` (transformers 5.16.1) in both `local._tokenizer` and the `mlx_lm`
     load. Without the flag, mlx_lm's local-path tokenizer load warned of an incorrect regex; with it, the warning is gone.
+- **2026-11-17, final-review fixes (controller rulings; no GPU used, nothing generated yet).**
+  - **Chunked Nemo probes.** Whole-history probe prompts reached 53k Nemo tokens, which would not fit 16 GB. The pre-tail history
+    is now split at turn boundaries (a single turn over the cap is halved at line breaks) into segments of at most 12,000 Nemo
+    tokens (`experiments/continuous/probe_segments.py`). The 10 probes are shared out by token share, at least one per segment.
+    Each segment is its own `probes.nemo1` record, keyed `<label>@<pct>#s<i>`, and a checkpoint's probe set is the segments' probes
+    in order. A segment reply must hold at least 3-in-10 of the probes asked (one at minimum), and only the first n count.
+    `--plan`: 184 segment jobs for 75 checkpoints; the largest prompt is `swe-gym_row129@75#s1` at 12,090 Nemo tokens.
+    A bounded recent window was rejected because it would favour tail-heavy arms. The cost: probes cannot span segments.
+  - **MLX RuntimeError.** `local.mlx_runner` catches it (out of memory included), frees the Metal cache and raises a
+    non-transient `CallError`, which the Runtime records before moving on. The qthresh summary loop records it, drops the
+    generator and builds a new one for the next job.
+  - **Attempts and resume.** `call_with_retry` gives `mlx` models a single attempt on invalid replies and non-transient errors,
+    since greedy retries would be identical (other models are unchanged). Keys in `qwen_failures.jsonl` are skipped on resume and
+    over-window answers are no longer re-recorded. `--retry-failed` calls them again.
+  - **Report.** New: a table of expected, answered and graded checkpoints per arm; failure counts (probe segments, summaries,
+    answers, over-window answers, grades); a note that the arm table's full row covers only transcripts whose three checkpoints all
+    fit; and the ratio of Qwen summary tokens to target over the cached summaries.
+  - **lsum cache.** Writes are atomic (temp file plus rename). A torn file is treated as a cache miss. Keys and content are
+    unchanged.
+  - **Latency warmup.** It is now one CHUNK (2,048 tokens) instead of 256.
+  - **`--labels L1,L2`.** Qwen path only: it restricts the run to the named transcripts, with keys identical to the full run, and
+    writes the report to `qwen_labels_report.md` only. `--plan` prints the largest Nemo probe prompt and the largest Qwen `full`
+    answer prompt that is queued: `swe-gym_row409@75`, 30,755 Qwen tokens. `--set F --plan` without `--answerer` still shows
+    0 pending.

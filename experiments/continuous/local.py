@@ -56,6 +56,10 @@ def qwen_tokens(text: str) -> int:
     return len(_tokenizer(exi.MODEL_BY_NAME["qwen3-8b"].model_id).encode(text))
 
 
+def nemo_tokens(text: str) -> int:
+    return len(_tokenizer(NEMO_ID).encode(text))
+
+
 def _count(model: exi.Model, prompt: str) -> int:
     return len(_tokenizer(model.model_id).encode(prompt))
 
@@ -126,7 +130,15 @@ def mlx_runner(model: exi.Model, prompt: str) -> exi.CallResult:
     if n > window - MAX_TOKENS:
         label = "Qwen" if model.name == "qwen3-8b" else model.name
         raise exi.CallError(f"context over {label} window: {n} tokens")
-    text, n_in, n_out = _generate(model, prompt)
+    try:
+        text, n_in, n_out = _generate(model, prompt)
+    except RuntimeError as exc:
+        # MLX raises a plain RuntimeError, out of memory included. Greedy decoding would fail the
+        # same way again, so it is non-retryable; the cache is freed so the next call can run.
+        _free()
+        err = exi.CallError(f"MLX RuntimeError in {model.name}: {exc}")
+        err.transient = False
+        raise err from exc
     return exi.CallResult(text, n_in, n_out)
 
 

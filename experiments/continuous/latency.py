@@ -27,7 +27,6 @@ from experiments.continuous import local, run, sim  # noqa: E402
 
 OUT = run.OUT / "f" / "latency.json"
 CHUNK = 2048
-WARMUP_TOKENS = 256
 DEFAULT_ARMS = ("qthresh", "tloosy", "cfrzm")
 
 
@@ -108,9 +107,10 @@ def replay(arms: Sequence[str], n: int) -> dict[str, Any]:
     from mlx_lm.models import cache as kv
 
     net, _ = local.load(run.QWEN.model_id)
-    # First forward pass compiles Metal kernels; keep that out of the first timed prefill.
+    # First forward pass compiles Metal kernels; keep that out of the first timed prefill. A full
+    # CHUNK, because kernels are specialised per shape and every timed chunk but the last is one.
     scratch = kv.make_prompt_cache(net)
-    prefill(net, scratch, [1] * WARMUP_TOKENS)
+    prefill(net, scratch, [1] * CHUNK)
     del scratch
     mx.clear_cache()
     out: dict[str, Any] = {"model": run.QWEN.model_id, "arms": {}}

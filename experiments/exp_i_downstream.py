@@ -827,7 +827,10 @@ def call_with_retry(
 ) -> tuple[CallResult, int]:
     """Usage-limit and rate errors back off exponentially up to ~30 min and keep trying; other
     errors and invalid replies get a few quick retries. Raises CallFailedError when out of
-    attempts — the caller logs it and moves on, and a rerun picks the key up again."""
+    attempts — the caller logs it and moves on, and a rerun picks the key up again. Local `mlx`
+    models decode greedily, so a retry would repeat the same reply: they get one attempt for
+    non-transient errors and invalid replies (2026-11-17)."""
+    max_other = 1 if model.cli == "mlx" else MAX_OTHER_ATTEMPTS
     transient = other = 0
     delay = BACKOFF_START_S
     while True:
@@ -841,13 +844,13 @@ def call_with_retry(
                 sleep(delay)
                 delay = min(delay * 2, BACKOFF_MAX_S)
                 continue
-            if not exc.transient and other + 1 < MAX_OTHER_ATTEMPTS:
+            if not exc.transient and other + 1 < max_other:
                 other += 1
                 sleep(10.0)
                 continue
             raise CallFailedError(str(exc)) from exc
         if validate is not None and not validate(result.text):
-            if other + 1 < MAX_OTHER_ATTEMPTS:
+            if other + 1 < max_other:
                 other += 1
                 continue
             raise CallFailedError(f"invalid reply after {attempts} attempts: {result.text[:200]!r}")
