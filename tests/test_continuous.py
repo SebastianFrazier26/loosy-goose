@@ -336,3 +336,33 @@ def test_tloosy_cacheable_json_and_distinct_header() -> None:
     again = sim.ArmRun.from_json(run.to_json())
     assert again.contexts == run.contexts and again.events == run.events
     assert "tloosy" in sim.F_ARMS and "tloosy" not in sim.ARMS
+
+
+def _views_of(arm: str, p: sim.TranscriptPlan) -> list[sim.View]:
+    return [v for _, v, _ in sim._views(arm, p, keep_every_third, stub_summary)]
+
+
+def test_cfrzg_equals_full_below_gate() -> None:
+    p = _plan(6)
+    assert p.before[-1] <= sim.CFRZG_GATE
+    assert _views_of("cfrzg", p) == _views_of("full", p)
+
+
+def test_cfrzg_matches_cfrzm_after_gate() -> None:
+    p = _plan(60)
+    assert p.before[-1] > sim.CFRZG_GATE
+    gated, frzm = _views_of("cfrzg", p), _views_of("cfrzm", p)
+    opened = [i for i, t in enumerate(p.boundaries) if p.before[t] > sim.CFRZG_GATE]
+    assert opened
+    for i in range(opened[0], len(gated)):
+        assert gated[i].compressed == frzm[i].compressed
+        assert gated[i].header == sim.HEADERS["cfrzg"]
+    assert gated[opened[0]].compressed
+
+
+def test_cfrzg_gate_stays_open() -> None:
+    p = _plan(60)
+    views = _views_of("cfrzg", p)
+    first = next(i for i, t in enumerate(p.boundaries) if p.before[t] > sim.CFRZG_GATE)
+    assert all(v.header == sim.HEADERS["full"] for v in views[:first])
+    assert all(v.header == sim.HEADERS["cfrzg"] for v in views[first:])
