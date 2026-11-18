@@ -5,11 +5,11 @@
 **Goal:** Ship continuous freeze-mode compaction as two things:
 
 - a library, `FreezeCompactor`;
-- an OpenAI-compatible localhost proxy, `loosy-goose proxy`, for agents running on local open-weight models.
+- a localhost proxy, `loosy-goose proxy`, speaking the chat API format local servers use (often called OpenAI-compatible; no OpenAI model is involved), for agents running on local open-weight models.
 
 **Architecture:**
 
-- **Conversion.** OpenAI chat messages are converted to the package's `Transcript`.
+- **Reading the wire format.** Chat-API messages (the format mlx_lm.server, Ollama, LM Studio and llama.cpp accept) are read into the package's `Transcript`.
 - **The compactor.** `FreezeCompactor` keeps a verbatim tail and freezes each aged-out chunk once with the shipped selector. Near the window it merges the oldest chunks (tier decay). It returns `[system] + [one compressed-history user message] + tail messages`.
 - **State.** State is saved per conversation and invalidated from the first chunk whose source changed.
 - **The proxy.** A small FastAPI app rewrites `messages` and streams the upstream response back unchanged.
@@ -50,7 +50,7 @@
 
 ---
 
-### Task 1: OpenAI messages to Transcript, with a message map
+### Task 1: Chat-API messages to Transcript, with a message map
 
 **Files:**
 - Create: `src/loosy_goose/openai_messages.py`
@@ -155,7 +155,7 @@
 - [ ] **Step 4: Run** the tests and the full suite. Expected: PASS.
 - [ ] **Step 5: Commit**, with the message `"Continuous: per-conversation state store and invalidation"`.
 
-### Task 4: OpenAI-compatible proxy and CLI
+### Task 4: Local chat-API proxy and CLI
 
 **Files:**
 - Create: `src/loosy_goose/proxy.py`

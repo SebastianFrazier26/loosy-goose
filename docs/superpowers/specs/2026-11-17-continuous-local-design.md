@@ -124,3 +124,13 @@ its own code.
   - The 32k window is measured in o200k units, for parity with the calibrated settings, so the gate is 16,000 o200k tokens.
   - That adds about 75 Qwen answers and 75 grading calls, and the grading cap rises from 360 to 450.
   - The feature supports both modes with a `start_at` setting (a share of a configured `window` size, or 0 for always). Its default is chosen from test A's result: the gate wins only if `cfrzg` beats `cfrzm` at a sign test p below 0.1, and otherwise the default is always-on.
+
+## User answers, round 2 (2026-11-17): open-weight only
+
+- **No closed models anywhere** in these tests. Claude and OpenAI models are out for answering, summarizing, grading and probe writing. Loosy is measured solely on, and for, open-weight models.
+- **Grader and probe writer:** Mistral-Nemo 12B Instruct (2407), 4-bit MLX (`mlx-community/Mistral-Nemo-Instruct-2407-4bit`, Apache-2.0, 6.9 GB, verified on the hub 2026-11-17). It is a different family from Qwen, so neither the answerer nor the summarizer grades itself.
+- **Probes are regenerated** with Mistral-Nemo for all 75 set F checkpoints, using the exi probe prompt. The stored GPT probes are not used.
+- **Consequences** (agent's notes):
+  - Every generation is local, so there is no API call cap. The limit is wall-clock. The estimate is about 875 local generations: about 75 probes, about 50 Qwen summaries, about 375 Qwen answers and about 375 Nemo grades. At 30–90 s each, that is roughly 10–20 hours. Phases run one model at a time and are resumable.
+  - Results are a new, standalone set. They are not comparable number for number with the Claude-answered set F results, because the grader and probes differ. Comparisons are within this run only.
+- **Wording.** "OpenAI-compatible" in this design means only the chat request format that local servers (mlx_lm.server, Ollama, LM Studio, llama.cpp) speak. No OpenAI model is involved, and the docs call it "the chat API format local servers speak".
