@@ -114,6 +114,45 @@ Registration, timeouts and command install are in
 the adapters were tested against Claude Code 2.1.296 and codex-cli 0.158.0, and a newer CLI
 still forks, with a warning.
 
+### Continuous compaction for local models
+
+`loosy-goose proxy` is a localhost proxy that sits between an agent and a local model server
+that speaks the chat API format local servers speak (mlx_lm.server, Ollama, LM Studio,
+llama.cpp's server). Every `POST /v1/chat/completions` is compacted continuously, in freeze
+mode (see [Continuous compaction](#continuous-compaction-2026-11-16) for why this mode): each
+4k-token chunk is compressed once as it ages out of a verbatim recent tail of at least 4k tokens,
+and never touched again, so the prompt prefix stays cacheable. Every other `/v1/` path is
+forwarded unchanged.
+
+```
+uv sync --extra embed --extra proxy
+uv run loosy-goose proxy --upstream http://127.0.0.1:8080 --window 32768 --start-at 0.5
+# then point the agent's base URL at http://127.0.0.1:8765/v1
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--upstream URL` | the local server's base URL, without `/v1` (required) |
+| `--port N` | listen port, default 8765 |
+| `--host H` | bind address, default `127.0.0.1`; anything that is not loopback is refused |
+| `--window N` | the model's context window in tokens; enables decay of older chunks near it |
+| `--start-at F` | pass requests through untouched until they exceed F × `--window` (needs `--window`) |
+| `--state-dir PATH` | per-conversation state, default `~/.cache/loosy-goose/continuous/` |
+
+What it does and does not do:
+
+- Compacted requests carry a header line saying the earlier part was compressed extractively,
+  folded into the following user message when there is one. Nothing is rewritten silently.
+- A conversation is identified by its system messages and first user message. Its frozen chunks
+  are stored as one JSON file in the state dir, which holds conversation text: the dir is
+  created with mode 0700, and files untouched for 7 days are deleted when the proxy starts.
+  Editing earlier history discards the chunks from the edit on.
+- Requests for the same conversation are compacted one at a time; compaction runs off the
+  event loop.
+- `Authorization` and every other request header except `Host`, `Content-Length` and the
+  hop-by-hop ones are passed to the upstream. Message content and header values are never logged.
+- Responses, streamed or not, are relayed with the upstream's status, headers and bytes.
+
 ## How it works
 
 The design borrows the shape of an image codec. A transcript is split into units, a transform
