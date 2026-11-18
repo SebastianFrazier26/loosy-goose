@@ -27,6 +27,7 @@ from experiments.continuous import local, run, sim  # noqa: E402
 
 OUT = run.OUT / "f" / "latency.json"
 CHUNK = 2048
+WARMUP_TOKENS = 256
 DEFAULT_ARMS = ("qthresh", "tloosy", "cfrzm")
 
 
@@ -107,6 +108,11 @@ def replay(arms: Sequence[str], n: int) -> dict[str, Any]:
     from mlx_lm.models import cache as kv
 
     net, _ = local.load(run.QWEN.model_id)
+    # First forward pass compiles Metal kernels; keep that out of the first timed prefill.
+    scratch = kv.make_prompt_cache(net)
+    prefill(net, scratch, [1] * WARMUP_TOKENS)
+    del scratch
+    mx.clear_cache()
     out: dict[str, Any] = {"model": run.QWEN.model_id, "arms": {}}
     for p in plans(n):
         for arm in arms:
@@ -153,13 +159,17 @@ def replay(arms: Sequence[str], n: int) -> dict[str, Any]:
 
 
 def table(result: dict[str, Any]) -> str:
-    lines = ["| arm | transcripts | mean prefill s/turn | total prefill s |", "|---|---|---|---|"]
+    lines = [
+        "| arm | transcripts | mean prefill s/turn | total prefill s | skipped (over window) |",
+        "|---|---|---|---|---|",
+    ]
     for arm, by_label in result["arms"].items():
         done = [v for v in by_label.values() if "rows" in v]
         timed = [r["secs"] for v in done for r in v["rows"] if "secs" in r]
         mean = f"{sum(timed) / len(timed):.2f}" if timed else "n/a"
         total = f"{sum(v['total_secs'] for v in done):.1f}"
-        lines.append(f"| {arm} | {len(done)}/{len(by_label)} | {mean} | {total} |")
+        skipped = sum(1 for v in done for r in v["rows"] if "skipped" in r)
+        lines.append(f"| {arm} | {len(done)}/{len(by_label)} | {mean} | {total} | {skipped} |")
     return "\n".join(lines)
 
 
