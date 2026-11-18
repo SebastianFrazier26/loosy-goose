@@ -104,7 +104,7 @@ TASKS: tuple[str, ...] = ("probe", "next")
 GRADE_PROBE_SCORE: dict[str, float] = {"correct": 1.0, "partial": 0.5, "wrong": 0.0}
 GRADE_NEXT_SCORE: dict[str, float] = {"same": 1.0, "partial": 0.5, "different": 0.0}
 
-Cli = Literal["claude", "codex"]
+Cli = Literal["claude", "codex", "mlx"]
 
 
 @dataclass(frozen=True)
@@ -120,7 +120,12 @@ MODELS: tuple[Model, ...] = (
     Model("gpt-6-luna", "codex", "gpt-6-luna"),
     Model("gpt-6-sol", "codex", "gpt-6-sol"),
 )
-MODEL_BY_NAME = {m.name: m for m in MODELS}
+# Kept out of MODELS: the grid loops over MODELS and cli_runner would send an mlx model to codex.
+LOCAL_MODELS: tuple[Model, ...] = (
+    Model("qwen3-8b", "mlx", "Qwen/Qwen3-8B-MLX-4bit"),
+    Model("mistral-nemo-12b", "mlx", "mlx-community/Mistral-Nemo-Instruct-2407-4bit"),
+)
+MODEL_BY_NAME = {m.name: m for m in (*MODELS, *LOCAL_MODELS)}
 # Writes the probes and summaries, grades every answer, and its full-context probe answers are
 # the filter that keeps a probe: one model, so a probe it cannot answer from the full context is
 # a bad probe rather than a compression loss.
