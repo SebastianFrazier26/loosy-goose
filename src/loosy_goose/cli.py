@@ -218,7 +218,13 @@ def _proxy(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         )
         return 2
     store = StateStore(args.state_dir or DEFAULT_STATE_DIR)
-    uvicorn.run(create_app(args.upstream, config, store), host=args.host, port=args.port)
+    # No access log: request paths and query strings can carry API keys.
+    uvicorn.run(
+        create_app(args.upstream, config, store),
+        host="127.0.0.1" if args.host == "localhost" else args.host,
+        port=args.port,
+        access_log=False,
+    )
     return 0
 
 

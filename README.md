@@ -145,13 +145,21 @@ What it does and does not do:
   folded into the following user message when there is one. Nothing is rewritten silently.
 - A conversation is identified by its system messages and first user message. Its frozen chunks
   are stored as one JSON file in the state dir, which holds conversation text: the dir is
-  created with mode 0700, and files untouched for 7 days are deleted when the proxy starts.
+  set to mode 0700 (an existing one is tightened), and files untouched for 7 days are deleted when the proxy starts.
   Editing earlier history discards the chunks from the edit on.
 - Requests for the same conversation are compacted one at a time; compaction runs off the
   event loop.
-- `Authorization` and every other request header except `Host`, `Content-Length` and the
-  hop-by-hop ones are passed to the upstream. Message content and header values are never logged.
-- Responses, streamed or not, are relayed with the upstream's status, headers and bytes.
+- `Authorization` and every other end-to-end request header are passed to the upstream; `Host`,
+  `Content-Length` and the hop-by-hop headers are not. Message content and header values are
+  never logged, and the access log is off, since paths and query strings can carry keys.
+- A request whose body is not a chat request, or whose conversation needs no compaction yet, is
+  forwarded byte for byte.
+- Responses, streamed or not, are relayed as they arrive, with the upstream's status, headers
+  and bytes.
+- Only `Host` values `127.0.0.1`, `localhost` and `[::1]` (any port) are served; anything else
+  gets 403, so a web page that rebinds its own domain to 127.0.0.1 cannot reach the proxy.
+- Passthrough paths that would leave `/v1/` once decoded (an encoded `..`, `?`, `#` or `\`) get
+  404. `--host localhost` binds `127.0.0.1`.
 
 ## How it works
 

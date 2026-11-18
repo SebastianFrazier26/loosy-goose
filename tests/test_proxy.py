@@ -60,9 +60,12 @@ class Upstream:
     def __init__(self, response: httpx.Response | None = None) -> None:
         self.requests: list[httpx.Request] = []
         self.response = response
+        self.raises = False
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
+        if self.raises:
+            raise httpx.ConnectError("refused", request=request)
         if self.response is not None:
             return self.response
         return _json(200, {"ok": True}, {"x-upstream": "yes"})
@@ -76,7 +79,7 @@ def _client(tmp_path: Path, upstream: Upstream) -> TestClient:
         transport=httpx.MockTransport(upstream),
         compress=keep_every_third,
     )
-    return TestClient(app)
+    return TestClient(app, base_url="http://127.0.0.1:8765")
 
 
 def test_forwards_compacted_messages(tmp_path: Path) -> None:
@@ -97,10 +100,10 @@ def test_forwards_compacted_messages(tmp_path: Path) -> None:
 
 def test_short_conversation_forwarded_unchanged(tmp_path: Path) -> None:
     up = Upstream()
-    msgs = _messages(0, size=10)
+    raw = json.dumps({"model": "m", "messages": _messages(0, size=10)}, indent=3).encode()
     with _client(tmp_path, up) as c:
-        c.post("/v1/chat/completions", json={"model": "m", "messages": msgs})
-    assert json.loads(up.requests[0].content)["messages"] == msgs
+        c.post("/v1/chat/completions", content=raw, headers={"content-type": "application/json"})
+    assert up.requests[0].content == raw
 
 
 def test_streaming_bytes_relayed_in_order(tmp_path: Path) -> None:
@@ -150,6 +153,8 @@ def test_other_v1_paths_passthrough(tmp_path: Path) -> None:
 
 def test_state_dir_private_and_pruned(tmp_path: Path) -> None:
     root = tmp_path / "state"
+    root.mkdir(mode=0o755)
+    root.chmod(0o755)
     prepare_state_dir(root)
     assert (root.stat().st_mode & 0o777) == 0o700
     old, fresh, other = root / ("a" * 32 + ".json"), root / ("b" * 32 + ".json"), root / "keep.json"
@@ -160,3 +165,78 @@ def test_state_dir_private_and_pruned(tmp_path: Path) -> None:
     os.utime(other, (week_ago, week_ago))
     prepare_state_dir(root)
     assert not old.exists() and fresh.exists() and other.exists()
+
+
+@pytest.mark.parametrize("raw", [b"not json {", b'{"model": "m", "prompt": "hi"}'])
+def test_uncompactable_body_forwarded_byte_identical(tmp_path: Path, raw: bytes) -> None:
+    up = Upstream()
+    with _client(tmp_path, up) as c:
+        r = c.post("/v1/chat/completions", content=raw)
+    assert r.status_code == 200
+    assert up.requests[0].content == raw
+
+
+def test_upstream_error_status_and_body_relayed(tmp_path: Path) -> None:
+    up = Upstream(_json(422, {"error": "bad model"}, {"x-why": "nope"}))
+    with _client(tmp_path, up) as c:
+        r = c.post("/v1/chat/completions", json={"model": "m", "messages": _messages(12)})
+    assert r.status_code == 422
+    assert r.json() == {"error": "bad model"}
+    assert r.headers["x-why"] == "nope"
+
+
+def test_upstream_connect_error_is_502(tmp_path: Path) -> None:
+    up = Upstream()
+    up.raises = True
+    with _client(tmp_path, up) as c:
+        r = c.get("/v1/models")
+    assert r.status_code == 502
+
+
+@pytest.mark.parametrize("host", ["evil.example", "evil.example:8765", "10.0.0.5:8765"])
+def test_foreign_host_header_refused(tmp_path: Path, host: str) -> None:
+    up = Upstream()
+    with _client(tmp_path, up) as c:
+        r1 = c.get("/v1/models", headers={"host": host})
+        r2 = c.post("/v1/chat/completions", json={"messages": []}, headers={"host": host})
+    assert r1.status_code == r2.status_code == 403
+    assert r1.json()["error"]["message"] == "loosy-goose: host not allowed"
+    assert not up.requests
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1:8765", "localhost:8765", "[::1]:8765", "localhost"])
+def test_loopback_host_header_allowed(tmp_path: Path, host: str) -> None:
+    up = Upstream()
+    with _client(tmp_path, up) as c:
+        r = c.get("/v1/models", headers={"host": host})
+    assert r.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/%2e%2e/admin",
+        "/v1/..%2fadmin",
+        "/v1/x%3Fq=1",
+        "/v1/x%23frag",
+        "/v1/%2E%2E/admin",
+        "/v1/..%5cadmin",
+    ],
+)
+def test_passthrough_cannot_leave_v1(tmp_path: Path, path: str) -> None:
+    up = Upstream()
+    with _client(tmp_path, up) as c:
+        r = c.get(path)
+    assert r.status_code == 404
+    assert r.json()["error"]["message"] == "loosy-goose: path refused"
+    assert not up.requests
+
+
+def test_cli_binds_loopback_without_access_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    import uvicorn
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: seen.update(kw))
+    assert main(["proxy", "--upstream", UPSTREAM, "--host", "localhost"]) == 0
+    assert seen["host"] == "127.0.0.1"
+    assert seen["access_log"] is False
