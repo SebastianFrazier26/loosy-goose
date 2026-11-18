@@ -195,3 +195,44 @@ def test_render_matches_experiment_render() -> None:
     ]
     assert render_segments(segs) == exi.render_segments(segs)
     assert render_segments(list(reversed(segs))) == exi.render_segments(segs)
+
+
+def _alternating(rounds: int, size: int = 120) -> list[dict[str, Any]]:
+    msgs: list[dict[str, Any]] = [{"role": "system", "content": "you are an agent"}]
+    for r in range(rounds):
+        msgs.append({"role": "user", "content": _words(size, f"u{r}x")})
+        msgs.append({"role": "assistant", "content": _words(size, f"a{r}x")})
+    return msgs
+
+
+def test_header_folds_into_following_user_message() -> None:
+    msgs = _alternating(20)
+    c = _compactor()
+    out = c.compact(msgs)
+    upto = c.chunks[-1].span[1]
+    assert msgs[upto]["role"] == "user"
+    roles = [m["role"] for m in out]
+    assert all(not (a == b == "user") for a, b in zip(roles, roles[1:], strict=False))
+    assert sum(m["content"].count(HEADER) for m in out) == 1
+    assert out[1]["content"] == (
+        HEADER + "\n\n" + "\n\n".join(ch.text for ch in c.chunks) + "\n\n" + msgs[upto]["content"]
+    )
+    assert out[2:] == msgs[upto + 1 :]
+    assert msgs[upto]["content"].startswith("u")
+
+
+def test_header_folds_into_list_content() -> None:
+    msgs = _alternating(20)
+    for m in msgs:
+        if m["role"] == "user":
+            m["content"] = [{"type": "text", "text": m["content"]}]
+    c = _compactor()
+    out = c.compact(msgs)
+    upto = c.chunks[-1].span[1]
+    part, *rest = out[1]["content"]
+    assert part == {
+        "type": "text",
+        "text": HEADER + "\n\n" + "\n\n".join(ch.text for ch in c.chunks) + "\n\n",
+    }
+    assert rest == msgs[upto]["content"]
+    assert [m["role"] for m in out[:3]] == ["system", "user", "assistant"]

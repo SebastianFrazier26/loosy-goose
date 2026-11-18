@@ -185,11 +185,19 @@ class FreezeCompactor:
                 if not self._merge_lowest_full_tier(messages):
                     break
 
-        return [
-            *messages[:prefix],
-            {"role": "user", "content": self._header_text()},
-            *messages[upto:],
-        ]
+        head = self._header_text()
+        rest_msgs = messages[upto:]
+        # Folded into a following user message rather than sent beside it: strict-alternation chat
+        # templates reject two user messages in a row.
+        if rest_msgs and rest_msgs[0].get("role") == "user":
+            first = dict(rest_msgs[0])
+            content = first.get("content")
+            if isinstance(content, list):
+                first["content"] = [{"type": "text", "text": head + "\n\n"}, *content]
+            else:
+                first["content"] = head + "\n\n" + (content if isinstance(content, str) else "")
+            return [*messages[:prefix], first, *rest_msgs[1:]]
+        return [*messages[:prefix], {"role": "user", "content": head}, *rest_msgs]
 
     def _drop_stale(self, messages: Sequence[Mapping[str, Any]], prefix: int) -> None:
         """A chunk whose source messages are no longer the request's (history edited, a shorter
