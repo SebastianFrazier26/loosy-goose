@@ -361,3 +361,13 @@ def test_nemo_tokenizer_falls_back_without_regex_fix(monkeypatch):
     local._tokenizer(NEMO.model_id)
     assert seen == [NEMO.model_id] and local._fix_ok is False
     assert local._tokenizer_kwargs(NEMO.model_id) == {}
+
+
+def test_reused_prefix_len():
+    from experiments.continuous import latency
+
+    assert latency.reused_prefix([1, 2, 3, 4], [1, 2, 9, 4]) == 2
+    assert latency.reused_prefix([1, 2], [1, 2, 3]) == 2
+    assert latency.reused_prefix([1, 2, 3], [1, 2]) == 2
+    assert latency.reused_prefix([], [1]) == 0
+    assert latency.reused_prefix([5], [6]) == 0
