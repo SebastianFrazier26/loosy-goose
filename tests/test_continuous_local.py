@@ -113,3 +113,108 @@ def test_nemo_grades_qwen_answers(monkeypatch):
     assert seen == ["qwen3-8b"]
     assert g.key == "v1|L|c|qwen3-8b|grade_probe@mistral-nemo-12b"
     assert g.runs_as is NEMO
+
+
+def _turns(rounds: int = 30, size: int = 300) -> list:
+    import json
+
+    from loosy_goose.transcript import Block, Turn
+
+    def words(n: int, tag: str) -> str:
+        return " ".join(f"{tag}{i}" for i in range(n))
+
+    turns = [Turn(0, "system", [Block("text", "system prompt")])]
+    turns.append(Turn(1, "user", [Block("text", words(size, "ask"))]))
+    for r in range(rounds):
+        use = json.dumps({"file_path": f"src/f{r}.py"})
+        turns.append(Turn(len(turns), "assistant", [Block("tool_use", use, {"name": "Read"})]))
+        turns.append(Turn(len(turns), "user", [Block("tool_result", words(size, f"r{r}x"))]))
+    return turns
+
+
+def _stub_plans() -> list:
+    from experiments.continuous import sim
+
+    return [sim.plan_transcript(f"t{i}", _turns()) for i in range(2)]
+
+
+def test_qwen_plan_counts():
+    from experiments.continuous import run, sim
+
+    cfg = run.QWEN_CFG
+    plans = _stub_plans()
+    assert [len(p.checkpoints) for p in plans] == [3, 3]
+    counts = run.call_counts(cfg, plans)
+    assert counts["probe_gen"] == 2 * 3
+    assert counts["answers"] == 2 * 3 * 5
+    assert counts["grades"] == 2 * 3 * 5
+    n_sum = sum(len(sim.thresh_events(p)) for p in plans)
+    assert n_sum > 0 and counts["qthresh_summaries"] == n_sum
+    models = run.phase_models(cfg, cfg.prober)
+    assert models["qthresh_summaries"] is QWEN
+    assert QWEN.model_id == run.QSUM_MODEL_ID
+    local_n, api_n = run.split_calls(cfg, cfg.prober, counts)
+    assert api_n == 0 and local_n == sum(counts.values())
+    f_local, f_api = run.split_calls(run.CFGS["F"], HAIKU, run.call_counts(run.CFGS["F"], plans))
+    assert f_local == 0 and f_api > 0
+
+
+def test_qwen_run_uses_no_closed_model(tmp_path):
+    from experiments.continuous import run
+
+    cfg = run.QWEN_CFG
+    plans = _stub_plans()
+    assert all(m.cli == "mlx" for m in run.phase_models(cfg, cfg.prober).values())
+    probes = run.probe_jobs(cfg, plans, cfg.prober)
+    assert len(probes) == 6
+    assert all(j.runs_as.cli == "mlx" and j.condition == "probes.nemo1" for j in probes)
+    store = exi.Store(tmp_path / "calls.jsonl")
+    label = run.ck_label(plans[0], plans[0].checkpoints[0])
+    for arm in cfg.arms:
+        ans = run.answer_job(cfg, label, arm, "ctx", PROBES)
+        assert ans.runs_as is QWEN
+        store.put({"key": ans.key, "prompt_sha": ans.prompt_sha, "text": "1. x\n2. y"})
+        grade = run.grade_job(cfg, store, label, arm, PROBES)
+        assert grade is not None and grade.runs_as is NEMO
+        assert grade.task == "grade_probe@mistral-nemo-12b"
+
+
+def test_qwen_runner_refuses_closed_model(monkeypatch):
+    from experiments.continuous import run
+
+    monkeypatch.setattr(local, "mlx_runner", lambda m, p: exi.CallResult(m.name, 1, 1))
+    guard = run.LocalGuard(10)
+    assert guard.runner(QWEN, "x").text == "qwen3-8b"
+    assert guard.runner(NEMO, "x").text == "mistral-nemo-12b"
+    for closed in exi.MODELS:
+        with pytest.raises(run.ClosedModelError):
+            guard.runner(closed, "x")
+
+
+def test_qwen_condition_keys():
+    from experiments.continuous import run, sim
+
+    q, f = run.QWEN_CFG, run.CFGS["F"]
+    assert run.cond(q, "qthresh") == f"qthresh.F.v{sim.CONT_VERSION}.q{sim.QTHRESH_VERSION}"
+    assert run.cond(q, "cfrzg") == f"cfrzg.F.v{sim.CONT_VERSION}.q{sim.CFRZG_VERSION}"
+    for arm in ("full", "tloosy", "cfrzm"):
+        assert run.cond(q, arm) == run.cond(f, arm)
+
+
+def test_qwen_summaries_read_lsum_cache(tmp_path, monkeypatch):
+    import json
+
+    from experiments.continuous import run, sim
+    from experiments.slot_compress import lsum
+
+    monkeypatch.setattr(run, "QSUM_DIR", tmp_path)
+    strict = run.QSummaries("L", strict=True)
+    with pytest.raises(sim.MissingSummaryError):
+        strict(0, "earlier text", 50)
+    rec = {"sha": lsum.source_sha("earlier text", 50, run.QSUM_MODEL_ID), "raw": "A summary."}
+    lsum.cache_path(tmp_path, "L", "e0").write_text(json.dumps(rec), encoding="utf-8")
+    sums = run.QSummaries("L", strict=True)
+    assert sums(0, "earlier text", 50) == "A summary."
+    assert sums.sig() != "placeholder"
+    loose = run.QSummaries("L", strict=False)
+    assert loose(1, "other", 50).startswith("[placeholder summary 1]") and loose.placeholder

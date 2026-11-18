@@ -65,6 +65,13 @@ def load(model_id: str) -> tuple[Any, Any]:
     return model, tok
 
 
+def unload() -> None:
+    global _loaded
+    if _loaded is not None:
+        _loaded = None
+        _free()
+
+
 def _generate(model: exi.Model, prompt: str) -> tuple[str, int, int]:
     import mlx.core as mx
     from mlx_lm import stream_generate

@@ -134,3 +134,16 @@ its own code.
   - Every generation is local, so there is no API call cap. The limit is wall-clock. The estimate is about 875 local generations: about 75 probes, about 50 Qwen summaries, about 375 Qwen answers and about 375 Nemo grades. At 30–90 s each, that is roughly 10–20 hours. Phases run one model at a time and are resumable.
   - Results are a new, standalone set. They are not comparable number for number with the Claude-answered set F results, because the grader and probes differ. Comparisons are within this run only.
 - **Wording.** "OpenAI-compatible" in this design means only the chat request format that local servers (mlx_lm.server, Ollama, LM Studio, llama.cpp) speak. No OpenAI model is involved, and the docs call it "the chat API format local servers speak".
+
+## Stage Q log
+
+- **2026-11-17, run path built** (`run.py --set F --answerer qwen3-8b`). Smoke calls through `local.mlx_runner` on this machine:
+  Qwen3-8B load 8.7 s, a 37-token reply in 5.3 s; Mistral-Nemo download plus load 58.2 s, a 21-token reply in 31.1 s.
+  `--plan`: 75 Nemo probes (`probes.nemo1`), 50 Qwen summaries (placeholder schedule), 375 Qwen answers and 375 Nemo grades:
+  875 local calls, 0 API calls. The runner cap is 2,000 invocations, a runaway guard only.
+  `--dry-run` mean context per turn: full 18,827, qthresh 12,449 (placeholders; thresh's real figure is 12,342), tloosy 12,482,
+  cfrzm 12,355, cfrzg 12,717.
+- **Correction to section A.** `full` does not always fit Qwen's window. 15 of 75 full checkpoints (4 at 75%, 11 at 100%)
+  are over 31,232 Qwen tokens. The largest full context is 50,673 o200k tokens, against the stated maximum of about 19k.
+  The runner refuses those calls and the report lists them. `full` therefore loses the transcripts that have an over-window
+  checkpoint, which thins every arm − full row.
