@@ -12,6 +12,8 @@ from loosy_goose.continuous import (  # noqa: E402
     HEADER,
     ContinuousConfig,
     FreezeCompactor,
+    StateStore,
+    conversation_id,
 )
 from loosy_goose.render import render_segments  # noqa: E402
 from loosy_goose.segment import Segment, segment  # noqa: E402
@@ -236,3 +238,81 @@ def test_header_folds_into_list_content() -> None:
     }
     assert rest == msgs[upto]["content"]
     assert [m["role"] for m in out[:3]] == ["system", "user", "assistant"]
+
+
+def test_state_round_trip_resumes_identically(tmp_path: Path) -> None:
+    full = _messages(40)
+    cid = conversation_id(full)
+    store = StateStore(tmp_path)
+    first = _compactor()
+    first.compact(full[:30])
+    assert first.chunks
+    store.save(cid, SMALL, first.chunks)
+
+    restored = FreezeCompactor(SMALL, compress=keep_every_third, chunks=store.load(cid, SMALL))
+    assert restored.chunks == first.chunks
+    assert restored.compact(full) == first.compact(full)
+    assert restored.chunks == first.chunks
+
+
+def test_edited_early_message_equals_fresh_run() -> None:
+    full = _messages(40)
+    c = _compactor()
+    c.compact(full)
+    assert len(c.chunks) > 2
+    edited = [dict(m) for m in full]
+    edited[8] = {**edited[8], "content": _words(120, "edited")}
+    assert c.compact(edited) == _compactor().compact(edited)
+    fresh = _compactor()
+    fresh.compact(edited)
+    assert c.chunks == fresh.chunks
+
+
+def test_config_change_discards_state(tmp_path: Path) -> None:
+    full = _messages(40)
+    cid = conversation_id(full)
+    store = StateStore(tmp_path)
+    c = _compactor()
+    c.compact(full)
+    store.save(cid, SMALL, c.chunks)
+    assert store.load(cid, SMALL)
+    assert store.load(cid, ContinuousConfig(tail_tokens=700, chunk_tokens=500)) == []
+    assert store.load("0" * 32, SMALL) == []
+
+
+def test_version_mismatch_and_corrupt_file_discard_state(tmp_path: Path) -> None:
+    full = _messages(40)
+    cid = conversation_id(full)
+    store = StateStore(tmp_path)
+    c = _compactor()
+    c.compact(full)
+    store.save(cid, SMALL, c.chunks)
+    path = tmp_path / f"{cid}.json"
+    data = json.loads(path.read_text())
+    path.write_text(json.dumps({**data, "version": data["version"] + 1}))
+    assert store.load(cid, SMALL) == []
+    path.write_text("{not json")
+    assert store.load(cid, SMALL) == []
+    with pytest.raises(ValueError):
+        store.load("../x", SMALL)
+
+
+def test_save_leaves_no_temp_files(tmp_path: Path) -> None:
+    full = _messages(40)
+    cid = conversation_id(full)
+    c = _compactor()
+    c.compact(full)
+    StateStore(tmp_path / "nested").save(cid, SMALL, c.chunks)
+    assert [p.name for p in (tmp_path / "nested").iterdir()] == [f"{cid}.json"]
+
+
+def test_conversation_id_stable_across_appends() -> None:
+    full = _messages(40)
+    assert conversation_id(full[:10]) == conversation_id(full)
+    assert len(conversation_id(full)) == 32
+    other = [dict(m) for m in full]
+    other[1] = {**other[1], "content": "different task"}
+    assert conversation_id(other) != conversation_id(full)
+    other = [dict(m) for m in full]
+    other[0] = {**other[0], "content": "different system"}
+    assert conversation_id(other) != conversation_id(full)

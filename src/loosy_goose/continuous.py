@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from .openai_messages import system_prefix, to_transcript
@@ -62,6 +66,72 @@ def _pipeline_compress(t: Transcript, keep: float) -> list[Segment]:
 def source_sha(messages: Sequence[Mapping[str, Any]]) -> str:
     canon = json.dumps(list(messages), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
+def conversation_id(messages: Sequence[Mapping[str, Any]]) -> str:
+    """Identity of a conversation across requests: its leading system messages and first user
+    message, which later turns only ever append after."""
+    first_user = next((m for m in messages if m.get("role") == "user"), None)
+    canon = json.dumps(
+        [list(messages[: system_prefix(messages)]), first_user],
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:32]
+
+
+_CID = re.compile(r"[0-9a-f]{32}")
+
+
+class StateStore:
+    """One JSON file per conversation. Holds frozen chunk text, i.e. conversation content, so
+    nothing here logs it."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+
+    def _path(self, cid: str) -> Path:
+        if not _CID.fullmatch(cid):
+            raise ValueError("conversation id must be 32 lowercase hex characters")
+        return self.root / f"{cid}.json"
+
+    def load(self, cid: str, config: ContinuousConfig) -> list[Chunk]:
+        path = self._path(cid)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data["version"] != CONTINUOUS_VERSION or data["config"] != asdict(config):
+                return []
+            return [
+                Chunk(
+                    (c["span"][0], c["span"][1]),
+                    c["source_sha"],
+                    c["tier"],
+                    [Segment(**s) for s in c["segments"]],
+                    c["text"],
+                )
+                for c in data["chunks"]
+            ]
+        except (OSError, ValueError, KeyError, TypeError, IndexError):
+            # A missing, torn or foreign-shaped file means no usable state, not a failed request.
+            return []
+
+    def save(self, cid: str, config: ContinuousConfig, chunks: list[Chunk]) -> None:
+        path = self._path(cid)
+        self.root.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": CONTINUOUS_VERSION,
+            "config": asdict(config),
+            "chunks": [asdict(c) for c in chunks],
+        }
+        fd, tmp = tempfile.mkstemp(dir=self.root, prefix=f".{cid}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False)
+            os.replace(tmp, path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
 
 
 def _tool_owners(messages: Sequence[Mapping[str, Any]]) -> list[int]:
