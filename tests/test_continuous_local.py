@@ -78,3 +78,38 @@ def test_load_evicts_previous_model(monkeypatch):
     local.load("b")
     assert loaded == ["a", "b"] and freed == [True]
     assert local.load("b")[0] == "b"
+
+
+PROBES = [{"q": "q1", "a": "a1"}, {"q": "q2", "a": "a2"}]
+
+
+def test_default_answerer_keys_unchanged(monkeypatch):
+    from experiments.slot_compress import downstream as dl
+
+    a = dl.answer_job("L", "c", "ctx", PROBES)
+    assert a.key == "v1|L|c|haiku-5.5|probe"
+    assert a.prompt_sha == "046bc94fed9448ed"
+    monkeypatch.setattr(exi, "_text", lambda *args: "1. x\n2. y")
+    g = dl.grade_job(None, "L", "c", PROBES)
+    assert g.key == "v1|L|c|haiku-5.5|grade_probe"
+    assert g.prompt_sha == "697c0acd38952940"
+    assert g.runs_as is dl.SONNET
+
+
+def test_qwen_answer_key_differs():
+    from experiments.slot_compress import downstream as dl
+
+    q = dl.answer_job("L", "c", "ctx", PROBES, answerer=QWEN)
+    assert q.key != dl.answer_job("L", "c", "ctx", PROBES).key
+    assert "qwen3-8b" in q.key
+
+
+def test_nemo_grades_qwen_answers(monkeypatch):
+    from experiments.slot_compress import downstream as dl
+
+    seen = []
+    monkeypatch.setattr(exi, "_text", lambda *args: seen.append(args[3]) or "1. x\n2. y")
+    g = dl.grade_job(None, "L", "c", PROBES, answerer=QWEN, grader=NEMO)
+    assert seen == ["qwen3-8b"]
+    assert g.key == "v1|L|c|qwen3-8b|grade_probe@mistral-nemo-12b"
+    assert g.runs_as is NEMO
