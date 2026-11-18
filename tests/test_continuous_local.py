@@ -1,3 +1,4 @@
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -218,3 +219,145 @@ def test_qwen_summaries_read_lsum_cache(tmp_path, monkeypatch):
     assert sums.sig() != "placeholder"
     loose = run.QSummaries("L", strict=False)
     assert loose(1, "other", 50).startswith("[placeholder summary 1]") and loose.placeholder
+
+
+def _probe_text() -> str:
+    import json
+
+    return json.dumps({"probes": [{"q": f"q{i}", "a": f"a{i}"} for i in range(3)]})
+
+
+def _grade_text(g: str) -> str:
+    import json
+
+    return json.dumps({"grades": {str(i): g for i in range(1, 4)}})
+
+
+def test_full_pairs_per_checkpoint(tmp_path):
+    from experiments.continuous import run
+
+    cfg = run.QWEN_CFG
+    plans = _stub_plans()
+    store = exi.Store(tmp_path / "calls.jsonl")
+    for p in plans:
+        for ck in p.checkpoints:
+            label = run.ck_label(p, ck)
+            key = exi.call_key(label, cfg.probes_key, NEMO.name, "probe_gen")
+            store.put({"key": key, "text": _probe_text()})
+            missing_full = p.label == "t0" and ck.pct == 100
+            for arm, g in (("full", "wrong"), ("cfrzm", "correct")):
+                if arm == "full" and missing_full:
+                    continue
+                g = "wrong" if missing_full else g
+                key = exi.call_key(label, run.cond(cfg, arm), QWEN.name, cfg.grade_task)
+                store.put({"key": key, "text": _grade_text(g)})
+    scores, by_pct = run.collect_scores(cfg, store, plans, NEMO)
+    assert set(scores["full"]) == {"t1"}
+    pcfg = dataclasses.replace(cfg, pairs=(("cfrzm", "full"),))
+    row = run.pair_table(pcfg, scores, by_pct)[-1]
+    assert row.startswith("| cfrzm - full | +1.000 ")
+    assert "n=2 transcripts, 5 checkpoints" in row
+    assert "n=1" in run.pair_table(pcfg, scores)[-1]
+
+
+def test_over_window_answers_not_queued(tmp_path, monkeypatch):
+    from experiments.continuous import run, sim
+
+    plans = _stub_plans()[:1]
+    cfg = dataclasses.replace(run.QWEN_CFG, out=tmp_path, arms=("full", "cfrzm"))
+    store = exi.Store(tmp_path / "calls.jsonl")
+    for j in run.probe_jobs(cfg, plans, NEMO):
+        store.put({"key": j.key, "prompt_sha": j.prompt_sha, "text": _probe_text()})
+    p = plans[0]
+
+    def fake_arm_run(cfg_, arm, plan, store_, strict=False):
+        ctx = {ck.t: ("BIG " if arm == "full" else "") + f"ctx {ck.t}" for ck in plan.checkpoints}
+        return sim.ArmRun(arm, contexts=ctx), False
+
+    monkeypatch.setattr(run, "arm_run", fake_arm_run)
+    monkeypatch.setattr(run, "qwen_over", lambda prompt: 40_000 if "BIG" in prompt else None)
+    prompts = []
+
+    def runner(model, prompt):
+        prompts.append(prompt)
+        if model is QWEN:
+            return exi.CallResult("1. x\n2. y\n3. z", 1, 1)
+        return exi.CallResult(_grade_text("correct"), 1, 1)
+
+    rt = exi.Runtime(store, runner, tmp_path / "f.jsonl", workers=1)
+    rt.log = lambda m: None
+    run.run_all(cfg, rt, plans, NEMO)
+    assert prompts and not any("BIG" in x for x in prompts)
+    assert len(prompts) == 2 * len(p.checkpoints)
+    failures = (tmp_path / "qwen_failures.jsonl").read_text().splitlines()
+    assert len(failures) == len(p.checkpoints)
+    assert all("over Qwen window: 40000 tokens" in f for f in failures)
+
+
+def test_failed_qthresh_summary_skips_transcript(tmp_path, monkeypatch):
+    import json
+
+    from experiments.continuous import run, sim
+    from experiments.slot_compress import lsum
+
+    plans = _stub_plans()
+    cfg = dataclasses.replace(run.QWEN_CFG, out=tmp_path)
+    monkeypatch.setattr(run, "QSUM_DIR", tmp_path / "qsum")
+
+    def fake_precompute(jobs, cache_dir, prompt_fn, log, gen=None, model_id=""):
+        for label, level, earlier, target in jobs:
+            if label == "t0":
+                raise RuntimeError("metal out of memory")
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            rec = {"sha": lsum.source_sha(earlier, target, model_id), "raw": "Summary text."}
+            lsum.cache_path(cache_dir, label, level).write_text(json.dumps(rec))
+
+    monkeypatch.setattr(lsum, "precompute", fake_precompute)
+    monkeypatch.setattr(run.dl, "free_mlx", lambda: None)
+    failed = run.qwen_summary_rounds(cfg, plans, make_gen=lambda model_id: object())
+    assert failed == {"t0"}
+    lines = [json.loads(x) for x in (tmp_path / "qwen_failures.jsonl").read_text().splitlines()]
+    assert [x["key"] for x in lines] == ["qsum|t0|e0"]
+    assert "metal out of memory" in lines[0]["error"]
+    assert sim.thresh_events(plans[1], run.QSummaries("t1", strict=True))
+    with pytest.raises(sim.MissingSummaryError):
+        sim.thresh_events(plans[0], run.QSummaries("t0", strict=True))
+
+
+def test_nemo_tokenizer_gets_regex_fix(monkeypatch):
+    import transformers
+
+    seen = []
+
+    def fake(model_id, **kwargs):
+        seen.append((model_id, kwargs))
+        return object()
+
+    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", fake)
+    monkeypatch.setattr(local, "_tokenizers", {})
+    monkeypatch.setattr(local, "_fix_ok", None)
+    local._tokenizer(QWEN.model_id)
+    local._tokenizer(NEMO.model_id)
+    assert seen == [(QWEN.model_id, {}), (NEMO.model_id, {"fix_mistral_regex": True})]
+    assert local._fix_ok is True
+    assert local._tokenizer_kwargs(NEMO.model_id) == {"fix_mistral_regex": True}
+    assert local._tokenizer_kwargs(QWEN.model_id) == {}
+
+
+def test_nemo_tokenizer_falls_back_without_regex_fix(monkeypatch):
+    import transformers
+
+    seen = []
+
+    def fake(model_id, **kwargs):
+        if kwargs:
+            raise TypeError("unexpected keyword argument 'fix_mistral_regex'")
+        seen.append(model_id)
+        return object()
+
+    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", fake)
+    monkeypatch.setattr(local, "_tokenizers", {})
+    monkeypatch.setattr(local, "_fix_ok", None)
+    local._tokenizer(NEMO.model_id)
+    assert seen == [NEMO.model_id] and local._fix_ok is False
+    assert local._tokenizer_kwargs(NEMO.model_id) == {}

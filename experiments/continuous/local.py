@@ -21,11 +21,34 @@ _loaded: tuple[str, Any, Any] | None = None
 _tokenizers: dict[str, Any] = {}
 
 
+NEMO_ID = exi.MODEL_BY_NAME["mistral-nemo-12b"].model_id
+# The Nemo repo ships a pre-tekken pre-tokenizer regex; transformers 5.x warns that it mis-splits
+# text and repairs it under this flag. Older transformers may lack it, so support is probed on the
+# first Nemo tokenizer load and the mlx_lm load reuses that answer.
+_FIX = {"fix_mistral_regex": True}
+_fix_ok: bool | None = None
+
+
+def _tokenizer_kwargs(model_id: str) -> dict[str, Any]:
+    return dict(_FIX) if model_id == NEMO_ID and _fix_ok is not False else {}
+
+
 def _tokenizer(model_id: str) -> Any:
+    global _fix_ok
     if model_id not in _tokenizers:
         from transformers import AutoTokenizer
 
-        _tokenizers[model_id] = AutoTokenizer.from_pretrained(model_id)
+        kwargs = _tokenizer_kwargs(model_id)
+        try:
+            _tokenizers[model_id] = AutoTokenizer.from_pretrained(model_id, **kwargs)
+        except TypeError:
+            if not kwargs:
+                raise
+            _fix_ok = False
+            _tokenizers[model_id] = AutoTokenizer.from_pretrained(model_id)
+        else:
+            if kwargs:
+                _fix_ok = True
     return _tokenizers[model_id]
 
 
@@ -44,7 +67,8 @@ def _load_model(model_id: str) -> tuple[Any, Any]:
     # Same allocator cap as lsum.MlxGenerator: freed Metal buffers otherwise count against the
     # working-set limit and a long decode dies out of memory on 16 GB.
     mx.set_cache_limit(lsum.CACHE_LIMIT_BYTES)
-    model, tok = load(model_id)
+    _tokenizer(model_id)
+    model, tok = load(model_id, tokenizer_config=_tokenizer_kwargs(model_id) or None)
     return model, tok
 
 

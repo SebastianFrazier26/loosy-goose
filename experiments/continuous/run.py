@@ -43,6 +43,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -276,29 +277,55 @@ class QSummaries(Summaries):
         return lsum.cached_text(QSUM_DIR, self.label, f"e{k}", text, budget, QSUM_MODEL_ID)
 
 
-def qwen_summary_rounds(plans: list[sim.TranscriptPlan]) -> None:
-    """Each event's input holds the previous summary, so events are generated a round at a time."""
-    gen: lsum.MlxGenerator | None = None
+def record_failure(cfg: SetCfg, key: str, error: str) -> None:
+    path = cfg.out / f"{cfg.prefix}failures.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"key": key, "error": error, "ts": time.time()}) + "\n")
+
+
+def qwen_summary_rounds(
+    cfg: SetCfg, plans: list[sim.TranscriptPlan], make_gen: Callable[[str], Any] | None = None
+) -> set[str]:
+    """Each event's input holds the previous summary, so events are generated a round at a time.
+    A transcript whose summary fails is recorded and dropped from later rounds; its qthresh arm
+    then finds the summary missing and is skipped. Returns the failed labels."""
+    make_gen = make_gen or lsum.MlxGenerator
+    gen: Any = None
     seen: set[tuple[str, str, str]] = set()
+    failed: set[str] = set()
     try:
         while not dl.STOP.is_set():
             jobs = []
             for p in plans:
+                if p.label in failed:
+                    continue
                 try:
                     sim.thresh_events(p, QSummaries(p.label, strict=True))
                 except sim.MissingSummaryError as m:
                     jobs.append((p.label, f"e{m.k}", m.text, m.budget))
             if not jobs:
-                return
-            ids = {(lb, lv, lsum.source_sha(t, b, QSUM_MODEL_ID)) for lb, lv, t, b in jobs}
-            if ids & seen:
-                raise RuntimeError(f"qthresh summaries not cached after generation: {ids & seen}")
-            seen |= ids
+                return failed
             log(f"qthresh summaries ({QSUM_MODEL_ID}, local): {len(jobs)} jobs")
-            gen = gen or lsum.MlxGenerator(QSUM_MODEL_ID)
-            lsum.precompute(
-                jobs, QSUM_DIR, exi.summary_prompt, log, gen=gen, model_id=QSUM_MODEL_ID
-            )
+            for job in jobs:
+                label, level, text, budget = job
+                key = f"qsum|{label}|{level}"
+                ident = (label, level, lsum.source_sha(text, budget, QSUM_MODEL_ID))
+                # Broad on purpose: an MLX out-of-memory surfaces as a plain RuntimeError, and
+                # one bad transcript must not stop the other arms' phases.
+                try:
+                    if ident in seen:
+                        raise RuntimeError("summary not cached after generation")
+                    seen.add(ident)
+                    gen = gen or make_gen(QSUM_MODEL_ID)
+                    lsum.precompute(
+                        [job], QSUM_DIR, exi.summary_prompt, log, gen=gen, model_id=QSUM_MODEL_ID
+                    )
+                except Exception as exc:
+                    failed.add(label)
+                    record_failure(cfg, key, f"{type(exc).__name__}: {exc}")
+                    log(f"FAILED {key}: {exc}; skipping qthresh for {label}")
+        return failed
     finally:
         if gen is not None:
             del gen
@@ -307,7 +334,7 @@ def qwen_summary_rounds(plans: list[sim.TranscriptPlan]) -> None:
 
 def summary_rounds(cfg: SetCfg, rt: exi.Runtime, plans: list[sim.TranscriptPlan]) -> None:
     if cfg.summary_arm == "qthresh":
-        qwen_summary_rounds(plans)
+        qwen_summary_rounds(cfg, plans)
         return
     if cfg.summary_arm is None:
         return
@@ -474,6 +501,8 @@ def pending_counts(
                 continue
             for a, r in runs.items():
                 ans = answer_job(cfg, label, a, r.contexts[ck.t], probes)
+                if cfg.answerer is QWEN and qwen_over(ans.prompt) is not None:
+                    continue
                 answered = ans.done_by(store.get(ans.key))
                 out["answers"] += not answered
                 grade = grade_job(cfg, store, label, a, probes) if answered else None
@@ -611,6 +640,7 @@ def run_all(cfg: SetCfg, rt: exi.Runtime, plans: list[sim.TranscriptPlan], gen: 
     local.unload()
     summary_rounds(cfg, rt, plans)
     answers: list[exi.Job] = []
+    over: list[str] = []
     contexts: list[tuple[str, str, list[dict[str, str]]]] = []
     for p in plans:
         runs: dict[str, sim.ArmRun] = {}
@@ -624,8 +654,17 @@ def run_all(cfg: SetCfg, rt: exi.Runtime, plans: list[sim.TranscriptPlan], gen: 
             if not probes:
                 continue
             for a, r in runs.items():
+                job = answer_job(cfg, ck_label(p, ck), a, r.contexts[ck.t], probes)
+                # Not queued: the runner would refuse it with a CallError, which call_with_retry
+                # retries (with sleeps) although the prompt can never fit.
+                if cfg.answerer is QWEN and (n := qwen_over(job.prompt)) is not None:
+                    over.append(job.key)
+                    record_failure(cfg, job.key, f"over Qwen window: {n} tokens, not queued")
+                    continue
                 contexts.append((ck_label(p, ck), a, probes))
-                answers.append(answer_job(cfg, ck_label(p, ck), a, r.contexts[ck.t], probes))
+                answers.append(job)
+    if over:
+        log(f"answers over the Qwen window, not queued: {len(over)}")
     log(f"answers ({cfg.answerer.name}): {len(answers)} jobs")
     if not dl.STOP.is_set():
         rt.run(answers)
@@ -736,9 +775,40 @@ def arm_table(cfg: SetCfg, scores: Scores, cost: dict[str, tuple[float, float]])
     return out
 
 
-def pair_table(cfg: SetCfg, scores: Scores) -> list[str]:
+def pair_table(cfg: SetCfg, scores: Scores, by_pct: PctScores | None = None) -> list[str]:
+    """With `by_pct`, rows against full pair checkpoints rather than transcripts."""
     out = ["", "| paired difference | delta accuracy |", "|---|---|"]
-    return out + [f"| {a} - {b} | {dl.paired(scores[a], scores[b])} |" for a, b in cfg.pairs]
+    return out + [
+        f"| {a} - {b} | "
+        + (
+            paired_checkpoints(by_pct, a, b)
+            if by_pct and b == "full"
+            else dl.paired(scores[a], scores[b])
+        )
+        + " |"
+        for a, b in cfg.pairs
+    ]
+
+
+def paired_checkpoints(by_pct: PctScores, a: str, b: str) -> str:
+    """a - b over the checkpoints both arms have graded: averaged within a transcript first, so
+    the bootstrap and sign test still resample transcripts. For full, which is refused at the
+    checkpoints over Qwen's window and would otherwise lose those whole transcripts."""
+    diffs: dict[str, list[float]] = {}
+    for pct, row in sorted(by_pct[b].items()):
+        for label, vb in sorted(row.items()):
+            va = by_pct[a].get(pct, {}).get(label)
+            if va is not None:
+                diffs.setdefault(label, []).append(va - vb)
+    if not diffs:
+        return "-"
+    d = [float(np.mean(diffs[k])) for k in sorted(diffs)]
+    m, lo, hi = exi.bootstrap_ci(d)
+    n_ck = sum(len(v) for v in diffs.values())
+    return (
+        f"{m:+.3f} [{lo:+.2f},{hi:+.2f}] sign p={dl.sign_p(d):.3f} "
+        f"n={len(d)} transcripts, {n_ck} checkpoints"
+    )
 
 
 def pct_table(cfg: SetCfg, by_pct: PctScores) -> list[str]:
@@ -751,13 +821,18 @@ def pct_table(cfg: SetCfg, by_pct: PctScores) -> list[str]:
     ]
 
 
+def qwen_over(prompt: str) -> int | None:
+    """The prompt's Qwen token count when it leaves less than MAX_TOKENS of Qwen's window."""
+    n = local.qwen_tokens(prompt)
+    return n if n > local.QWEN_WINDOW - local.MAX_TOKENS else None
+
+
 def over_window(
     cfg: SetCfg, store: exi.Store | None, plans: list[sim.TranscriptPlan], gen: exi.Model
 ) -> dict[str, list[str]]:
     """Checkpoints whose answer prompt (the context alone while probes are missing) leaves Qwen
     less than MAX_TOKENS of its window, per arm. The runner refuses those calls; they are listed,
     never cut."""
-    limit = local.QWEN_WINDOW - local.MAX_TOKENS
     out: dict[str, list[str]] = {a: [] for a in cfg.arms}
     for p in plans:
         for a in cfg.arms:
@@ -767,7 +842,7 @@ def over_window(
                 probes = probes_for(cfg, store, label, gen) if store is not None else None
                 ctx = r.contexts[ck.t]
                 text = exi.probe_answer_prompt(ctx, [x["q"] for x in probes]) if probes else ctx
-                if local.qwen_tokens(text) > limit:
+                if qwen_over(text) is not None:
                     out[a].append(label)
     return out
 
@@ -785,9 +860,12 @@ def qwen_report(
         f"greedy, thinking off) probe QA accuracy, graded by {cfg.grader.name}; probes by "
         f"{gen.name} ({cfg.probes_key}); qthresh summaries by {QSUM_MODEL_ID} (lsum). Every "
         "call is local and no closed model is used anywhere, so these numbers are a standalone "
-        "set, not comparable with the Claude-answered set F report. No full-context filter. A "
-        "transcript counts for an arm only "
-        "if all three of its checkpoints are graded. Mean [95% bootstrap CI over transcripts].",
+        "set, not comparable with the Claude-answered set F report. No full-context filter. In "
+        "the arm table and the pairs between compacted arms, a transcript counts for an arm only "
+        "if all three of its checkpoints are graded. Rows against full are paired per checkpoint "
+        "instead: the difference is taken only at checkpoints where full has a grade (full is "
+        "refused at checkpoints over Qwen's window), averaged within each transcript, and its n "
+        "gives both transcripts and checkpoints. Mean [95% bootstrap CI over transcripts].",
     ]
     if dl.STOP.is_set():
         out.append("NOTE: the driver stopped on --max-calls; tables are partial.")
@@ -808,7 +886,7 @@ def qwen_report(
             f"FLAG: qthresh is more than {QTHRESH_TOL:.0%} off thresh's context size, so its "
             "comparisons read as accuracy at the context size each arm reached."
         )
-    out += pair_table(cfg, scores)
+    out += pair_table(cfg, scores, by_pct)
     out += ["", "Per checkpoint position:"] + pct_table(cfg, by_pct)
     over = over_window(cfg, store, plans, gen)
     n_ck = sum(len(p.checkpoints) for p in plans)
@@ -816,8 +894,9 @@ def qwen_report(
     out += [
         "",
         f"Checkpoints over the Qwen window (answer prompt over {limit} Qwen tokens, i.e. "
-        f"{local.QWEN_WINDOW} less the {local.MAX_TOKENS}-token reply cap), out of {n_ck}; these "
-        "calls are refused, not cut, and leave the transcript ungraded for that arm:",
+        f"{local.QWEN_WINDOW} less the {local.MAX_TOKENS}-token reply cap), out of {n_ck}. These "
+        "answers are never queued and the context is never cut; the checkpoint stays ungraded "
+        "for that arm (full's pairs skip it, see above):",
         "",
         "| arm | over window | checkpoints |",
         "|---|---|---|",

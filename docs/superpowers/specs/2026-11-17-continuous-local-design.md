@@ -145,5 +145,15 @@ its own code.
   cfrzm 12,355, cfrzg 12,717.
 - **Correction to section A.** `full` does not always fit Qwen's window. 15 of 75 full checkpoints (4 at 75%, 11 at 100%)
   are over 31,232 Qwen tokens. The largest full context is 50,673 o200k tokens, against the stated maximum of about 19k.
-  The runner refuses those calls and the report lists them. `full` therefore loses the transcripts that have an over-window
-  checkpoint, which thins every arm − full row.
+  Those answers are never queued (each is recorded in `qwen_failures.jsonl`), the context is never cut, and the report lists them.
+- **2026-11-17, fix round 1 (controller rulings).**
+  - **Scoring `full` per checkpoint.** Each arm − full row is now scored per checkpoint. The difference is taken only at checkpoints
+    where `full` has a grade, then averaged within each transcript, and the bootstrap and sign test still resample transcripts.
+    Each row prints n as both transcripts and checkpoints, so no transcript is dropped for a missing full checkpoint. Pairs between
+    compacted arms, and the arm table, stay per transcript with all three checkpoints required.
+  - **Over-window answers.** They are skipped when the job is built, not refused by the runner, because `call_with_retry` would retry
+    a refusal, with sleeps, even though the prompt can never fit.
+  - **Failed summaries.** A qthresh summary that fails is recorded, with the key `qsum|<label>|e<k>`, and that transcript's qthresh
+    arm is skipped. The run goes on.
+  - **Nemo tokenizer.** It loads with `fix_mistral_regex=True` (transformers 5.16.1) in both `local._tokenizer` and the `mlx_lm`
+    load. Without the flag, mlx_lm's local-path tokenizer load warned of an incorrect regex; with it, the warning is gone.
