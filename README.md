@@ -130,6 +130,19 @@ uv run loosy-goose proxy --upstream http://127.0.0.1:8080 --window 32768 --start
 # then point the agent's base URL at http://127.0.0.1:8765/v1
 ```
 
+Quick start with `mlx_lm.server` on Apple silicon (the commands the live test runs):
+
+```
+uv sync --extra embed --extra proxy --extra slot
+uv run mlx_lm.server --model Qwen/Qwen3-4B-MLX-4bit --port 8080 \
+  --chat-template-args '{"enable_thinking": false}' --prompt-cache-bytes 1073741824
+uv run loosy-goose proxy --upstream http://127.0.0.1:8080   # second terminal
+```
+
+Cap `--prompt-cache-bytes`: the server's default prompt cache is unbounded, and on a 16 GB Mac
+it ran out of Metal memory around 10k-token prompts. `uv run pytest -m live -s tests/test_proxy_live.py`
+runs a 12-turn loop through both (opt-in, needs the GPU).
+
 | Flag | Meaning |
 | --- | --- |
 | `--upstream URL` | the local server's base URL, without `/v1` (required) |
