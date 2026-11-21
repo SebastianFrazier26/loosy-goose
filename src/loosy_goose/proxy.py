@@ -45,6 +45,7 @@ _HOP_BY_HOP = frozenset(
 )
 # Host-header allowlist: a DNS-rebinding page reaches a loopback port with its own Host name.
 _ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "[::1]"})
+_LOOPBACK_ORIGIN_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
 
 
@@ -68,6 +69,15 @@ def _host_allowed(host: str | None) -> bool:
     else:
         name = name.rsplit(":", 1)[0]
     return name in _ALLOWED_HOSTS
+
+
+def _origin_allowed(origin: str) -> bool:
+    parts = urlsplit(origin)
+    return parts.scheme in ("http", "https") and parts.hostname in _LOOPBACK_ORIGIN_HOSTS
+
+
+def _is_json(content_type: str | None) -> bool:
+    return (content_type or "").split(";", 1)[0].strip().lower() == "application/json"
 
 
 def _drop_set(headers: list[tuple[str, str]]) -> frozenset[str]:
@@ -118,6 +128,11 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         prepare_state_dir(store.root)
+        if compress is None:
+            # Loaded here so concurrent first requests do not race to build the model.
+            from .embed import warm
+
+            await asyncio.to_thread(warm)
         # No read timeout: a local model can take minutes before its first token.
         async with httpx.AsyncClient(
             transport=transport, timeout=httpx.Timeout(None, connect=10.0)
@@ -166,28 +181,37 @@ def create_app(
             finally:
                 await resp.aclose()
 
-        out_headers = resp.headers.multi_items()
-        out_drop = _drop_set(out_headers)
+        out_headers = resp.headers.raw
+        out_drop = _drop_set([(k.decode("latin-1"), v.decode("latin-1")) for k, v in out_headers])
         out = StreamingResponse(
             body(), status_code=resp.status_code, background=BackgroundTask(resp.aclose)
         )
         # Set raw so repeated headers (set-cookie and the like) are not merged into one.
         out.raw_headers = [
-            (k.lower().encode("latin-1"), v.encode("latin-1"))
-            for k, v in out_headers
-            if k.lower() not in out_drop
+            (k.lower(), v) for k, v in out_headers if k.decode("latin-1").lower() not in out_drop
         ]
         return out
 
     def refused(request: Request) -> Response | None:
         if not _host_allowed(request.headers.get("host")):
             return JSONResponse({"error": {"message": "loosy-goose: host not allowed"}}, 403)
+        # A browser page on another origin can POST to a loopback port; non-browser clients send
+        # neither header.
+        origin = request.headers.get("origin")
+        if (origin is not None and not _origin_allowed(origin)) or request.headers.get(
+            "sec-fetch-site", ""
+        ).lower() == "cross-site":
+            return JSONResponse({"error": {"message": "loosy-goose: cross-origin refused"}}, 403)
         return None
 
     @app.post("/v1/chat/completions")
     async def chat(request: Request) -> Response:
         if (no := refused(request)) is not None:
             return no
+        if not _is_json(request.headers.get("content-type")):
+            return JSONResponse(
+                {"error": {"message": "loosy-goose: content-type must be application/json"}}, 415
+            )
         raw = await request.body()
         try:
             body = json.loads(raw)
@@ -196,6 +220,13 @@ def create_app(
         msgs = body.get("messages") if isinstance(body, dict) else None
         if not (isinstance(msgs, list) and msgs and all(isinstance(m, dict) for m in msgs)):
             return await forward(request, "/v1/chat/completions", raw)
+        try:
+            json.dumps(body, ensure_ascii=False).encode("utf-8")
+        except UnicodeEncodeError:
+            # A lone surrogate (valid JSON escape, not valid UTF-8) cannot be hashed or re-sent.
+            return JSONResponse(
+                {"error": {"message": "loosy-goose: request body is not valid unicode"}}, 400
+            )
         cid = conversation_id(msgs)
         lock = locks.get(cid)
         if lock is None:

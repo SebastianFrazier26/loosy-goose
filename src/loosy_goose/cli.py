@@ -202,6 +202,8 @@ def _proxy(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
 
     if not _is_loopback(args.host):
         parser.error(f"--host must be a loopback address, got {args.host!r}")
+    if args.upstream.rstrip("/").lower().endswith("/v1"):
+        parser.error("--upstream is the server root without /v1: the proxy adds /v1/ itself")
     try:
         config = ContinuousConfig(window=args.window, start_at=args.start_at)
     except ValueError as exc:

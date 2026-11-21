@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -171,7 +172,9 @@ def test_state_dir_private_and_pruned(tmp_path: Path) -> None:
 def test_uncompactable_body_forwarded_byte_identical(tmp_path: Path, raw: bytes) -> None:
     up = Upstream()
     with _client(tmp_path, up) as c:
-        r = c.post("/v1/chat/completions", content=raw)
+        r = c.post(
+            "/v1/chat/completions", content=raw, headers={"content-type": "application/json"}
+        )
     assert r.status_code == 200
     assert up.requests[0].content == raw
 
@@ -240,3 +243,133 @@ def test_cli_binds_loopback_without_access_log(monkeypatch: pytest.MonkeyPatch) 
     assert main(["proxy", "--upstream", UPSTREAM, "--host", "localhost"]) == 0
     assert seen["host"] == "127.0.0.1"
     assert seen["access_log"] is False
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"origin": "https://evil.example"},
+        {"origin": "null"},
+        {"origin": "http://localhost.evil.example"},
+        {"origin": "http://127.0.0.1@evil.example"},
+        {"origin": "ftp://localhost"},
+        {"sec-fetch-site": "cross-site"},
+    ],
+)
+def test_cross_origin_refused(tmp_path: Path, headers: dict[str, str]) -> None:
+    up = Upstream()
+    with _client(tmp_path, up) as c:
+        r1 = c.get("/v1/models", headers=headers)
+        r2 = c.post("/v1/chat/completions", json={"messages": []}, headers=headers)
+    assert r1.status_code == r2.status_code == 403
+    assert r1.json()["error"]["message"] == "loosy-goose: cross-origin refused"
+    assert not up.requests
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"origin": "http://localhost:3000"},
+        {"origin": "https://127.0.0.1"},
+        {"origin": "http://[::1]:8080"},
+        {"sec-fetch-site": "same-origin"},
+        {"sec-fetch-site": "none"},
+    ],
+)
+def test_loopback_origin_allowed(tmp_path: Path, headers: dict[str, str]) -> None:
+    up = Upstream()
+    with _client(tmp_path, up) as c:
+        assert c.get("/v1/models", headers=headers).status_code == 200
+
+
+@pytest.mark.parametrize("ctype", [None, "text/plain", "application/x-www-form-urlencoded"])
+def test_chat_requires_json_content_type(tmp_path: Path, ctype: str | None) -> None:
+    up = Upstream()
+    with _client(tmp_path, up) as c:
+        r = c.post(
+            "/v1/chat/completions",
+            content=b'{"messages": []}',
+            headers={"content-type": ctype} if ctype else {},
+        )
+    assert r.status_code == 415
+    assert not up.requests
+
+
+def test_json_content_type_with_params_accepted(tmp_path: Path) -> None:
+    up = Upstream()
+    with _client(tmp_path, up) as c:
+        r = c.post(
+            "/v1/chat/completions",
+            content=b"{}",
+            headers={"content-type": "Application/JSON; charset=utf-8"},
+        )
+    assert r.status_code == 200
+
+
+def test_lone_surrogate_fails_closed_without_logging(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    up = Upstream()
+    raw = b'{"messages": [{"role": "user", "content": "secret-ish \\ud800 text"}]}'
+    with _client(tmp_path, up) as c:
+        r = c.post(
+            "/v1/chat/completions", content=raw, headers={"content-type": "application/json"}
+        )
+    assert r.status_code == 400
+    assert not up.requests
+    assert "secret-ish" not in caplog.text and "ud800" not in caplog.text
+
+
+def test_non_latin1_response_header_relayed(tmp_path: Path) -> None:
+    # Driven through ASGITransport: TestClient re-encodes response headers itself and would
+    # fail on this value before the assertion.
+    value = "\u20ac".encode()
+    resp = httpx.Response(
+        200,
+        content=_chunks([b"{}"]),
+        headers=[(b"content-type", b"application/json"), (b"x-note", value)],
+    )
+    app = create_app(
+        UPSTREAM,
+        SMALL,
+        StateStore(tmp_path / "state"),
+        transport=httpx.MockTransport(Upstream(resp)),
+        compress=keep_every_third,
+    )
+
+    async def run() -> list[tuple[bytes, bytes]]:
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as c:
+                r = await c.get("/v1/models")
+        assert r.status_code == 200
+        return r.headers.raw
+
+    assert (b"x-note", value) in asyncio.run(run())
+
+
+def test_cli_rejects_upstream_ending_in_v1(capsys: pytest.CaptureFixture[str]) -> None:
+    for url in ("http://127.0.0.1:8080/v1", "http://127.0.0.1:8080/v1/"):
+        with pytest.raises(SystemExit) as exc:
+            main(["proxy", "--upstream", url])
+        assert exc.value.code == 2
+    assert "/v1" in capsys.readouterr().err
+
+
+def test_warms_embedding_model_only_without_injected_compressor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import loosy_goose.embed as embed
+
+    calls: list[int] = []
+    monkeypatch.setattr(embed, "warm", lambda *a: calls.append(1))
+    app = create_app(
+        UPSTREAM, SMALL, StateStore(tmp_path / "s"), transport=httpx.MockTransport(Upstream())
+    )
+    with TestClient(app, base_url="http://127.0.0.1:8765"):
+        pass
+    assert calls == [1]
+    with _client(tmp_path, Upstream()):
+        pass
+    assert calls == [1]
