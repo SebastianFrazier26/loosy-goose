@@ -11,10 +11,13 @@ from .transcript import Block, Role, Transcript, Turn, _text_of, split_fences
 _ROLES: frozenset[str] = frozenset({"user", "assistant", "tool"})
 
 
+_PREFIX_ROLES: frozenset[str] = frozenset({"system", "developer"})
+
+
 def system_prefix(messages: Sequence[Mapping[str, Any]]) -> int:
     n = 0
     for m in messages:
-        if m.get("role") != "system":
+        if m.get("role") not in _PREFIX_ROLES:
             break
         n += 1
     return n
@@ -35,6 +38,30 @@ def _tool_use(call: Any) -> Block | None:
     else:
         text = json.dumps(raw, ensure_ascii=False, sort_keys=True)
     return Block("tool_use", text, {"name": str(fn.get("name", ""))})
+
+
+def is_barrier(msg: Mapping[str, Any]) -> bool:
+    """True when `to_transcript` cannot carry the whole message, so freezing it would drop
+    content: an unmapped role, a non-text content part, or a malformed tool call."""
+    if msg.get("role") not in _ROLES:
+        return True
+    content = msg.get("content")
+    if isinstance(content, list):
+        if any(
+            not (isinstance(p, str) or (isinstance(p, Mapping) and p.get("type") == "text"))
+            for p in content
+        ):
+            return True
+    elif content is not None and not isinstance(content, str):
+        return True
+    calls = msg.get("tool_calls")
+    if calls is None:
+        return False
+    return (
+        not isinstance(calls, Sequence)
+        or isinstance(calls, str)
+        or any(_tool_use(c) is None for c in calls)
+    )
 
 
 def to_transcript(messages: Sequence[Mapping[str, Any]]) -> tuple[Transcript, list[int]]:

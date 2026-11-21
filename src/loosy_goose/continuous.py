@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from .openai_messages import system_prefix, to_transcript
+from .openai_messages import is_barrier, system_prefix, to_transcript
 from .render import SEGMENT_BLOCK_KIND, render_segments
 from .segment import Segment
 from .tokens import count_tokens
@@ -46,6 +46,17 @@ class ContinuousConfig:
     def __post_init__(self) -> None:
         if self.start_at > 0 and self.window is None:
             raise ValueError("start_at > 0 needs a window: the gate is a share of it")
+        # decay_m < 2 would merge a lone chunk into itself and never shrink the header.
+        if self.decay_m < 2:
+            raise ValueError("decay_m must be at least 2")
+        if self.tail_tokens <= 0 or self.chunk_tokens <= 0:
+            raise ValueError("tail_tokens and chunk_tokens must be positive")
+        if not (0 < self.keep <= 1 and 0 < self.decay_keep <= 1):
+            raise ValueError("keep and decay_keep must be in (0, 1]")
+        if self.window is not None and self.window <= 0:
+            raise ValueError("window must be positive")
+        if not (0 <= self.start_at <= 1 and 0 < self.decay_at <= 1):
+            raise ValueError("start_at must be in [0, 1] and decay_at in (0, 1]")
 
 
 @dataclass
@@ -219,7 +230,8 @@ class FreezeCompactor:
             else count_tokens(_text_of(m.get("content")))
             for i, m in enumerate(messages)
         ]
-        self._drop_stale(messages, prefix)
+        barriers = [i for i, m in enumerate(messages) if i >= prefix and is_barrier(m)]
+        self._drop_stale(messages, prefix, barriers)
         if (
             not self._chunks
             and cfg.window is not None
@@ -238,9 +250,20 @@ class FreezeCompactor:
         while acc < cfg.tail_tokens and tail_from > prefix:
             tail_from -= 1
             acc += per_msg[tail_from]
+        # Nothing at or after the first message `to_transcript` cannot carry is frozen: it and
+        # everything behind it stay verbatim, in order. Freezing past it while keeping it would
+        # reorder the output.
+        if barriers:
+            tail_from = min(tail_from, barriers[0])
         while min_owner_from[tail_from] < tail_from:
             tail_from = max(min_owner_from[tail_from], prefix)
 
+        # A client that pruned messages after the frozen span leaves chunks a fresh run would
+        # keep verbatim.
+        for k, ch in enumerate(self._chunks):
+            if ch.span[1] > tail_from:
+                del self._chunks[k:]
+                break
         upto = self._chunks[-1].span[1] if self._chunks else prefix
         while (end := self._next_chunk_end(per_msg, min_owner_from, upto, tail_from)) is not None:
             self._chunks.append(self._freeze(messages, transcript, index, (upto, end)))
@@ -250,10 +273,14 @@ class FreezeCompactor:
             return list(messages)
 
         if cfg.window is not None:
+            limit = cfg.decay_at * cfg.window
             rest = sum(per_msg[:prefix]) + sum(per_msg[upto:])
-            while rest + count_tokens(self._header_text()) > cfg.decay_at * cfg.window:
-                if not self._merge_lowest_full_tier(messages):
-                    break
+            # Merging only shrinks the header, never below the bare HEADER line: when even that
+            # leaves the context over the limit, merging would cost detail for nothing.
+            if rest + count_tokens(HEADER) <= limit:
+                while rest + count_tokens(self._header_text()) > limit:
+                    if not self._merge_lowest_full_tier(messages):
+                        break
 
         head = self._header_text()
         rest_msgs = messages[upto:]
@@ -269,13 +296,20 @@ class FreezeCompactor:
             return [*messages[:prefix], first, *rest_msgs[1:]]
         return [*messages[:prefix], {"role": "user", "content": head}, *rest_msgs]
 
-    def _drop_stale(self, messages: Sequence[Mapping[str, Any]], prefix: int) -> None:
+    def _drop_stale(
+        self, messages: Sequence[Mapping[str, Any]], prefix: int, barriers: Sequence[int]
+    ) -> None:
         """A chunk whose source messages are no longer the request's (history edited, a shorter
         conversation) is discarded with every chunk after it, so the frozen text never describes
         messages the client did not send."""
         for k, ch in enumerate(self._chunks):
             a, b = ch.span
-            if a < prefix or b > len(messages) or source_sha(messages[a:b]) != ch.source_sha:
+            if (
+                a < prefix
+                or b > len(messages)
+                or any(a <= i < b for i in barriers)
+                or source_sha(messages[a:b]) != ch.source_sha
+            ):
                 del self._chunks[k:]
                 return
 

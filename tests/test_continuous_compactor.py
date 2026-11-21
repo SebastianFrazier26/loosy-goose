@@ -13,6 +13,7 @@ from loosy_goose.continuous import (  # noqa: E402
     ContinuousConfig,
     FreezeCompactor,
     StateStore,
+    _tool_owners,
     conversation_id,
 )
 from loosy_goose.render import render_segments  # noqa: E402
@@ -61,6 +62,26 @@ def _context_tokens(messages: list[dict[str, Any]]) -> int:
         for c in m.get("tool_calls") or []:
             total += count_tokens(c["function"]["arguments"])
     return total
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"decay_m": 1},
+        {"decay_m": 0},
+        {"keep": 0.0},
+        {"keep": 1.5},
+        {"decay_keep": 0.0},
+        {"tail_tokens": 0},
+        {"chunk_tokens": -1},
+        {"window": 0},
+        {"start_at": 1.5, "window": 100},
+        {"decay_at": 0.0},
+    ],
+)
+def test_config_rejects_invalid_values(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        ContinuousConfig(**kwargs)
 
 
 def test_config_rejects_gate_without_window() -> None:
@@ -316,3 +337,163 @@ def test_conversation_id_stable_across_appends() -> None:
     other = [dict(m) for m in full]
     other[0] = {**other[0], "content": "different system"}
     assert conversation_id(other) != conversation_id(full)
+
+
+IMAGE = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+BARRIERS = {
+    "system": {"role": "system", "content": "NEW RULES mid-conversation"},
+    "developer": {"role": "developer", "content": "DEV NOTE mid-conversation"},
+    "image_only_user": {"role": "user", "content": [IMAGE]},
+    "text_and_image_user": {
+        "role": "user",
+        "content": [{"type": "text", "text": "look at this screenshot"}, IMAGE],
+    },
+    "function_role": {"role": "function", "name": "lookup", "content": "legacy result"},
+    "unknown_role": {"role": "critic", "content": "remark from a custom role"},
+    "audio_part": {
+        "role": "user",
+        "content": [{"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}}],
+    },
+}
+
+
+def _find(out: list[dict[str, Any]], msg: dict[str, Any]) -> int:
+    """Index of `msg` in `out`, allowing the folded header text part before a list content."""
+    hits = []
+    for i, m in enumerate(out):
+        c, orig = m.get("content"), msg["content"]
+        same = c == orig or (
+            isinstance(orig, list) and isinstance(c, list) and c[-len(orig) :] == orig
+        )
+        if m["role"] == msg["role"] and same:
+            hits.append(i)
+    assert len(hits) == 1
+    return hits[0]
+
+
+@pytest.mark.parametrize("at", [8, 20, 51])
+@pytest.mark.parametrize("kind", sorted(BARRIERS))
+def test_unmapped_messages_are_barriers_and_kept_verbatim(kind: str, at: int) -> None:
+    base = _messages(30)
+    msgs = [*base[:at], BARRIERS[kind], *base[at:]]
+    c = _compactor()
+    out = c.compact(msgs)
+    assert all(ch.span[1] <= at for ch in c.chunks)
+    k = _find(out, BARRIERS[kind])
+    assert out[k + 1 :] == msgs[at + 1 :]
+    if at > 8:
+        assert c.chunks and HEADER in json.dumps(out[1])
+    # The same conversation grown further freezes nothing past the barrier either.
+    grown = [*msgs, *_messages(10)[2:]]
+    out2 = c.compact(grown)
+    assert all(ch.span[1] <= at for ch in c.chunks)
+    assert out2[_find(out2, BARRIERS[kind]) + 1 :] == grown[at + 1 :]
+
+
+def test_leading_developer_messages_stay_in_prefix() -> None:
+    dev = {"role": "developer", "content": "house rules"}
+    msgs = [dev, *_messages(30)]
+    c = _compactor()
+    out = c.compact(msgs)
+    assert out[:2] == msgs[:2]
+    assert out[2]["role"] == "user" and out[2]["content"].startswith(HEADER)
+    assert c.chunks and c.chunks[0].span[0] == 2
+
+
+def test_barrier_inside_stored_chunk_discards_it() -> None:
+    base = _messages(30)
+    c = _compactor(ContinuousConfig(tail_tokens=600, chunk_tokens=1200))
+    c.compact(base)
+    a, b = next(ch.span for ch in c.chunks if ch.span[1] - ch.span[0] >= 4)
+    at = a + 2
+    msgs = [*base[:at], BARRIERS["unknown_role"], *base[at:]]
+    out = c.compact(msgs)
+    assert all(ch.span[1] <= at for ch in c.chunks)
+    assert out[_find(out, BARRIERS["unknown_role"]) + 1 :] == msgs[at + 1 :]
+
+
+def test_shrunk_tail_matches_fresh_run() -> None:
+    full = _messages(40)
+    c = _compactor()
+    c.compact(full)
+    before = c.chunks[-1].span[1]
+    pruned = [*full[:-30], *({**m, "content": "ok"} for m in full[-30:])]
+    fresh = _compactor()
+    expected = fresh.compact(pruned)
+    assert fresh.chunks[-1].span[1] < before
+    assert c.compact(pruned) == expected
+    assert c.chunks == fresh.chunks
+
+
+def test_no_decay_when_it_cannot_reach_the_limit() -> None:
+    cfg = ContinuousConfig(tail_tokens=600, chunk_tokens=500, window=500, decay_m=2)
+    c = _compactor(cfg)
+    c.compact(_messages(60))
+    assert len(c.chunks) > 4
+    assert {ch.tier for ch in c.chunks} == {0}
+
+
+def _parallel(rounds: int, fan: int = 3, size: int = 60) -> list[dict[str, Any]]:
+    msgs: list[dict[str, Any]] = [
+        {"role": "system", "content": "you are an agent"},
+        {"role": "user", "content": _words(size, "ask")},
+    ]
+    for r in range(rounds):
+        calls = [
+            {
+                "id": f"c{r}_{j}",
+                "type": "function",
+                "function": {"name": "read", "arguments": json.dumps({"path": f"f{r}_{j}"})},
+            }
+            for j in range(fan)
+        ]
+        msgs.append(
+            {"role": "assistant", "content": _words(size // 4, f"a{r}x"), "tool_calls": calls}
+        )
+        msgs.extend(
+            {"role": "tool", "tool_call_id": f"c{r}_{j}", "content": _words(size, f"r{r}_{j}x")}
+            for j in range(fan)
+        )
+    return msgs
+
+
+def test_parallel_tool_results_never_split_at_tail_or_chunk_cut() -> None:
+    msgs = _parallel(25)
+    for tail in range(100, 900, 29):
+        cfg = ContinuousConfig(tail_tokens=tail, chunk_tokens=300)
+        c = _compactor(cfg)
+        out = c.compact(msgs)
+        rest = out[2:]
+        assert rest == msgs[len(msgs) - len(rest) :]
+        assert rest[0]["role"] != "tool"
+        assert all(msgs[ch.span[1]]["role"] != "tool" for ch in c.chunks)
+    for chunk in range(100, 700, 31):
+        c = _compactor(ContinuousConfig(tail_tokens=500, chunk_tokens=chunk))
+        c.compact(msgs)
+        assert all(msgs[ch.span[1]]["role"] != "tool" for ch in c.chunks)
+
+
+def test_tool_owner_fallback_for_unmatched_id() -> None:
+    call = {"id": "a", "type": "function", "function": {"name": "f", "arguments": "{}"}}
+    msgs: list[dict[str, Any]] = [
+        {"role": "tool", "tool_call_id": "orphan", "content": "no caller yet"},
+        {"role": "assistant", "content": None, "tool_calls": [call]},
+        {"role": "tool", "tool_call_id": "a", "content": "matched"},
+        {"role": "tool", "tool_call_id": "zzz", "content": "unmatched id"},
+        {"role": "tool", "content": "no id at all"},
+        {"role": "user", "content": "next"},
+    ]
+    assert _tool_owners(msgs) == [0, 1, 1, 1, 1, 5]
+
+
+def test_unmatched_tool_id_stays_with_its_assistant_at_cuts() -> None:
+    msgs = _messages(25)
+    for i in range(3, len(msgs), 2):
+        msgs[i] = {**msgs[i], "tool_call_id": f"lost{i}"}
+    for tail in range(150, 800, 53):
+        c = _compactor(ContinuousConfig(tail_tokens=tail, chunk_tokens=300))
+        out = c.compact(msgs)
+        rest = out[2:]
+        assert rest == msgs[len(msgs) - len(rest) :]
+        assert rest[0]["role"] != "tool"
+        assert all(msgs[ch.span[1]]["role"] != "tool" for ch in c.chunks)
