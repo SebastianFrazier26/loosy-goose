@@ -829,8 +829,10 @@ def call_with_retry(
     errors and invalid replies get a few quick retries. Raises CallFailedError when out of
     attempts — the caller logs it and moves on, and a rerun picks the key up again. Local `mlx`
     models decode greedily, so a retry would repeat the same reply: they get one attempt for
-    non-transient errors and invalid replies (2026-11-17)."""
-    max_other = 1 if model.cli == "mlx" else MAX_OTHER_ATTEMPTS
+    non-transient errors and invalid replies (2026-11-17), unless the prompt object carries its own
+    `max_attempts` and the runner varies the decoding between attempts (local probe_gen,
+    2026-11-21)."""
+    max_other = getattr(prompt, "max_attempts", 1 if model.cli == "mlx" else MAX_OTHER_ATTEMPTS)
     transient = other = 0
     delay = BACKOFF_START_S
     while True:

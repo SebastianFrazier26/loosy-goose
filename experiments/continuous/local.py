@@ -100,6 +100,56 @@ def unload() -> None:
         _free()
 
 
+PROBE_PREFILL = '{"probes": [{"q": "'
+# Greedy decoding repeats the same bad reply, so attempts after the first sample. The pilot's one
+# remaining failure was a probe answer that copied a long tool output until the token cap.
+PROBE_ATTEMPTS = 3
+RETRY_TEMP = 0.7
+_attempt_of: dict[int, int] = {}
+
+
+class PrefilledPrompt(str):
+    """A prompt whose assistant turn starts with `prefill`; the runner continues from it and
+    returns prefill + continuation, so the stored text parses as the whole reply."""
+
+    prefill: str
+    max_attempts: int
+
+    def __new__(cls, prompt: str, prefill: str, max_attempts: int = 1) -> PrefilledPrompt:
+        obj = super().__new__(cls, prompt)
+        obj.prefill = prefill
+        obj.max_attempts = max_attempts
+        return obj
+
+
+def probe_gen_prompt(earlier: str, n: int = exi.N_PROBES) -> PrefilledPrompt:
+    """Nemo ignored the JSON-only instruction in the pilot (9 of 12 replies were markdown Q/A
+    lists), so the local prompt prefills the opening of the JSON. A concrete example object was
+    tried first (nemo2) and Nemo copied its values into probes, so the format line is bare.
+    Closed models keep exi.probe_gen_prompt unchanged."""
+    return PrefilledPrompt(
+        "Below is the earlier part of an AI coding-agent session. Write exactly "
+        f"{n} short factual questions about specific details stated in it, each with a short "
+        "checkable answer (at most 12 words): file paths, values, error messages, identifiers, "
+        "commands, decisions and their reasons. Spread the questions across the whole text. "
+        "Each must be answerable from the text alone, with one unambiguous answer.\n"
+        "Reply with a single JSON object and nothing else - no introduction, no markdown, no "
+        "numbering. Format:\n"
+        '{"probes": [{"q": "<question>", "a": "<short answer>"}, ...]}\n\n'
+        f"<earlier_session>\n{earlier}\n</earlier_session>",
+        PROBE_PREFILL,
+        PROBE_ATTEMPTS,
+    )
+
+
+def close_probe_json(text: str) -> str:
+    """Nemo often ends the probe array and forgets the object's closing brace (4 of the 6 replies
+    that failed in the nemo3 pilot were otherwise well-formed). Only that one omission is
+    repaired; the strict validator still decides whether the probes are usable."""
+    stripped = text.rstrip()
+    return stripped + "}" if stripped.endswith("}]") else text
+
+
 def _generate(model: exi.Model, prompt: str) -> tuple[str, int, int]:
     import mlx.core as mx
     from mlx_lm import stream_generate
@@ -112,15 +162,27 @@ def _generate(model: exi.Model, prompt: str) -> tuple[str, int, int]:
         add_generation_prompt=True,
         **kwargs,
     )
+    prefill = getattr(prompt, "prefill", "")
+    text += prefill
     pieces: list[str] = []
     last = None
-    for resp in stream_generate(net, tok, prompt=text, max_tokens=MAX_TOKENS):
+    extra: dict[str, Any] = {}
+    if prefill:
+        key = hash(str(prompt))
+        tries = _attempt_of[key] = _attempt_of.get(key, 0) + 1
+        if tries > 1:
+            from mlx_lm.sample_utils import make_sampler
+
+            extra["sampler"] = make_sampler(temp=RETRY_TEMP)
+    for resp in stream_generate(net, tok, prompt=text, max_tokens=MAX_TOKENS, **extra):
         pieces.append(resp.text)
         last = resp
     mx.clear_cache()
     if last is None:
         raise exi.CallError(f"{model.name} produced no output")
-    out = re.sub(r"<think>.*?</think>", "", "".join(pieces), flags=re.S).strip()
+    out = re.sub(r"<think>.*?</think>", "", prefill + "".join(pieces), flags=re.S).strip()
+    if prefill:
+        out = close_probe_json(out)
     return out, last.prompt_tokens, last.generation_tokens
 
 

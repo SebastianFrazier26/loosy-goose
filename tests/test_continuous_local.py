@@ -174,7 +174,7 @@ def test_qwen_run_uses_no_closed_model(tmp_path):
     assert all(m.cli == "mlx" for m in run.phase_models(cfg, cfg.prober).values())
     probes = run.probe_jobs(cfg, plans, cfg.prober)
     assert len(probes) == 6
-    assert all(j.runs_as.cli == "mlx" and j.condition == "probes.nemo1" for j in probes)
+    assert all(j.runs_as.cli == "mlx" and j.condition == "probes.nemo4" for j in probes)
     store = exi.Store(tmp_path / "calls.jsonl")
     label = run.ck_label(plans[0], plans[0].checkpoints[0])
     for arm in cfg.arms:
@@ -400,7 +400,7 @@ def test_qwen_probes_chunked_per_segment(tmp_path):
         assert [j.transcript for j in jobs] == [
             f"{run.ck_label(p, ck)}#s{i}" for i in range(len(jobs))
         ]
-        assert all(j.condition == "probes.nemo1" and j.runs_as is NEMO for j in jobs)
+        assert all(j.condition == "probes.nemo4" and j.runs_as is NEMO for j in jobs)
         segs = run.probe_segments(cfg, p, ck)
         assert sum(n for _, _, n in segs) == exi.N_PROBES
         assert all(len(text.split()) <= 1500 for _, text, _ in segs)
@@ -600,7 +600,7 @@ def test_report_counts_on_stub_store(tmp_path):
     assert counts == {"full": (6, 0, 0), "cfrzm": (6, 3, 2)}
     run.record_failure(cfg, "qsum|t0|e1", "RuntimeError: oom")
     run.record_failure(cfg, "qsum|t0|e1", "RuntimeError: oom")
-    run.record_failure(cfg, exi.call_key("t0@50#s0", "probes.nemo1", NEMO.name, "probe_gen"), "x")
+    run.record_failure(cfg, exi.call_key("t0@50#s0", "probes.nemo4", NEMO.name, "probe_gen"), "x")
     run.record_failure(cfg, exi.call_key("t0@50", "c", QWEN.name, "probe"), "over Qwen window: 9")
     run.record_failure(cfg, exi.call_key("t0@75", "c", QWEN.name, "probe"), "MLX RuntimeError")
     run.record_failure(cfg, exi.call_key("t0@75", "c", QWEN.name, cfg.grade_task), "invalid")
@@ -666,3 +666,70 @@ def test_largest_inputs_names_transcripts(tmp_path, monkeypatch):
     assert full == ("t1@100", 2000)
     monkeypatch.setattr(local, "QWEN_WINDOW", 1500 + local.MAX_TOKENS)
     assert run.largest_inputs(cfg, None, plans, NEMO)[1] == ("t1@75", 1500)
+
+
+def test_local_probe_prompt_is_prefilled_with_three_attempts_and_closed_prompt_unchanged():
+    from experiments.continuous import run
+
+    prompt = local.probe_gen_prompt("EARLIER TEXT", 4)
+    assert prompt.prefill == local.PROBE_PREFILL
+    assert prompt.max_attempts == local.PROBE_ATTEMPTS == 3
+    assert "exactly 4 short factual questions" in prompt and "EARLIER TEXT" in prompt
+    assert prompt != exi.probe_gen_prompt("EARLIER TEXT", 4)
+    assert run._probe_prompt(NEMO, "x", 4) == local.probe_gen_prompt("x", 4)
+    closed = run._probe_prompt(HAIKU, "x", 4)
+    assert closed == exi.probe_gen_prompt("x", 4) and not hasattr(closed, "prefill")
+
+
+def test_prefilled_probe_reply_parses_and_retries_up_to_prompt_limit():
+    from experiments.continuous import probe_segments as ps
+
+    prompt = local.probe_gen_prompt("t", 4)
+    reply = local.PROBE_PREFILL + 'Which file?", "a": "a.py"}, {"q": "Why?", "a": "bug"}]}'
+    assert ps.parse_segment_probes(reply, 4) is not None
+    calls = {"n": 0}
+
+    def runner(model, p):
+        calls["n"] += 1
+        text = "Here are four questions:\n1. **Q:** x" if calls["n"] < 3 else reply
+        return exi.CallResult(text, 1, 1)
+
+    result, attempts = exi.call_with_retry(
+        runner,
+        NEMO,
+        prompt,
+        lambda t: ps.parse_segment_probes(t, 4) is not None,
+        sleep=lambda s: None,
+    )
+    assert attempts == 3 and result.text == reply
+
+    calls["n"] = -10
+    with pytest.raises(exi.CallFailedError, match="after 3 attempts"):
+        exi.call_with_retry(runner, NEMO, prompt, lambda t: False, sleep=lambda s: None)
+
+
+def test_nemo2_failures_do_not_skip_each_other_across_versions(tmp_path):
+    from experiments.continuous import run
+
+    cfg = dataclasses.replace(run.QWEN_CFG, out=tmp_path)
+    old = exi.call_key("t0@50#s0", "probes.nemo1", NEMO.name, "probe_gen")
+    new = exi.call_key("t0@50#s0", "probes.nemo4", NEMO.name, "probe_gen")
+    run.record_failure(cfg, old, "invalid reply after 1 attempts")
+    assert new not in run.recorded_failures(cfg)
+
+
+def test_local_probe_prompt_has_no_copyable_example_values():
+    prompt = local.probe_gen_prompt("t", 4)
+    assert "<question>" in prompt and "src/app.py" not in prompt
+
+
+def test_close_probe_json_repairs_only_the_missing_final_brace():
+    from experiments.continuous import probe_segments as ps
+
+    body = local.PROBE_PREFILL + 'Q1?", "a": "x"}, {"q": "Q2?", "a": "y"}, {"q": "Q3?", "a": "z"}]'
+    assert ps.parse_segment_probes(body, 3) is None
+    assert ps.parse_segment_probes(local.close_probe_json(body), 3) is not None
+    whole = body + "}"
+    assert local.close_probe_json(whole) == whole
+    broken = local.PROBE_PREFILL + 'Q1?", "a": "x'
+    assert local.close_probe_json(broken) == broken

@@ -181,3 +181,23 @@ its own code.
     writes the report to `qwen_labels_report.md` only. `--plan` prints the largest Nemo probe prompt and the largest Qwen `full`
     answer prompt that is queued: `swe-gym_row409@75`, 30,755 Qwen tokens. `--set F --plan` without `--answerer` still shows
     0 pending.
+
+- **2026-11-21 — Nemo probe generation fix (pilot `--labels swe-gym_row409,swe-gym_row129`).**
+  - **Finding.** With `probes.nemo1`, 9 of 12 Nemo `probe_gen` calls failed with "invalid reply after 1 attempts": Nemo ignored the
+    JSON-only instruction and wrote numbered markdown `**Q:** / **A:**` lists, so only one checkpoint was graded.
+  - **Fix (local `probe_gen` only; Haiku/Sonnet prompts and keys unchanged).** `local.probe_gen_prompt` prefills the assistant turn
+    with `{"probes": [{"q": "` (`PrefilledPrompt`; the runner continues from it and stores prefill plus continuation), says "single JSON
+    object, no introduction, no markdown, no numbering", and gives a bare `<question>`/`<short answer>` format line. Up to 3 attempts
+    (`call_with_retry` reads `max_attempts` from the prompt object); attempts after the first sample at temperature 0.7, because greedy
+    repeats the same reply. `close_probe_json` appends the one brace Nemo forgets after the array (`...}]`); the strict validator
+    (`parse_segment_probes`: JSON, q and a present, at least 3 in 10 of the asked count) is unchanged.
+  - **Detours, kept as evidence.** `nemo2` used a concrete one-shot example; Nemo copied its values ("src/app.py", "42") into probes, so it
+    was dropped (`nemo3`). `nemo3` still failed 2 of 17: greedy decoding fell into a repetition loop on a directory-listing segment
+    (1,536 tokens), and sampled retries ended `}]` without the closing brace. The brace repair gave `nemo4`.
+  - **Result (`probes.nemo4`).** 17 of 17 segments valid: 10 on the first attempt, 5 on the second, 2 on the third. Probe generation
+    took 1,247 s of call time (about 21 min wall including the Nemo load; the greedy loop and retries dominate the slow calls).
+    The pilot then answered 27 and graded 30 calls with 0 failures after `--retry-failed`; all arms graded 6 of 6 checkpoints (full 3 of
+    3, three over the Qwen window).
+  - **Skip-logic note.** Probe keys carry the condition, so `nemo1`-`nemo3` failures never match `nemo4` keys, and the report counts only
+    probe-segment failures of the current version. Grade and answer keys do not carry the probe version: two `grade_probe` failures recorded
+    under `nemo3` were skipped on the `nemo4` run until `--retry-failed`. After changing a probe version, rerun once with `--retry-failed`.

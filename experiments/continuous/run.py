@@ -174,7 +174,7 @@ QWEN_CFG = dataclasses.replace(
     answerer=QWEN,
     grader=NEMO,
     prober=NEMO,
-    probe_cond="probes.nemo1",
+    probe_cond="probes.nemo4",
     prefix="qwen_",
     probe_segment_tokens=ps.SEGMENT_TOKENS,
 )
@@ -630,6 +630,10 @@ def probes_for(
     return None if text is None else exi.parse_probes(text)
 
 
+def _probe_prompt(gen: exi.Model, text: str, n: int = exi.N_PROBES) -> str:
+    return local.probe_gen_prompt(text, n) if gen.cli == "mlx" else exi.probe_gen_prompt(text, n)
+
+
 def checkpoint_probe_jobs(
     cfg: SetCfg, p: sim.TranscriptPlan, ck: sim.Checkpoint, gen: exi.Model
 ) -> list[exi.Job]:
@@ -640,7 +644,7 @@ def checkpoint_probe_jobs(
                 cfg.probes_key,
                 gen,
                 "probe_gen",
-                exi.probe_gen_prompt(exi.render_turns(p.turns[: ck.tail_from])),
+                _probe_prompt(gen, exi.render_turns(p.turns[: ck.tail_from])),
                 lambda t: exi.parse_probes(t) is not None,
             )
         ]
@@ -650,7 +654,7 @@ def checkpoint_probe_jobs(
             cfg.probes_key,
             gen,
             "probe_gen",
-            exi.probe_gen_prompt(text, n),
+            _probe_prompt(gen, text, n),
             lambda t, n=n: ps.parse_segment_probes(t, n) is not None,  # type: ignore[misc]
         )
         for seg, text, n in probe_segments(cfg, p, ck)
@@ -1078,7 +1082,13 @@ def qwen_report(
         "|---|---|---|---|",
     ]
     out += [f"| {a} | {e} | {n} | {g} |" for a, (e, n, g) in counts.items()]
-    fails = failure_counts(recorded_failures(cfg))
+    fails = failure_counts(
+        {
+            k: v
+            for k, v in recorded_failures(cfg).items()
+            if not k.endswith("|probe_gen") or f"|{cfg.probes_key}|" in k
+        }
+    )
     out += [
         "",
         f"Recorded failures ({cfg.prefix}failures.jsonl, distinct keys): probe segments "
