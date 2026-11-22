@@ -670,15 +670,21 @@ def probe_jobs(cfg: SetCfg, plans: list[sim.TranscriptPlan], gen: exi.Model) -> 
 def answer_job(
     cfg: SetCfg, label: str, arm: str, context: str, probes: list[dict[str, str]]
 ) -> exi.Job:
-    return dl.answer_job(label, cond(cfg, arm), context, probes, answerer=cfg.answerer)
+    job = dl.answer_job(label, cond(cfg, arm), context, probes, answerer=cfg.answerer)
+    if cfg.answerer.cli == "mlx":
+        job = dataclasses.replace(job, prompt=local.prefilled(job.prompt, local.ANSWER_PREFILL))
+    return job
 
 
 def grade_job(
     cfg: SetCfg, store: exi.Store, label: str, arm: str, probes: list[dict[str, str]]
 ) -> exi.Job | None:
-    return dl.grade_job(
+    job = dl.grade_job(
         store, label, cond(cfg, arm), probes, answerer=cfg.answerer, grader=cfg.grader
     )
+    if job is not None and cfg.grader.cli == "mlx":
+        job = dataclasses.replace(job, prompt=local.prefilled(job.prompt, local.GRADE_PREFILL))
+    return job
 
 
 class ClosedModelError(RuntimeError):
@@ -964,6 +970,16 @@ def recorded_failures(cfg: SetCfg) -> dict[str, str]:
     return out
 
 
+def open_failures(cfg: SetCfg, store: exi.Store) -> dict[str, str]:
+    """Recorded failures still unresolved: the failure log is append-only, so a key that a later
+    run completed stays in it, and probe failures of earlier probe versions never apply."""
+    return {
+        k: v
+        for k, v in recorded_failures(cfg).items()
+        if k not in store.records and (not k.endswith("|probe_gen") or f"|{cfg.probes_key}|" in k)
+    }
+
+
 def failure_counts(failures: dict[str, str]) -> dict[str, int]:
     out = {"probe": 0, "summary": 0, "answer": 0, "answer_over_window": 0, "grade": 0, "other": 0}
     for key, err in failures.items():
@@ -1082,13 +1098,7 @@ def qwen_report(
         "|---|---|---|---|",
     ]
     out += [f"| {a} | {e} | {n} | {g} |" for a, (e, n, g) in counts.items()]
-    fails = failure_counts(
-        {
-            k: v
-            for k, v in recorded_failures(cfg).items()
-            if not k.endswith("|probe_gen") or f"|{cfg.probes_key}|" in k
-        }
-    )
+    fails = failure_counts(open_failures(cfg, store))
     out += [
         "",
         f"Recorded failures ({cfg.prefix}failures.jsonl, distinct keys): probe segments "

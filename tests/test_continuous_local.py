@@ -733,3 +733,90 @@ def test_close_probe_json_repairs_only_the_missing_final_brace():
     assert local.close_probe_json(whole) == whole
     broken = local.PROBE_PREFILL + 'Q1?", "a": "x'
     assert local.close_probe_json(broken) == broken
+
+
+def test_local_answer_and_grade_jobs_are_prefilled_and_keep_key_and_sha(tmp_path):
+    from experiments.continuous import run
+    from experiments.slot_compress import downstream as dl
+
+    cfg = run.QWEN_CFG
+    plain = dl.answer_job("L", run.cond(cfg, "full"), "ctx", PROBES, answerer=QWEN)
+    job = run.answer_job(cfg, "L", "full", "ctx", PROBES)
+    assert job.prompt.prefill == local.ANSWER_PREFILL and job.prompt.max_attempts == 3
+    assert (job.key, job.prompt_sha) == (plain.key, plain.prompt_sha)
+
+    store = exi.Store(tmp_path / "calls.jsonl")
+    store.put({"key": job.key, "text": '{"answers": {"1": "a", "2": "b"}}'})
+    grade = run.grade_job(cfg, store, "L", "full", PROBES)
+    plain_g = dl.grade_job(store, "L", run.cond(cfg, "full"), PROBES, QWEN, NEMO)
+    assert grade.prompt.prefill == local.GRADE_PREFILL and grade.prompt.max_attempts == 3
+    assert (grade.key, grade.prompt_sha) == (plain_g.key, plain_g.prompt_sha)
+    rec = {"prompt_sha": plain_g.prompt_sha, "text": '{"grades": {"1": "correct", "2": "wrong"}}'}
+    assert grade.done_by(rec)
+
+
+def test_closed_answerer_jobs_are_not_prefilled():
+    from experiments.continuous import run
+
+    cfg = dataclasses.replace(run.QWEN_CFG, answerer=HAIKU, grader=HAIKU)
+    assert not hasattr(run.answer_job(cfg, "L", "full", "ctx", PROBES).prompt, "prefill")
+
+
+def test_escape_string_controls_fixes_raw_tab_only_inside_strings():
+    raw = '{\n  "answers": {"1": "    16\t", "2": "a\nb", "3": "q\\"\t"}\n}'
+    assert exi.parse_answers(raw, 3) is None or exi.parse_json_object(raw) is None
+    fixed = local.escape_string_controls(raw)
+    assert exi.parse_answers(fixed, 3) == ["    16\t", "a\nb", 'q"\t']
+    assert local.escape_string_controls('{"a": 1}\n') == '{"a": 1}\n'
+
+
+def test_grade_validator_stays_strict_for_prefilled_replies():
+    ok = local.GRADE_PREFILL + 'correct", "2": "partial"}}'
+    assert exi.parse_probe_grades(ok, 2) == [1.0, 0.5]
+    assert exi.parse_probe_grades(local.GRADE_PREFILL + 'correct", "2": "UNKNOWN"}}', 2) is None
+    assert exi.parse_probe_grades(local.GRADE_PREFILL + 'wrong|partial", "2": "wrong"}}', 2) is None
+    assert exi.parse_probe_grades(local.GRADE_PREFILL + 'correct"}}', 2) is None
+
+
+def test_retry_counter_is_per_prompt_object():
+    a = local.prefilled("same text", local.GRADE_PREFILL)
+    b = local.prefilled("same text", local.GRADE_PREFILL)
+    a.runs += 1
+    assert b.runs == 0 and a == b
+
+
+def test_close_probe_json_swaps_a_doubled_item_brace_after_the_array():
+    from experiments.continuous import probe_segments as ps
+
+    body = local.PROBE_PREFILL + 'Q1?", "a": "x"}, {"q": "Q2?", "a": "y"}, {"q": "Q3?", "a": "z"}}]'
+    assert ps.parse_segment_probes(local.close_probe_json(body), 3) is not None
+    assert ps.parse_segment_probes(body + "}", 3) is None
+    odd = local.PROBE_PREFILL + 'Q1?", "a": "x"}}}]'
+    assert ps.parse_segment_probes(local.close_probe_json(odd), 1) is None
+
+
+def test_drop_extra_closing_braces_only_trims_stray_braces():
+    from experiments.continuous import probe_segments as ps
+
+    body = local.PROBE_PREFILL + 'Q1?", "a": "x"}]}'
+    assert ps.parse_segment_probes(body + "}", 1) is None
+    assert ps.parse_segment_probes(local.drop_extra_closing_braces(body + "}"), 1) is not None
+    assert local.drop_extra_closing_braces(body) == body
+    assert local.drop_extra_closing_braces(body + " trailing") == body + " trailing"
+    broken = local.PROBE_PREFILL + 'Q1?", "a": "x'
+    assert local.drop_extra_closing_braces(broken + "}") == broken + "}"
+
+
+def test_report_ignores_failures_that_later_succeeded(tmp_path):
+    from experiments.continuous import run
+
+    plans = _stub_plans()
+    cfg = dataclasses.replace(run.QWEN_CFG, out=tmp_path, arms=("full", "cfrzm"))
+    store = exi.Store(tmp_path / "calls.jsonl")
+    _put_probes(cfg, store, plans)
+    solved = exi.call_key("t0@50", run.cond(cfg, "cfrzm"), QWEN.name, cfg.grade_task)
+    open_ = exi.call_key("t0@75", run.cond(cfg, "cfrzm"), QWEN.name, cfg.grade_task)
+    store.put({"key": solved, "text": _grade_text("correct")})
+    run.record_failure(cfg, solved, "invalid reply after 1 attempts")
+    run.record_failure(cfg, open_, "invalid reply after 3 attempts")
+    assert list(run.open_failures(cfg, store)) == [open_]

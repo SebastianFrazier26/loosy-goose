@@ -4,6 +4,7 @@ Mistral-Nemo 12B writes probes and grades, both 4-bit through mlx-lm. Only `mlx`
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -101,11 +102,12 @@ def unload() -> None:
 
 
 PROBE_PREFILL = '{"probes": [{"q": "'
+ANSWER_PREFILL = '{"answers": {"1": "'
+GRADE_PREFILL = '{"grades": {"1": "'
 # Greedy decoding repeats the same bad reply, so attempts after the first sample. The pilot's one
 # remaining failure was a probe answer that copied a long tool output until the token cap.
 PROBE_ATTEMPTS = 3
 RETRY_TEMP = 0.7
-_attempt_of: dict[int, int] = {}
 
 
 class PrefilledPrompt(str):
@@ -114,12 +116,20 @@ class PrefilledPrompt(str):
 
     prefill: str
     max_attempts: int
+    runs: int
 
     def __new__(cls, prompt: str, prefill: str, max_attempts: int = 1) -> PrefilledPrompt:
         obj = super().__new__(cls, prompt)
         obj.prefill = prefill
         obj.max_attempts = max_attempts
+        obj.runs = 0
         return obj
+
+
+def prefilled(prompt: str, prefill: str) -> PrefilledPrompt:
+    """The same prompt text (so a stored record's prompt_sha still matches and successful calls
+    stay done) with a JSON-opening prefill and PROBE_ATTEMPTS attempts. Only local jobs use it."""
+    return PrefilledPrompt(prompt, prefill, PROBE_ATTEMPTS)
 
 
 def probe_gen_prompt(earlier: str, n: int = exi.N_PROBES) -> PrefilledPrompt:
@@ -143,11 +153,49 @@ def probe_gen_prompt(earlier: str, n: int = exi.N_PROBES) -> PrefilledPrompt:
 
 
 def close_probe_json(text: str) -> str:
-    """Nemo often ends the probe array and forgets the object's closing brace (4 of the 6 replies
-    that failed in the nemo3 pilot were otherwise well-formed). Only that one omission is
+    """Nemo ends the probe array with the object's brace misplaced, in two ways: it forgets it
+    (`...}]`, 4 of the 6 nemo3 failures) or doubles the item's brace and drops it after the array
+    (`...}}]`, the 8 probes.nemo4 failures replayed 2026-11-21). Only those two endings are
     repaired; the strict validator still decides whether the probes are usable."""
     stripped = text.rstrip()
+    if stripped.endswith("}}]"):
+        return stripped[:-3] + "}]}"
     return stripped + "}" if stripped.endswith("}]") else text
+
+
+def drop_extra_closing_braces(text: str) -> str:
+    """A complete JSON object followed only by stray closing braces (a nemo4 probe reply ended
+    `...]}}`). Anything else trailing, or an object that does not parse, is left for the
+    validator."""
+    try:
+        _, end = json.JSONDecoder().raw_decode(text)
+    except json.JSONDecodeError:
+        return text
+    rest = text[end:].strip()
+    return text[:end] if rest and set(rest) == {"}"} else text
+
+
+def escape_string_controls(text: str) -> str:
+    """Raw tabs and newlines inside a JSON string, which json.loads rejects. Qwen copies `cat -n`
+    output ("    16<tab>...") into answers verbatim. Only characters inside strings are escaped, so
+    the decoded value is unchanged and layout whitespace between tokens is left alone."""
+    out: list[str] = []
+    in_str = escaped = False
+    for ch in text:
+        if in_str:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_str = False
+            elif ord(ch) < 0x20:
+                out.append(json.dumps(ch)[1:-1])
+                continue
+        elif ch == '"':
+            in_str = True
+        out.append(ch)
+    return "".join(out)
 
 
 def _generate(model: exi.Model, prompt: str) -> tuple[str, int, int]:
@@ -162,15 +210,14 @@ def _generate(model: exi.Model, prompt: str) -> tuple[str, int, int]:
         add_generation_prompt=True,
         **kwargs,
     )
-    prefill = getattr(prompt, "prefill", "")
+    prefill = prompt.prefill if isinstance(prompt, PrefilledPrompt) else ""
     text += prefill
     pieces: list[str] = []
     last = None
     extra: dict[str, Any] = {}
-    if prefill:
-        key = hash(str(prompt))
-        tries = _attempt_of[key] = _attempt_of.get(key, 0) + 1
-        if tries > 1:
+    if isinstance(prompt, PrefilledPrompt):
+        prompt.runs += 1
+        if prompt.runs > 1:
             from mlx_lm.sample_utils import make_sampler
 
             extra["sampler"] = make_sampler(temp=RETRY_TEMP)
@@ -182,7 +229,7 @@ def _generate(model: exi.Model, prompt: str) -> tuple[str, int, int]:
         raise exi.CallError(f"{model.name} produced no output")
     out = re.sub(r"<think>.*?</think>", "", prefill + "".join(pieces), flags=re.S).strip()
     if prefill:
-        out = close_probe_json(out)
+        out = drop_extra_closing_braces(close_probe_json(escape_string_controls(out)))
     return out, last.prompt_tokens, last.generation_tokens
 
 

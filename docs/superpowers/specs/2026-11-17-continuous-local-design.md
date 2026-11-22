@@ -201,3 +201,28 @@ its own code.
   - **Skip-logic note.** Probe keys carry the condition, so `nemo1`-`nemo3` failures never match `nemo4` keys, and the report counts only
     probe-segment failures of the current version. Grade and answer keys do not carry the probe version: two `grade_probe` failures recorded
     under `nemo3` were skipped on the `nemo4` run until `--retry-failed`. After changing a probe version, rerun once with `--retry-failed`.
+
+- **2026-11-22 — failure analysis and local retry fixes (resume of the full set F Qwen run, 33 failures).**
+  - **Causes**, read from the replies (grader and answer replies from the failure log; the 8 current `probes.nemo4` probe failures and
+    the 3 answer failures replayed through the runner):
+    - `probe_gen` (8 current): 4 replies ended `..."a": "x"}}]` (the item's brace doubled, the object's brace missing), and
+      `close_probe_json` then appended a brace to that, giving `}}]}`. 1 reply had one stray extra `}` at the end. 2 greedy replies
+      looped on one question until the 1,536-token cap (40 and 55 copies). 1 was a real short reply (2 probes, one a placeholder,
+      under the 3-in-10 share).
+    - Qwen `probe` (3 recorded keys): raw tab characters inside JSON strings (Qwen copies `cat -n` output, `"    16<tab>"`);
+      `json.loads` rejects control characters inside strings.
+    - Nemo `grade_probe` (22 keys): 17 replies used the label `UNKNOWN`/`unknown`, copying the candidate answer instead of grading
+      it as `wrong` (the prompt says an UNKNOWN candidate is wrong); 1 used `wrong|partial`; 4 put `/* ... */` comments after labels.
+      Every one was one attempt, because mlx models got one attempt on invalid replies.
+  - **Fix (local jobs only; closed prompts, models and keys unchanged).** `run.answer_job` and `run.grade_job` wrap the prompt in
+    `local.prefilled` (`{"answers": {"1": "` and `{"grades": {"1": "`, 3 attempts, sampled retries). The prompt text is unchanged,
+    so `prompt_sha`, keys and every stored successful record stay valid and only missing keys were called. Repairs on a prefilled
+    reply, in order: `escape_string_controls` (raw control characters inside strings only), `close_probe_json` (now also swaps
+    `}}]` to `}]}`), `drop_extra_closing_braces` (a complete object followed only by `}`). The validators are unchanged: grade count
+    and labels (`correct`, `partial`, `wrong`) are still strict. The retry counter moved from a hash of the prompt text to the prompt
+    object, so two grade prompts with identical text cannot make the second start sampled.
+  - **Report.** The failure log is append-only, so keys fixed by a later run were still counted; `open_failures` drops keys that now
+    have a stored record.
+  - **Result.** The resume made 93 new calls. Open failures: probe segments 0, answers 0, 19 grades, plus 16 answers over the Qwen
+    window. All 19 are `UNKNOWN` labels (4 also carry comments) that survived 3 attempts. Paired transcript n went from 13-14 to
+    18-20 between compacted arms; the rows against full cover all 25 transcripts.
