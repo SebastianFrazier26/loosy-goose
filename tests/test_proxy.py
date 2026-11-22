@@ -253,6 +253,7 @@ def test_cli_binds_loopback_without_access_log(monkeypatch: pytest.MonkeyPatch) 
         {"origin": "http://localhost.evil.example"},
         {"origin": "http://127.0.0.1@evil.example"},
         {"origin": "ftp://localhost"},
+        {"origin": "http://[::1"},
         {"sec-fetch-site": "cross-site"},
     ],
 )

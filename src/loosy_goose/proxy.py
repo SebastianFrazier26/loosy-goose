@@ -72,7 +72,10 @@ def _host_allowed(host: str | None) -> bool:
 
 
 def _origin_allowed(origin: str) -> bool:
-    parts = urlsplit(origin)
+    try:
+        parts = urlsplit(origin)
+    except ValueError:
+        return False
     return parts.scheme in ("http", "https") and parts.hostname in _LOOPBACK_ORIGIN_HOSTS
 
 
