@@ -175,6 +175,16 @@ def drop_extra_closing_braces(text: str) -> str:
     return text[:end] if rest and set(rest) == {"}"} else text
 
 
+_UNKNOWN_LABEL = re.compile(r'("\d+"\s*:\s*")unknown(")', re.IGNORECASE)
+
+
+def unknown_grade_to_wrong(text: str) -> str:
+    """Nemo copies an UNKNOWN candidate into the grade label; the grader prompt already says an
+    UNKNOWN candidate is wrong (owner ruling 2026-11-22). Applies only to a label value, and the
+    validator still rejects every other label."""
+    return _UNKNOWN_LABEL.sub(r"\1wrong\2", text)
+
+
 def escape_string_controls(text: str) -> str:
     """Raw tabs and newlines inside a JSON string, which json.loads rejects. Qwen copies `cat -n`
     output ("    16<tab>...") into answers verbatim. Only characters inside strings are escaped, so
@@ -228,6 +238,8 @@ def _generate(model: exi.Model, prompt: str) -> tuple[str, int, int]:
     if last is None:
         raise exi.CallError(f"{model.name} produced no output")
     out = re.sub(r"<think>.*?</think>", "", prefill + "".join(pieces), flags=re.S).strip()
+    if prefill == GRADE_PREFILL:
+        out = unknown_grade_to_wrong(out)
     if prefill:
         out = drop_extra_closing_braces(close_probe_json(escape_string_controls(out)))
     return out, last.prompt_tokens, last.generation_tokens

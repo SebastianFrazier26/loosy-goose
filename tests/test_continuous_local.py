@@ -820,3 +820,14 @@ def test_report_ignores_failures_that_later_succeeded(tmp_path):
     run.record_failure(cfg, solved, "invalid reply after 1 attempts")
     run.record_failure(cfg, open_, "invalid reply after 3 attempts")
     assert list(run.open_failures(cfg, store)) == [open_]
+
+
+def test_unknown_grade_label_maps_to_wrong_only_as_a_label_value():
+    raw = local.GRADE_PREFILL + 'correct", "2": "UNKNOWN", "3": "Unknown", "4": "partial"}}'
+    fixed = local.unknown_grade_to_wrong(raw)
+    assert exi.parse_probe_grades(raw, 4) is None
+    assert exi.parse_probe_grades(fixed, 4) == [1.0, 0.0, 0.0, 0.5]
+    other = local.GRADE_PREFILL + 'correct", "2": "maybe"}}'
+    assert exi.parse_probe_grades(local.unknown_grade_to_wrong(other), 2) is None
+    text = '{"answers": {"1": "UNKNOWN"}}'
+    assert local.unknown_grade_to_wrong(text) != text  # callers gate on the grade prefill
