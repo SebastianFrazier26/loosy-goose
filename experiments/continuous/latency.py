@@ -67,8 +67,11 @@ def boundary_contexts(arm: str, p: sim.TranscriptPlan) -> Iterator[tuple[int, st
     return iter(pairs)
 
 
-def plans(n: int) -> list[sim.TranscriptPlan]:
-    return sorted(run.select_plans(run.QWEN_CFG), key=lambda p: p.label)[:n]
+def plans(n: int, labels: Sequence[str] = ()) -> list[sim.TranscriptPlan]:
+    ordered = sorted(run.select_plans(run.QWEN_CFG), key=lambda p: p.label)
+    if labels:
+        return [p for p in ordered if p.label in set(labels)]
+    return ordered[:n]
 
 
 def dry_run(arms: Sequence[str], n: int) -> None:
@@ -94,15 +97,17 @@ def dry_run(arms: Sequence[str], n: int) -> None:
             )
 
 
-def prefill(net: Any, cache: list[Any], ids: Sequence[int]) -> None:
+def prefill(net: Any, cache: list[Any], ids: Sequence[int], chunk: int = CHUNK) -> None:
     import mlx.core as mx
 
-    for i in range(0, len(ids), CHUNK):
-        net(mx.array(ids[i : i + CHUNK])[None], cache=cache)
+    for i in range(0, len(ids), chunk):
+        net(mx.array(ids[i : i + chunk])[None], cache=cache)
         mx.eval([c.state for c in cache])
 
 
-def replay(arms: Sequence[str], n: int) -> dict[str, Any]:
+def replay(
+    arms: Sequence[str], n: int, labels: Sequence[str] = (), chunk: int = CHUNK
+) -> dict[str, Any]:
     import mlx.core as mx
     from mlx_lm.models import cache as kv
 
@@ -110,11 +115,11 @@ def replay(arms: Sequence[str], n: int) -> dict[str, Any]:
     # First forward pass compiles Metal kernels; keep that out of the first timed prefill. A full
     # CHUNK, because kernels are specialised per shape and every timed chunk but the last is one.
     scratch = kv.make_prompt_cache(net)
-    prefill(net, scratch, [1] * CHUNK)
+    prefill(net, scratch, [1] * chunk, chunk)
     del scratch
     mx.clear_cache()
-    out: dict[str, Any] = {"model": run.QWEN.model_id, "arms": {}}
-    for p in plans(n):
+    out: dict[str, Any] = {"model": run.QWEN.model_id, "chunk": chunk, "arms": {}}
+    for p in plans(n, labels):
         for arm in arms:
             ctxs = boundary_contexts(arm, p)
             if ctxs is None:
@@ -137,10 +142,19 @@ def replay(arms: Sequence[str], n: int) -> dict[str, Any]:
                         reused = 0
                     else:
                         kv.trim_prompt_cache(cache, drop)
+                mx.reset_peak_memory()
                 start = time.perf_counter()
-                prefill(net, cache, ids[reused:])
+                prefill(net, cache, ids[reused:], chunk)
                 secs = time.perf_counter() - start
-                rows.append({"t": t, "tokens": len(ids), "new": len(ids) - reused, "secs": secs})
+                rows.append(
+                    {
+                        "t": t,
+                        "tokens": len(ids),
+                        "new": len(ids) - reused,
+                        "secs": secs,
+                        "peak_gb": mx.get_peak_memory() / 2**30,
+                    }
+                )
                 prev = ids
                 mx.clear_cache()
             timed = [r["secs"] for r in rows if "secs" in r]
@@ -179,6 +193,9 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=3, help="first N transcripts in label order")
     ap.add_argument("--arms", default=",".join(DEFAULT_ARMS))
     ap.add_argument("--dry-run", action="store_true", help="contexts and token counts, no model")
+    ap.add_argument("--labels", default="", help="only these transcripts (comma-separated)")
+    ap.add_argument("--chunk", type=int, default=CHUNK, help="prefill chunk size in tokens")
+    ap.add_argument("--out", type=Path, default=OUT, help="result JSON path")
     args = ap.parse_args()
     arms = [a for a in args.arms.split(",") if a]
     unknown = set(arms) - set(sim.Q_ARMS)
@@ -187,9 +204,10 @@ def main() -> None:
     if args.dry_run:
         dry_run(arms, args.n)
         return
-    result = replay(arms, args.n)
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(result, indent=1), encoding="utf-8")
+    labels = [x for x in args.labels.split(",") if x]
+    result = replay(arms, args.n, labels, args.chunk)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(result, indent=1), encoding="utf-8")
     print(table(result), flush=True)
 
 

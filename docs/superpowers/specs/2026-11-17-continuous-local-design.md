@@ -226,3 +226,34 @@ its own code.
   - **Result.** The resume made 93 new calls. Open failures: probe segments 0, answers 0, 19 grades, plus 16 answers over the Qwen
     window. All 19 are `UNKNOWN` labels (4 also carry comments) that survived 3 attempts. Paired transcript n went from 13-14 to
     18-20 between compacted arms; the rows against full cover all 25 transcripts.
+- **2026-11-22 — `UNKNOWN` grades, `start_at`, and an interim report (user rulings).**
+  - **`UNKNOWN` label (user: map to wrong).** In the 19 open grades Nemo copied a candidate's `UNKNOWN` into the label. The grader
+    prompt already says an `UNKNOWN` candidate is wrong, so `local.unknown_grade_to_wrong` reads the label `unknown` (any case) as
+    `wrong` on local grade replies only. Prompt, keys and the validator are unchanged. Rejected: tightening the prompt (new
+    `prompt_sha`, every stored grade re-run) and leaving the keys ungraded.
+  - **`start_at` (user: no gate).** `cfrzg - cfrzm` is -0.001 (p = 1.0), so the feature keeps `start_at = 0.0`, which was already
+    the proxy's default. Nothing changed in code.
+  - **Retry of the 19 grades: 8 done, 11 open.** The first attempt (02:10) ended after one grade when the session stopped. The
+    second (17:11) graded the rest of the 8 and then stalled for 20 minutes with the GPU idle and was stopped: another project's MLX job had
+    started on the same GPU 20 seconds earlier, and the two together did not fit in 16 GB (the other job logged Metal
+    out-of-memory errors). No grade was recorded as failed by the stall; the 11 keys are simply not re-called yet. The report
+    was regenerated from the checkpoint (930 local calls): pairs between compacted arms now cover 21-23 transcripts.
+  - **Interim numbers (11 grades open).** cfrzm - qthresh +0.116 [+0.08, +0.15], p < 0.001, n = 21. cfrzm - tloosy +0.043
+    [+0.02, +0.07], p = 0.001, n = 22. qthresh - tloosy -0.069, p = 0.004, n = 22. Against full (per checkpoint, 25 transcripts):
+    cfrzm -0.008 (p = 0.80), tloosy -0.035 (p = 0.08), qthresh -0.104 (p = 0.001). The direction and size of every row matched the
+    n = 13-14 and n = 18-20 reports.
+- **2026-11-22 — latency replay run once; timings discarded.**
+  - **Run.** `latency.py --set F --n 3 --arms qthresh,tloosy,cfrzm`, 00:34 to 02:09. Mean prefill seconds per turn: qthresh 14.2,
+    tloosy 24.1, cfrzm 22.5.
+  - **Why the numbers are not used.** The dry run gives every arm about the same new tokens per turn (1.3k-2.0k), yet the
+    per-turn rows show the same workload at very different speeds: about 450 new tokens on a 20k context took 1.2 s early in the
+    first transcript and 20-35 s later, and throughput per (arm, transcript) ranges from 57 to 416 tokens/s. The other project's
+    generation job ran on the same GPU from about 01:02 to 02:07, inside the replay's window, and the slow turns begin either after
+    that or once a context nears 29k tokens on this 16 GB machine. The run cannot separate the arms from the contention. The cache
+    trimming was checked by reading mlx-lm's `KVCache`: a trim only moves the offset, and `reused`/`new` in the rows match the dry
+    run, so no trimming defect was found.
+  - **Also biased as tabled.** qthresh and tloosy skip their over-window turns (7 and 9) while cfrzm skips none, so cfrzm's mean
+    includes the longest contexts. A fair table needs the mean over turns that every arm timed.
+  - **Instrumentation added, not yet run.** `latency.py` takes `--labels`, `--chunk` and `--out`, and records MLX peak memory per
+    turn, so a rerun on an idle GPU can test the memory explanation (smaller chunks, one transcript) without overwriting
+    `latency.json`. The rerun waits for exclusive use of the GPU.
