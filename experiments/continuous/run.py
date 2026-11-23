@@ -1262,6 +1262,17 @@ def main() -> None:
         action="store_true",
         help="with --answerer: call keys recorded in the failures file again",
     )
+    ap.add_argument(
+        "--probe-max-tokens",
+        type=int,
+        help="with --answerer: token cap for local probe writing (default: the 1536 reply cap)",
+    )
+    ap.add_argument(
+        "--probe-repetition-penalty",
+        type=float,
+        help="with --answerer: repetition penalty for local probe writing (default: none).\n"
+        "Both probe options change new probes without changing their key; fresh runs only",
+    )
     args = ap.parse_args()
 
     if args.answerer is not None:
@@ -1277,6 +1288,16 @@ def main() -> None:
     write_report = qwen_report if cfg.answerer is QWEN else report
     if (args.labels or args.retry_failed) and cfg.answerer is not QWEN:
         raise SystemExit("--labels and --retry-failed need --answerer")
+    if args.probe_max_tokens is not None or args.probe_repetition_penalty is not None:
+        if cfg.answerer is not QWEN:
+            raise SystemExit("--probe-max-tokens and --probe-repetition-penalty need --answerer")
+        try:
+            local.PROBE_GEN = local.ProbeGenOptions(
+                args.probe_max_tokens, args.probe_repetition_penalty
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        log(f"probe writing options: {local.PROBE_GEN}")
     plans = select_plans(cfg)
     if args.labels:
         plans = filter_labels(plans, args.labels)

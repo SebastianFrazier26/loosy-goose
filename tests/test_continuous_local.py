@@ -875,3 +875,30 @@ def test_budget_halt_is_not_skipped_on_resume(tmp_path, monkeypatch):
     run_capped(100)
     done = [k for k in store.records if k.endswith(cfg.grade_task) or "|grade_probe" in k]
     assert len(done) == n
+
+
+def test_probe_gen_options_default_off_and_probe_only():
+    assert local.PROBE_GEN == local.ProbeGenOptions()
+    for prefill in (local.PROBE_PREFILL, local.GRADE_PREFILL, local.ANSWER_PREFILL, ""):
+        assert local.generation_limits(prefill, local.ProbeGenOptions()) == (local.MAX_TOKENS, None)
+    opts = local.ProbeGenOptions(max_tokens=600, repetition_penalty=1.1)
+    assert local.generation_limits(local.PROBE_PREFILL, opts) == (600, 1.1)
+    for prefill in (local.GRADE_PREFILL, local.ANSWER_PREFILL, ""):
+        assert local.generation_limits(prefill, opts) == (local.MAX_TOKENS, None)
+    only_penalty = local.ProbeGenOptions(repetition_penalty=1.05)
+    assert local.generation_limits(local.PROBE_PREFILL, only_penalty) == (local.MAX_TOKENS, 1.05)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"max_tokens": 0},
+        {"max_tokens": -5},
+        {"max_tokens": local.MAX_TOKENS + 1},
+        {"repetition_penalty": 0.9},
+        {"repetition_penalty": 0.0},
+    ],
+)
+def test_probe_gen_options_reject_bad_values(kwargs):
+    with pytest.raises(ValueError):
+        local.ProbeGenOptions(**kwargs)

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from experiments import exp_i_downstream as exi
@@ -108,6 +109,34 @@ GRADE_PREFILL = '{"grades": {"1": "'
 # remaining failure was a probe answer that copied a long tool output until the token cap.
 PROBE_ATTEMPTS = 3
 RETRY_TEMP = 0.7
+
+
+@dataclass(frozen=True)
+class ProbeGenOptions:
+    """Optional limits on local probe writing (2026-11-22, owner request). A greedy first attempt
+    sometimes loops on one question until MAX_TOKENS, about 50 s, before a sampled retry
+    succeeds. Both are off by default: the committed set F probes (probes.nemo4) were written
+    without them, and either one changes what Nemo writes while the probe key stays the same, so
+    set them only for a fresh run."""
+
+    max_tokens: int | None = None
+    repetition_penalty: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.max_tokens is not None and not 0 < self.max_tokens <= MAX_TOKENS:
+            raise ValueError(f"probe max tokens must be in 1..{MAX_TOKENS}")
+        if self.repetition_penalty is not None and self.repetition_penalty < 1.0:
+            raise ValueError("probe repetition penalty must be at least 1.0")
+
+
+PROBE_GEN = ProbeGenOptions()
+
+
+def generation_limits(prefill: str, opts: ProbeGenOptions) -> tuple[int, float | None]:
+    """(token cap, repetition penalty) for one call; the options touch probe writing only."""
+    if prefill != PROBE_PREFILL:
+        return MAX_TOKENS, None
+    return opts.max_tokens or MAX_TOKENS, opts.repetition_penalty
 
 
 class PrefilledPrompt(str):
@@ -231,7 +260,12 @@ def _generate(model: exi.Model, prompt: str) -> tuple[str, int, int]:
             from mlx_lm.sample_utils import make_sampler
 
             extra["sampler"] = make_sampler(temp=RETRY_TEMP)
-    for resp in stream_generate(net, tok, prompt=text, max_tokens=MAX_TOKENS, **extra):
+    max_tokens, penalty = generation_limits(prefill, PROBE_GEN)
+    if penalty is not None:
+        from mlx_lm.sample_utils import make_logits_processors
+
+        extra["logits_processors"] = make_logits_processors(repetition_penalty=penalty)
+    for resp in stream_generate(net, tok, prompt=text, max_tokens=max_tokens, **extra):
         pieces.append(resp.text)
         last = resp
     mx.clear_cache()
