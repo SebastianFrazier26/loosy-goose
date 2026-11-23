@@ -172,18 +172,43 @@ def replay(
     return out
 
 
+def common_turns(result: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Per arm, the timed rows at boundaries that every arm timed in that transcript. An arm
+    that skips its over-window turns would otherwise be averaged over easier turns than one that
+    fits them all."""
+    arms = result["arms"]
+    out: dict[str, list[dict[str, Any]]] = {arm: [] for arm in arms}
+    labels = set.intersection(*(set(by) for by in arms.values())) if arms else set()
+    for label in sorted(labels):
+        timed = {
+            arm: {r["t"]: r for r in by[label].get("rows", []) if "secs" in r}
+            for arm, by in arms.items()
+        }
+        shared = set.intersection(*(set(rows) for rows in timed.values()))
+        for arm, rows in timed.items():
+            out[arm].extend(rows[t] for t in sorted(shared))
+    return out
+
+
 def table(result: dict[str, Any]) -> str:
     lines = [
-        "| arm | transcripts | mean prefill s/turn | total prefill s | skipped (over window) |",
-        "|---|---|---|---|---|",
+        "| arm | transcripts | common turns | mean prefill s/turn (common) | mean new tokens/turn"
+        " (common) | mean prefill s/turn (all timed) | skipped (over window) |",
+        "|---|---|---|---|---|---|---|",
     ]
+    shared = common_turns(result)
     for arm, by_label in result["arms"].items():
         done = [v for v in by_label.values() if "rows" in v]
         timed = [r["secs"] for v in done for r in v["rows"] if "secs" in r]
         mean = f"{sum(timed) / len(timed):.2f}" if timed else "n/a"
-        total = f"{sum(v['total_secs'] for v in done):.1f}"
+        rows = shared[arm]
+        common = f"{sum(r['secs'] for r in rows) / len(rows):.2f}" if rows else "n/a"
+        new = f"{sum(r['new'] for r in rows) / len(rows):.0f}" if rows else "n/a"
         skipped = sum(1 for v in done for r in v["rows"] if "skipped" in r)
-        lines.append(f"| {arm} | {len(done)}/{len(by_label)} | {mean} | {total} | {skipped} |")
+        lines.append(
+            f"| {arm} | {len(done)}/{len(by_label)} | {len(rows)} | {common} | {new} | {mean}"
+            f" | {skipped} |"
+        )
     return "\n".join(lines)
 
 

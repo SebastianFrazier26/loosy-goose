@@ -902,3 +902,30 @@ def test_probe_gen_options_default_off_and_probe_only():
 def test_probe_gen_options_reject_bad_values(kwargs):
     with pytest.raises(ValueError):
         local.ProbeGenOptions(**kwargs)
+
+
+def test_latency_table_averages_only_turns_every_arm_timed():
+    from experiments.continuous import latency
+
+    def row(t, secs, new=100):
+        return {"t": t, "tokens": 1000, "new": new, "secs": secs}
+
+    result = {
+        "arms": {
+            "a": {
+                "x": {"rows": [row(2, 1.0), row(4, 3.0), {"t": 6, "tokens": 9, "skipped": "over"}]},
+                "y": {"rows": [row(2, 5.0, 300)]},
+            },
+            "b": {
+                "x": {"rows": [row(2, 2.0), row(4, 4.0), row(6, 60.0)]},
+                "y": {"rows": [row(2, 6.0, 500)]},
+            },
+        }
+    }
+    shared = latency.common_turns(result)
+    assert [r["secs"] for r in shared["a"]] == [1.0, 3.0, 5.0]
+    assert [r["secs"] for r in shared["b"]] == [2.0, 4.0, 6.0]
+    lines = latency.table(result).splitlines()
+    assert lines[2].split(" | ")[2:6] == ["3", "3.00", "167", "3.00"]
+    assert lines[3].split(" | ")[2:6] == ["3", "4.00", "233", "18.00"]
+    assert latency.common_turns({"arms": {}}) == {}
