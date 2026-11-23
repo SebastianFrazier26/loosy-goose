@@ -160,6 +160,10 @@ What it does and does not do:
   are stored as one JSON file in the state dir, which holds conversation text: the dir is
   set to mode 0700 (an existing one is tightened; POSIX only, Windows relies on the user profile's ACLs), and files untouched for 7 days are deleted when the proxy starts.
   Editing earlier history discards the chunks from the edit on.
+  Known limitation: two conversations that start with the same system messages and the same
+  first user message share one state file. The output stays correct, because a chunk is reused
+  only when its source messages match, but each conversation discards the other's chunks and
+  recompresses, so neither keeps a stable prefix while both are active.
 - Requests for the same conversation are compacted one at a time; compaction runs off the
   event loop.
 - `Authorization` and every other end-to-end request header are passed to the upstream; `Host`,
