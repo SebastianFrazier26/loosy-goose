@@ -696,6 +696,9 @@ def refuse_closed(model: exi.Model, prompt: str) -> exi.CallResult:
     raise ClosedModelError(f"{model.name} is not a local open-weight model; this run is MLX only")
 
 
+HALTED = "halted by budget guard"
+
+
 class LocalGuard:
     """dl.Guard's call cap and STOP handling in front of the MLX-only runner."""
 
@@ -706,11 +709,11 @@ class LocalGuard:
 
     def runner(self, model: exi.Model, prompt: str) -> exi.CallResult:
         if dl.STOP.is_set():
-            raise exi.CallError("halted by budget guard")
+            raise exi.CallError(HALTED)
         if self.used >= self.max_calls:
             dl.STOP.set()
             log(f"!! --max-calls {self.max_calls} reached, stopping")
-            raise exi.CallError("halted by budget guard")
+            raise exi.CallError(HALTED)
         self.used += 1
         return self._run(model, prompt)
 
@@ -968,6 +971,13 @@ def recorded_failures(cfg: SetCfg) -> dict[str, str]:
         if isinstance(rec, dict) and "key" in rec:
             out[str(rec["key"])] = str(rec.get("error", ""))
     return out
+
+
+def resume_skip(cfg: SetCfg) -> frozenset[str]:
+    """Keys a resume leaves alone: those whose last recorded error is a real failure. A budget
+    halt (--max-calls or a spend limit) is recorded like one, but the call was never made, and
+    skipping it would silently drop the rest of the phase."""
+    return frozenset(k for k, err in recorded_failures(cfg).items() if HALTED not in err)
 
 
 def open_failures(cfg: SetCfg, store: exi.Store) -> dict[str, str]:
@@ -1315,11 +1325,7 @@ def main() -> None:
     rt = exi.Runtime(store, guard.runner, failures, workers=workers)
     rt.sleep = dl.guarded_sleep
     rt.log = lambda m: print(m, flush=True)
-    skip = (
-        frozenset()
-        if cfg.answerer is not QWEN or args.retry_failed
-        else frozenset(recorded_failures(cfg))
-    )
+    skip = frozenset() if cfg.answerer is not QWEN or args.retry_failed else resume_skip(cfg)
     try:
         run_all(cfg, rt, plans, gen, skip)
     finally:

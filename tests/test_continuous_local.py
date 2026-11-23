@@ -831,3 +831,47 @@ def test_unknown_grade_label_maps_to_wrong_only_as_a_label_value():
     assert exi.parse_probe_grades(local.unknown_grade_to_wrong(other), 2) is None
     text = '{"answers": {"1": "UNKNOWN"}}'
     assert local.unknown_grade_to_wrong(text) != text  # callers gate on the grade prefill
+
+
+def test_budget_halt_is_not_skipped_on_resume(tmp_path, monkeypatch):
+    from experiments.continuous import run, sim
+    from experiments.slot_compress import downstream as dl
+
+    plans = _stub_plans()[:1]
+    cfg = dataclasses.replace(run.QWEN_CFG, out=tmp_path, arms=("cfrzm",))
+    store = exi.Store(tmp_path / "calls.jsonl")
+    _put_probes(cfg, store, plans)
+
+    def fake_arm_run(cfg_, arm, plan, store_, strict=False):
+        return sim.ArmRun(arm, contexts={ck.t: f"ctx {ck.t}" for ck in plan.checkpoints}), False
+
+    monkeypatch.setattr(run, "arm_run", fake_arm_run)
+    monkeypatch.setattr(run, "qwen_over", lambda prompt: None)
+    monkeypatch.setattr(run, "summary_rounds", lambda *a, **k: None)
+
+    def stub(model, prompt):
+        if model is QWEN:
+            return exi.CallResult("1. x\n2. y\n3. z", 1, 1)
+        return exi.CallResult(_grade_text("correct"), 1, 1)
+
+    def run_capped(max_calls):
+        guard = run.LocalGuard(max_calls)
+        guard._run = stub
+        rt = exi.Runtime(store, guard.runner, tmp_path / "qwen_failures.jsonl", workers=1)
+        rt.log = lambda m: None
+        rt.sleep = lambda s: None
+        try:
+            run.run_all(cfg, rt, plans, NEMO, run.resume_skip(cfg))
+        finally:
+            dl.STOP.clear()
+
+    n = len(plans[0].checkpoints)
+    run_capped(1)
+    halted = {k for k, e in run.recorded_failures(cfg).items() if "halted" in e}
+    assert halted
+    real = exi.call_key("t0@50", run.cond(cfg, "full"), QWEN.name, cfg.grade_task)
+    run.record_failure(cfg, real, "invalid reply after 3 attempts")
+    assert run.resume_skip(cfg) == {real}
+    run_capped(100)
+    done = [k for k in store.records if k.endswith(cfg.grade_task) or "|grade_probe" in k]
+    assert len(done) == n
