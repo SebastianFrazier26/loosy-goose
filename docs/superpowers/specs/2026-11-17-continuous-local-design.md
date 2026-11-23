@@ -257,3 +257,15 @@ its own code.
   - **Instrumentation added, not yet run.** `latency.py` takes `--labels`, `--chunk` and `--out`, and records MLX peak memory per
     turn, so a rerun on an idle GPU can test the memory explanation (smaller chunks, one transcript) without overwriting
     `latency.json`. The rerun waits for exclusive use of the GPU.
+- **2026-11-22 (19:45) — all grades in; final report.**
+  - **Run.** With the GPU idle, `--retry-failed` graded 10 of the 11 open keys in about a minute. The eleventh
+    (`swe-gym_row330@50`, cfrzg) failed its 3 attempts because Nemo wrote `/* ... */` comments after labels; a second
+    `--retry-failed` pass parsed. No comment-stripping repair was added. Open failures: 0 (the 16 over-window answers remain,
+    by design). 941 local calls in the checkpoint, 0 API calls.
+  - **Final numbers.** Graded checkpoints: full 60 of 60 answered, qthresh 74 of 74, tloosy, cfrzm and cfrzg 75 of 75.
+    cfrzm - qthresh +0.113 [+0.08, +0.15], p < 0.001, n = 24. cfrzm - tloosy +0.034 [+0.01, +0.06], p = 0.007, n = 25.
+    qthresh - tloosy -0.078, p = 0.002, n = 24. cfrzg - cfrzm -0.001, p = 1.0, n = 25. Against full (per checkpoint, 25
+    transcripts, 60 checkpoints): cfrzm -0.004 (p = 0.65), tloosy -0.034 (p = 0.10), qthresh -0.100 (p < 0.001).
+  - **Reading.** Same as the interim entries: freeze is level with full context, ahead of threshold loosy, and well ahead of
+    Qwen's self-summary, which drops to about 0.53 from the 75% checkpoint on. The freeze - tloosy gap narrowed from the
+    interim +0.043 to +0.034 as the last transcripts came in. Still open: the latency rerun.

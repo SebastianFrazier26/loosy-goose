@@ -259,7 +259,7 @@ against a 20,236-token earlier stretch.
 | 2026-10-23 | Falsification | Three pre-registered tests before retiring the idea (user) | Niche found: no-frontier-model compaction |
 | 2026-11-15/16 | Local size curve | Qwen3 1.7B → 4B → 8B local summaries | Gap to loosy barely narrows (0.26–0.32 at 8B) |
 | 2026-11-16 | Continuous compaction | Run loosy after every turn instead of at a threshold; user picked recompute vs freeze, a replay pilot, no full-context probe filter, then a decaying (recency-biased) arm | Pilot: freeze within 0.03 of `/compact`-style at ~20% fewer uncached tokens; recompute loses; per-chunk budget ablation negative. Scaled run (set F): threshold summary dominates on accuracy and cache cost; decay is null. No frontier model: continuous loosy beats threshold loosy by +0.04 (p ≈ 0.02) |
-| 2026-11-17/22 | Open-weight replay | Set F with Qwen3-8B answering and Mistral-Nemo grading, no closed model (user) | Interim: freeze matches full context and beats Qwen self-summary by +0.12 |
+| 2026-11-17/22 | Open-weight replay | Set F with Qwen3-8B answering and Mistral-Nemo grading, no closed model (user) | Freeze matches full context (−0.004) and beats Qwen self-summary by +0.11 |
 
 ### Origin: compress text the way JPEG compresses pixels
 
@@ -492,7 +492,7 @@ So the best way to use loosy in its niche (offline, free, deterministic, no fron
 continuously, in freeze mode, not as a drop-in `/compact`. The shipped `/loosy` handoff is
 threshold-style today; adding a continuous mode is an open product decision (see Future research).
 
-### Open-weight replay of continuous compaction (2026-11-17 to 11-22, interim)
+### Open-weight replay of continuous compaction (2026-11-17 to 11-22)
 
 The no-frontier result above still used Claude models to answer and grade. The user asked for the
 same comparison with no closed model anywhere, which is the setting the feature is for. Set F
@@ -505,24 +505,25 @@ with the Claude-answered tables.
 
 | arm | accuracy | context tokens/turn | uncached tokens/turn |
 | --- | --- | --- | --- |
-| full (15 of 75 checkpoints over Qwen's 32k window) | 0.737 | 18.8k | 0.96k |
-| freeze, size-matched (continuous loosy) | 0.715 | 12.4k | 1.52k |
-| freeze, gated start | 0.714 | 12.7k | 1.57k |
-| threshold loosy | 0.673 | 12.5k | 1.52k |
-| threshold Qwen self-summary (`qthresh`) | 0.599 | 11.8k | 1.19k |
+| full (15 of 75 checkpoints over Qwen's 32k window) | 0.717 | 18.8k | 0.96k |
+| freeze, size-matched (continuous loosy) | 0.710 | 12.4k | 1.52k |
+| freeze, gated start | 0.710 | 12.7k | 1.57k |
+| threshold loosy | 0.677 | 12.5k | 1.52k |
+| threshold Qwen self-summary (`qthresh`) | 0.595 | 11.8k | 1.19k |
 
-**Interim: 11 of 359 grades are still open**, so the pairs between compacted arms cover 21–23 of
-the 25 transcripts. The rows have kept their sign and size across three reports (n = 13–14,
-18–20, 21–23).
+All 359 answered checkpoints are graded, so the pairs between compacted arms cover 24–25 of the
+25 transcripts. The full row averages only the 14 transcripts whose three checkpoints all fit
+the window; the comparisons against full below pair per checkpoint over all 25. Every row kept
+its sign and size across the interim reports (n = 13–14, 18–20, 21–23).
 
-- **Freeze matches full context.** −0.008 per checkpoint (p = 0.80) at about a third fewer
+- **Freeze matches full context.** −0.004 per checkpoint (p = 0.65) at about a third fewer
   tokens per turn, and it never overflowed the window, which full context did on 15 checkpoints.
-- **Freeze beats Qwen's own summaries by +0.116** (p < 0.001, n = 21). The self-summary arm
+- **Freeze beats Qwen's own summaries by +0.113** (p < 0.001, n = 24). The self-summary arm
   falls to about 0.53 from the 75% point on. This reverses the Sonnet result on the same set,
   where the threshold summary led: a small open-weight model summarising itself loses more
   than extractive selection does.
-- **Freeze beats threshold loosy by +0.043** (p = 0.001, n = 22), the same size as with Claude
-  answering (+0.041).
+- **Freeze beats threshold loosy by +0.034** (p = 0.007, n = 25), close to the +0.041 measured
+  with Claude answering.
 - **Gating the start changes nothing** (−0.001, p = 1.0), so the feature freezes from the first
   turn (user's call, 2026-11-22).
 
