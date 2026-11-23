@@ -114,6 +114,66 @@ Registration, timeouts and command install are in
 the adapters were tested against Claude Code 2.1.296 and codex-cli 0.158.0, and a newer CLI
 still forks, with a warning.
 
+### Continuous compaction for local models
+
+`loosy-goose proxy` is a localhost proxy that sits between an agent and a local model server
+that speaks the chat API format local servers speak (mlx_lm.server, Ollama, LM Studio,
+llama.cpp's server). Every `POST /v1/chat/completions` is compacted continuously, in freeze
+mode (see [Continuous compaction](#continuous-compaction-2026-11-16) for why this mode): each
+4k-token chunk is compressed once as it ages out of a verbatim recent tail of at least 4k tokens,
+and never touched again, so the prompt prefix stays cacheable. Every other `/v1/` path is
+forwarded unchanged.
+
+```
+uv sync --extra embed --extra proxy
+uv run loosy-goose proxy --upstream http://127.0.0.1:8080 --window 32768 --start-at 0.5
+# then point the agent's base URL at http://127.0.0.1:8765/v1
+```
+
+Quick start with `mlx_lm.server` on Apple silicon (the commands the live test runs):
+
+```
+uv sync --extra embed --extra proxy --extra slot
+uv run mlx_lm.server --model Qwen/Qwen3-4B-MLX-4bit --port 8080 \
+  --chat-template-args '{"enable_thinking": false}' --prompt-cache-bytes 1073741824
+uv run loosy-goose proxy --upstream http://127.0.0.1:8080   # second terminal
+```
+
+Cap `--prompt-cache-bytes`: the server's default prompt cache is unbounded, and on a 16 GB Mac
+it ran out of Metal memory around 10k-token prompts. `uv run pytest -m live -s tests/test_proxy_live.py`
+runs a 12-turn loop through both (opt-in, needs the GPU).
+
+| Flag | Meaning |
+| --- | --- |
+| `--upstream URL` | the local server's base URL, without `/v1` (required) |
+| `--port N` | listen port, default 8765 |
+| `--host H` | bind address, default `127.0.0.1`; anything that is not loopback is refused |
+| `--window N` | the model's context window in tokens; enables decay of older chunks near it |
+| `--start-at F` | pass requests through untouched until they exceed F × `--window` (needs `--window`) |
+| `--state-dir PATH` | per-conversation state, default `~/.cache/loosy-goose/continuous/` |
+
+What it does and does not do:
+
+- Compacted requests carry a header line saying the earlier part was compressed extractively,
+  folded into the following user message when there is one. Nothing is rewritten silently.
+- A conversation is identified by its system messages and first user message. Its frozen chunks
+  are stored as one JSON file in the state dir, which holds conversation text: the dir is
+  set to mode 0700 (an existing one is tightened), and files untouched for 7 days are deleted when the proxy starts.
+  Editing earlier history discards the chunks from the edit on.
+- Requests for the same conversation are compacted one at a time; compaction runs off the
+  event loop.
+- `Authorization` and every other end-to-end request header are passed to the upstream; `Host`,
+  `Content-Length` and the hop-by-hop headers are not. Message content and header values are
+  never logged, and the access log is off, since paths and query strings can carry keys.
+- A request whose body is not a chat request, or whose conversation needs no compaction yet, is
+  forwarded byte for byte.
+- Responses, streamed or not, are relayed as they arrive, with the upstream's status, headers
+  and bytes.
+- Only `Host` values `127.0.0.1`, `localhost` and `[::1]` (any port) are served; anything else
+  gets 403, so a web page that rebinds its own domain to 127.0.0.1 cannot reach the proxy.
+- Passthrough paths that would leave `/v1/` once decoded (an encoded `..`, `?`, `#` or `\`) get
+  404. `--host localhost` binds `127.0.0.1`.
+
 ## How it works
 
 The design borrows the shape of an image codec. A transcript is split into units, a transform
