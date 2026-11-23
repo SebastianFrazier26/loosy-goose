@@ -157,7 +157,9 @@ def test_state_dir_private_and_pruned(tmp_path: Path) -> None:
     root.mkdir(mode=0o755)
     root.chmod(0o755)
     prepare_state_dir(root)
-    assert (root.stat().st_mode & 0o777) == 0o700
+    # Windows has no POSIX permission bits: stat reports 0o777 for every directory.
+    if os.name == "posix":
+        assert (root.stat().st_mode & 0o777) == 0o700
     old, fresh, other = root / ("a" * 32 + ".json"), root / ("b" * 32 + ".json"), root / "keep.json"
     for p in (old, fresh, other):
         p.write_text("{}")

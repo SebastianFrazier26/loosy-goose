@@ -158,7 +158,7 @@ What it does and does not do:
   folded into the following user message when there is one. Nothing is rewritten silently.
 - A conversation is identified by its system messages and first user message. Its frozen chunks
   are stored as one JSON file in the state dir, which holds conversation text: the dir is
-  set to mode 0700 (an existing one is tightened), and files untouched for 7 days are deleted when the proxy starts.
+  set to mode 0700 (an existing one is tightened; POSIX only, Windows relies on the user profile's ACLs), and files untouched for 7 days are deleted when the proxy starts.
   Editing earlier history discards the chunks from the edit on.
 - Requests for the same conversation are compacted one at a time; compaction runs off the
   event loop.
