@@ -982,11 +982,14 @@ def resume_skip(cfg: SetCfg) -> frozenset[str]:
 
 def open_failures(cfg: SetCfg, store: exi.Store) -> dict[str, str]:
     """Recorded failures still unresolved: the failure log is append-only, so a key that a later
-    run completed stays in it, and probe failures of earlier probe versions never apply."""
+    run completed stays in it, and probe failures of earlier probe versions never apply. A budget
+    halt is a call not made yet, not a failure."""
     return {
         k: v
         for k, v in recorded_failures(cfg).items()
-        if k not in store.records and (not k.endswith("|probe_gen") or f"|{cfg.probes_key}|" in k)
+        if k not in store.records
+        and HALTED not in v
+        and (not k.endswith("|probe_gen") or f"|{cfg.probes_key}|" in k)
     }
 
 

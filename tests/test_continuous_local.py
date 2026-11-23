@@ -819,6 +819,8 @@ def test_report_ignores_failures_that_later_succeeded(tmp_path):
     store.put({"key": solved, "text": _grade_text("correct")})
     run.record_failure(cfg, solved, "invalid reply after 1 attempts")
     run.record_failure(cfg, open_, "invalid reply after 3 attempts")
+    halted = exi.call_key("t0@100", run.cond(cfg, "cfrzm"), QWEN.name, cfg.grade_task)
+    run.record_failure(cfg, halted, run.HALTED)
     assert list(run.open_failures(cfg, store)) == [open_]
 
 

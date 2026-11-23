@@ -304,3 +304,12 @@ its own code.
     does not measure whether the penalty removes the 1,536-token loops, which needs a segment that loops without it.
   - **Install line.** `CLAUDE.md` now lists `--extra slot`: a `uv sync` without it uninstalled mlx-lm and spaCy during the
     merge (restored at once).
+- **2026-11-23 — pre-PR check (no GPU).**
+  - **CI install reproduced locally** in a separate environment with CI's exact line (`uv sync --dev --extra embed --extra mcp
+    --extra proxy`, so no mlx-lm, mlx or spaCy) and an empty model cache: 1,339 passed, 2 skipped (spaCy slot tests, the demo
+    bundle), ruff and mypy clean. Only the two embedding models were downloaded; no Qwen or Nemo tokenizer is fetched by a
+    non-live test. This was macOS, not CI's Linux and Windows runners.
+  - **Windows.** `test_state_dir_private_and_pruned` asserted mode 0700, which Windows cannot report; the assertion is now
+    POSIX-only and the README says so. No other platform-specific construct was found in the new non-live tests.
+  - **Report.** `open_failures` leaves out budget halts, matching `resume_skip`. Regenerating the set F report changed only
+    its timestamp.
