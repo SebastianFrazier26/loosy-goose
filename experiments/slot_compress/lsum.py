@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 from collections.abc import Callable
@@ -99,17 +100,35 @@ def cache_path(cache_dir: Path, label: str, level: str) -> Path:
     return cache_dir / f"{label}__{level}.json"
 
 
+def cached_record(
+    cache_dir: Path, label: str, level: str, earlier: str, target: int, model_id: str = MODEL_ID
+) -> dict[str, Any] | None:
+    """The cache record, or None when absent, stale or unreadable (a torn write is a miss)."""
+    path = cache_path(cache_dir, label, level)
+    if not path.exists():
+        return None
+    try:
+        rec = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(rec, dict) or rec.get("sha") != source_sha(earlier, target, model_id):
+        return None
+    return rec
+
+
 def cached_text(
     cache_dir: Path, label: str, level: str, earlier: str, target: int, model_id: str = MODEL_ID
 ) -> str | None:
     """The final (sentence-truncated) summary, or None when absent or stale."""
-    path = cache_path(cache_dir, label, level)
-    if not path.exists():
-        return None
-    rec = json.loads(path.read_text(encoding="utf-8"))
-    if rec.get("sha") != source_sha(earlier, target, model_id):
-        return None
-    return truncate_sentence(str(rec["raw"]), target)
+    rec = cached_record(cache_dir, label, level, earlier, target, model_id)
+    return None if rec is None else truncate_sentence(str(rec["raw"]), target)
+
+
+def write_record(path: Path, rec: dict[str, Any]) -> None:
+    """Write-then-rename, so a kill mid-write leaves the old file or none, never a torn one."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(rec), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 @dataclass
@@ -215,7 +234,7 @@ def precompute(
             "raw_tokens": _ntok(raw),
             "seconds": round(time.perf_counter() - t0, 1),
         }
-        cache_path(cache_dir, label, level).write_text(json.dumps(rec), encoding="utf-8")
+        write_record(cache_path(cache_dir, label, level), rec)
         raw_n, secs = rec["raw_tokens"], rec["seconds"]
         log(f"{model_id} {label} {level}: target {target} raw {raw_n} in {secs}s")
     return gen.stats if gen is not None else Stats()

@@ -57,3 +57,21 @@ def test_source_sha_default_is_the_1p7b_and_models_do_not_collide() -> None:
     assert lsum.source_sha("x", 10) == lsum.source_sha("x", 10, lsum.MODEL_ID)
     assert lsum.source_sha("x", 10) != lsum.source_sha("x", 10, lsum.LSUM_MODELS["lsum8b"])
     assert lsum.LSUM_MODELS["lsum"] == lsum.MODEL_ID
+
+
+def test_torn_cache_is_a_miss_and_rewrite_is_atomic(tmp_path) -> None:
+    path = lsum.cache_path(tmp_path, "L", "e0")
+    path.write_text('{"sha": "abc", "raw": "half', encoding="utf-8")
+    assert lsum.cached_text(tmp_path, "L", "e0", "earlier", 50) is None
+
+    class Gen:
+        stats = lsum.Stats()
+
+        def __call__(self, prompt: str, max_tokens: int) -> str:
+            return lsum.PREFILL + "A summary."
+
+    gen = Gen()
+
+    lsum.precompute([("L", "e0", "earlier", 50)], tmp_path, lambda t, b: t, lambda m: None, gen=gen)
+    assert lsum.cached_text(tmp_path, "L", "e0", "earlier", 50) == "A summary."
+    assert sorted(p.name for p in tmp_path.iterdir()) == [path.name]

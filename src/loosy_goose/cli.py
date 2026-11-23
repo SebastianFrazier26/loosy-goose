@@ -91,6 +91,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="paths: tabulate paths mentioned at least this often (1 = every path)",
     )
     compress.add_argument("--output", default="-", help="output path, or - for stdout (default)")
+
+    proxy = sub.add_parser(
+        "proxy",
+        help="localhost proxy that continuously compacts chat requests to a local model server",
+    )
+    proxy.add_argument(
+        "--upstream", required=True, help="local server base URL, e.g. http://127.0.0.1:8080"
+    )
+    proxy.add_argument("--port", type=int, default=8765, help="listen port (default 8765)")
+    proxy.add_argument("--host", default="127.0.0.1", help="loopback address to bind")
+    proxy.add_argument(
+        "--window", type=_target_tokens, help="the model's context window, in tokens"
+    )
+    proxy.add_argument(
+        "--start-at",
+        type=float,
+        default=0.0,
+        help="pass requests through untouched until they exceed this share of --window",
+    )
+    proxy.add_argument(
+        "--state-dir",
+        type=Path,
+        help="per-conversation state (default ~/.cache/loosy-goose/continuous)",
+    )
     return parser
 
 
@@ -173,10 +197,57 @@ def _compress(args: argparse.Namespace) -> int:
     return 0
 
 
+def _proxy(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    from loosy_goose.continuous import ContinuousConfig, StateStore
+
+    if not _is_loopback(args.host):
+        parser.error(f"--host must be a loopback address, got {args.host!r}")
+    if args.upstream.rstrip("/").lower().endswith("/v1"):
+        parser.error("--upstream is the server root without /v1: the proxy adds /v1/ itself")
+    try:
+        config = ContinuousConfig(window=args.window, start_at=args.start_at)
+    except ValueError as exc:
+        parser.error(str(exc))
+    try:
+        import uvicorn
+
+        from loosy_goose.proxy import DEFAULT_STATE_DIR, create_app
+    except ImportError:
+        print(
+            "loosy-goose proxy: needs the proxy and embed extras "
+            "(uv sync --extra embed --extra proxy)",
+            file=sys.stderr,
+        )
+        return 2
+    store = StateStore(args.state_dir or DEFAULT_STATE_DIR)
+    # No access log: request paths and query strings can carry API keys.
+    uvicorn.run(
+        create_app(args.upstream, config, store),
+        host="127.0.0.1" if args.host == "localhost" else args.host,
+        port=args.port,
+        access_log=False,
+    )
+    return 0
+
+
+def _is_loopback(host: str) -> bool:
+    import ipaddress
+
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if args.command == "compress":
         return _compress(args)
+    if args.command == "proxy":
+        return _proxy(parser, args)
     return 1
 
 

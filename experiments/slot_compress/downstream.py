@@ -87,6 +87,7 @@ SPIKE_B = ROOT / "experiments" / "output" / "spike_thin" / "downstream" / "b_sel
 
 HAIKU = exi.MODEL_BY_NAME["haiku-5.5"]
 SONNET = exi.HELPER
+NEMO = exi.MODEL_BY_NAME["mistral-nemo-12b"]
 CODEX_PROBER = exi.MODEL_BY_NAME["gpt-6-sol"]
 C_SEED = exi.SEED + 2
 C_N = 10
@@ -464,12 +465,18 @@ def summary_job(it: Item, cond: str) -> exi.Job:
     )
 
 
-def answer_job(label: str, cond: str, context: str, probes: list[dict[str, str]]) -> exi.Job:
+def answer_job(
+    label: str,
+    cond: str,
+    context: str,
+    probes: list[dict[str, str]],
+    answerer: exi.Model = HAIKU,
+) -> exi.Job:
     n = len(probes)
     return exi.Job(
         label,
         cond,
-        HAIKU,
+        answerer,
         "probe",
         exi.probe_answer_prompt(context, [x["q"] for x in probes]),
         lambda t, n=n: exi.parse_answers(t, n) is not None,  # type: ignore[misc]
@@ -477,9 +484,14 @@ def answer_job(label: str, cond: str, context: str, probes: list[dict[str, str]]
 
 
 def grade_job(
-    store: exi.Store, label: str, cond: str, probes: list[dict[str, str]]
+    store: exi.Store,
+    label: str,
+    cond: str,
+    probes: list[dict[str, str]],
+    answerer: exi.Model = HAIKU,
+    grader: exi.Model = SONNET,
 ) -> exi.Job | None:
-    text = exi._text(store, label, cond, HAIKU.name, "probe")
+    text = exi._text(store, label, cond, answerer.name, "probe")
     if text is None:
         return None
     n = len(probes)
@@ -488,11 +500,11 @@ def grade_job(
     return exi.Job(
         label,
         cond,
-        HAIKU,
-        "grade_probe",
+        answerer,
+        "grade_probe" if grader is SONNET else f"grade_probe@{grader.name}",
         exi.grade_probe_prompt(items),
         lambda t, n=n: exi.parse_probe_grades(t, n) is not None,  # type: ignore[misc]
-        caller=SONNET,
+        caller=grader,
     )
 
 

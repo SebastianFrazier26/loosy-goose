@@ -16,6 +16,21 @@ Arms are replayed at three checkpoints per transcript; Haiku answers probes writ
       >> experiments/output/continuous/f/run.log 2>&1 &
   uv run python experiments/continuous/run.py --set F --report
 
+Open-weight replay (--answerer qwen3-8b, spec docs/superpowers/specs/2026-11-17-continuous-local-
+design.md section A): set F's checkpoints with arms sim.Q_ARMS, all generation local through MLX.
+Mistral-Nemo writes probes and grades, Qwen3-8B answers and writes the qthresh summaries; any
+closed-model call raises. Phases run one model at a time, workers=1.
+
+  uv run python experiments/continuous/run.py --set F --answerer qwen3-8b --plan
+  caffeinate -i uv run python experiments/continuous/run.py --set F --answerer qwen3-8b \\
+      >> experiments/output/continuous/f/qwen.log 2>&1
+  uv run python experiments/continuous/run.py --set F --answerer qwen3-8b --report
+
+Nemo writes probes per history segment (probe_segments, at most 12,000 Nemo tokens each). --labels
+L1,L2 restricts the Qwen run to those transcripts with the full run's keys (a pilot; its report goes
+to qwen_labels_report.md only). Keys in qwen_failures.jsonl are skipped on resume unless
+--retry-failed.
+
 Resumable: calls are checkpointed per set (E: output/continuous/calls.jsonl, F:
 output/continuous/f/calls.jsonl). A spend/usage-limit error or --max-calls stops the driver, which
 then writes the report from whatever exists.
@@ -24,6 +39,7 @@ then writes the report from whatever exists.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import shutil
@@ -32,6 +48,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -39,12 +56,18 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from experiments import exp_i_downstream as exi  # noqa: E402
-from experiments.continuous import sim  # noqa: E402
+from experiments.continuous import local, sim  # noqa: E402
+from experiments.continuous import probe_segments as ps  # noqa: E402
 from experiments.slot_compress import downstream as dl  # noqa: E402
+from experiments.slot_compress import lsum  # noqa: E402
 
 OUT = ROOT / "experiments" / "output" / "continuous"
 V = sim.CONT_VERSION
-HAIKU, SONNET = dl.HAIKU, dl.SONNET
+HAIKU, SONNET, NEMO = dl.HAIKU, dl.SONNET, dl.NEMO
+QWEN = exi.MODEL_BY_NAME["qwen3-8b"]
+QSUM_DIR = OUT / "f" / "qsum_cache"
+QSUM_MODEL_ID = lsum.LSUM_MODELS["lsum8b"]
+SUMMARY_ARMS = ("thresh", "qthresh")
 
 
 @dataclass(frozen=True)
@@ -58,6 +81,12 @@ class SetCfg:
     cap_share: float
     n: int
     tag: str  # in every record key; empty for E so its stored records keep their keys
+    answerer: exi.Model = HAIKU
+    grader: exi.Model = SONNET
+    prober: exi.Model | None = None  # None: gpt-6-sol when codex is installed, else Haiku
+    probe_cond: str = ""  # empty: probes{tag}.v{V}
+    prefix: str = ""  # on the dry-run directory and report.md, so a variant keeps its own
+    probe_segment_tokens: int | None = None  # set: probes written per history segment (ps)
 
     @property
     def selection(self) -> Path:
@@ -66,6 +95,18 @@ class SetCfg:
     @property
     def calls(self) -> Path:
         return self.out / "calls.jsonl"
+
+    @property
+    def probes_key(self) -> str:
+        return self.probe_cond or f"probes{self.tag}.v{V}"
+
+    @property
+    def grade_task(self) -> str:
+        return "grade_probe" if self.grader is SONNET else f"grade_probe@{self.grader.name}"
+
+    @property
+    def summary_arm(self) -> str | None:
+        return next((a for a in SUMMARY_ARMS if a in self.arms), None)
 
 
 CFGS = {
@@ -112,10 +153,43 @@ CFGS = {
         ".F",
     ),
 }
+# Shares set F's selection, simulations and checkpoint file; its records differ by model name.
+# The call cap only guards against a runaway loop (about 875 generations plus retries): every call
+# is local, so there is no spend to protect.
+QWEN_CFG = dataclasses.replace(
+    CFGS["F"],
+    arms=sim.Q_ARMS,
+    pairs=(
+        ("qthresh", "tloosy"),
+        ("cfrzm", "qthresh"),
+        ("cfrzm", "tloosy"),
+        ("cfrzg", "cfrzm"),
+        ("qthresh", "full"),
+        ("tloosy", "full"),
+        ("cfrzm", "full"),
+        ("cfrzg", "full"),
+    ),
+    report=ROOT / "docs" / "results" / "exp_continuous_qwen.md",
+    max_calls=2000,
+    answerer=QWEN,
+    grader=NEMO,
+    prober=NEMO,
+    probe_cond="probes.nemo4",
+    prefix="qwen_",
+    probe_segment_tokens=ps.SEGMENT_TOKENS,
+)
+ANSWERER_CFGS = {"qwen3-8b": QWEN_CFG}
+# The report flags qthresh when its mean context is further than this share from thresh's real
+# (Sonnet-summary) mean on set F: qthresh finds its own events, so its size is not pinned.
+QTHRESH_TOL = 0.10
 log = dl.log
 
 
 def cond(cfg: SetCfg, arm: str) -> str:
+    if arm == "qthresh":
+        return f"qthresh{cfg.tag}.v{V}.q{sim.QTHRESH_VERSION}"
+    if arm == "cfrzg":
+        return f"cfrzg{cfg.tag}.v{V}.q{sim.CFRZG_VERSION}"
     if arm == "cfrzm":
         return f"cfrzm{cfg.tag}.v{V}.k{sim.FRZM_KEEP}"
     if arm == "cdec":
@@ -176,14 +250,18 @@ class Summaries:
         self.used: list[str] = []
         self.placeholder = False
 
-    def __call__(self, k: int, text: str, budget: int) -> str:
+    def lookup(self, k: int, text: str, budget: int) -> str | None:
         job = summary_job(self.cfg, self.label, k, text, budget)
         rec = self.store.get(job.key)
-        if job.done_by(rec):
-            out = exi.truncate_tokens(str(rec["text"]).strip(), budget)[0] if rec else ""
-        elif self.strict:
-            raise sim.MissingSummaryError(k, text, budget)
-        else:
+        if rec is None or not job.done_by(rec):
+            return None
+        return exi.truncate_tokens(str(rec["text"]).strip(), budget)[0]
+
+    def __call__(self, k: int, text: str, budget: int) -> str:
+        out = self.lookup(k, text, budget)
+        if out is None:
+            if self.strict:
+                raise sim.MissingSummaryError(k, text, budget)
             self.placeholder = True
             out = sim.placeholder_summary(k, text, budget)
         self.used.append(out)
@@ -195,7 +273,100 @@ class Summaries:
         return hashlib.sha256("\x00".join(self.used).encode("utf-8")).hexdigest()[:16]
 
 
-def summary_rounds(cfg: SetCfg, rt: exi.Runtime, plans: list[sim.TranscriptPlan]) -> None:
+class QSummaries(Summaries):
+    """qthresh: Qwen3-8B's own summaries, generated by `lsum` and read from its on-disk cache."""
+
+    def __init__(self, label: str, strict: bool) -> None:
+        self.label, self.strict = label, strict
+        self.used = []
+        self.placeholder = False
+
+    def lookup(self, k: int, text: str, budget: int) -> str | None:
+        return lsum.cached_text(QSUM_DIR, self.label, f"e{k}", text, budget, QSUM_MODEL_ID)
+
+
+def record_failure(cfg: SetCfg, key: str, error: str) -> None:
+    path = cfg.out / f"{cfg.prefix}failures.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"key": key, "error": error, "ts": time.time()}) + "\n")
+
+
+class SummaryNotCachedError(Exception):
+    pass
+
+
+def qwen_summary_rounds(
+    cfg: SetCfg,
+    plans: list[sim.TranscriptPlan],
+    make_gen: Callable[[str], Any] | None = None,
+    skip: frozenset[str] = frozenset(),
+) -> set[str]:
+    """Each event's input holds the previous summary, so events are generated a round at a time.
+    A transcript whose summary fails (or failed in an earlier run: its key is in `skip`) is
+    dropped from later rounds; its qthresh arm then finds the summary missing and is skipped.
+    An MLX RuntimeError (out of memory included) also drops the generator, which is rebuilt for
+    the next job. Returns the failed labels."""
+    make_gen = make_gen or lsum.MlxGenerator
+    gen: Any = None
+    seen: set[tuple[str, str, str]] = set()
+    failed: set[str] = set()
+    try:
+        while not dl.STOP.is_set():
+            jobs = []
+            for p in plans:
+                if p.label in failed:
+                    continue
+                try:
+                    sim.thresh_events(p, QSummaries(p.label, strict=True))
+                except sim.MissingSummaryError as m:
+                    jobs.append((p.label, f"e{m.k}", m.text, m.budget))
+            if not jobs:
+                return failed
+            log(f"qthresh summaries ({QSUM_MODEL_ID}, local): {len(jobs)} jobs")
+            for job in jobs:
+                label, level, text, budget = job
+                key = f"qsum|{label}|{level}"
+                if key in skip:
+                    failed.add(label)
+                    log(f"skipping {key}: failed in an earlier run (--retry-failed retries)")
+                    continue
+                ident = (label, level, lsum.source_sha(text, budget, QSUM_MODEL_ID))
+                # Broad on purpose: an MLX out-of-memory surfaces as a plain RuntimeError, and
+                # one bad transcript must not stop the other arms' phases.
+                try:
+                    if ident in seen:
+                        raise SummaryNotCachedError("summary not cached after generation")
+                    seen.add(ident)
+                    gen = gen or make_gen(QSUM_MODEL_ID)
+                    lsum.precompute(
+                        [job], QSUM_DIR, exi.summary_prompt, log, gen=gen, model_id=QSUM_MODEL_ID
+                    )
+                except Exception as exc:
+                    failed.add(label)
+                    record_failure(cfg, key, f"{type(exc).__name__}: {exc}")
+                    log(f"FAILED {key}: {exc}; skipping qthresh for {label}")
+                    if isinstance(exc, RuntimeError) and gen is not None:
+                        gen = None
+                        dl.free_mlx()
+        return failed
+    finally:
+        if gen is not None:
+            del gen
+            dl.free_mlx()
+
+
+def summary_rounds(
+    cfg: SetCfg,
+    rt: exi.Runtime,
+    plans: list[sim.TranscriptPlan],
+    skip: frozenset[str] = frozenset(),
+) -> None:
+    if cfg.summary_arm == "qthresh":
+        qwen_summary_rounds(cfg, plans, skip=skip)
+        return
+    if cfg.summary_arm is None:
+        return
     while not dl.STOP.is_set():
         jobs = []
         for p in plans:
@@ -232,6 +403,10 @@ def cached_run(
         params |= {"dec_v": sim.DEC_VERSION, "dec_keep": sim.DEC_KEEP, "dec_m": sim.DEC_M}
     if arm == "cfrzm":
         params["frzm_keep"] = sim.FRZM_KEEP
+    if arm == "cfrzg":
+        params |= {"frzm_keep": sim.FRZM_KEEP, "cfrzg_v": sim.CFRZG_VERSION, "gate": sim.CFRZG_GATE}
+    if arm == "qthresh":
+        params |= {"qthresh_v": sim.QTHRESH_VERSION, "qsum_model": QSUM_MODEL_ID}
     if arm == "tloosy":
         params |= {"tloosy_v": sim.TLOOSY_VERSION, "tloosy_share": sim.TLOOSY_SHARE}
     path = cfg.out / "sims" / f"{p.label}.{arm}.json"
@@ -248,11 +423,17 @@ def cached_run(
 def arm_run(
     cfg: SetCfg, arm: str, p: sim.TranscriptPlan, store: exi.Store | None, strict: bool = False
 ) -> tuple[sim.ArmRun, bool]:
-    """The cached run for one arm; the flag is True when thresh used placeholder summaries."""
-    if arm != "thresh":
+    """The cached run for one arm; the flag is True when a summary arm used placeholders."""
+    if arm not in SUMMARY_ARMS:
         build = lambda: sim.run_arm(arm, p, exi.loosy_compressor)  # noqa: E731
         return cached_run(cfg, arm, p, "", build), False
-    sums = Summaries(cfg, store, p.label, strict) if store is not None else None
+    sums: Summaries | None = None
+    if store is not None:
+        sums = (
+            QSummaries(p.label, strict)
+            if arm == "qthresh"
+            else Summaries(cfg, store, p.label, strict)
+        )
     if sums is None:
         run = cached_run(
             cfg, arm, p, "placeholder", lambda: sim.run_arm(arm, p, exi.loosy_compressor)
@@ -269,23 +450,45 @@ def arm_run(
 
 def call_counts(cfg: SetCfg, plans: list[sim.TranscriptPlan]) -> dict[str, int]:
     n_ck = sum(len(p.checkpoints) for p in plans)
-    return {
-        "probe_gen": n_ck,
-        "thresh_summaries": sum(len(sim.thresh_events(p)) for p in plans),
-        "answers": n_ck * len(cfg.arms),
-        "grades": n_ck * len(cfg.arms),
-    }
+    chunked = cfg.probe_segment_tokens is not None
+    out = {"probe_gen": len(probe_jobs(cfg, plans, NEMO)) if chunked else n_ck}
+    if cfg.summary_arm is not None:
+        out[f"{cfg.summary_arm}_summaries"] = sum(len(sim.thresh_events(p)) for p in plans)
+    return out | {"answers": n_ck * len(cfg.arms), "grades": n_ck * len(cfg.arms)}
+
+
+def phase_models(cfg: SetCfg, gen: exi.Model) -> dict[str, exi.Model]:
+    out = {"probe_gen": gen}
+    if cfg.summary_arm is not None:
+        out[f"{cfg.summary_arm}_summaries"] = QWEN if cfg.summary_arm == "qthresh" else SONNET
+    return out | {"answers": cfg.answerer, "grades": cfg.grader}
+
+
+def split_calls(cfg: SetCfg, gen: exi.Model, counts: dict[str, int]) -> tuple[int, int]:
+    """(local, API) call counts for a `call_counts` plan."""
+    models = phase_models(cfg, gen)
+    local_n = sum(v for k, v in counts.items() if models[k].cli == "mlx")
+    return local_n, sum(counts.values()) - local_n
 
 
 def print_plan(cfg: SetCfg, plans: list[sim.TranscriptPlan], gen: exi.Model, max_calls: int) -> int:
     log(f"set {cfg.name} ({len(plans)}): {', '.join(p.label for p in plans)}")
-    log(f"probe generator: {gen.name}; answers: {HAIKU.name}; grader/summariser: {SONNET.name}")
+    summariser = QSUM_MODEL_ID if cfg.summary_arm == "qthresh" else SONNET.name
+    log(
+        f"probe generator: {gen.name}; answers: {cfg.answerer.name}; grader: {cfg.grader.name}; "
+        f"summariser: {summariser}"
+    )
     log(f"CONT_VERSION={V} KEEP={sim.KEEP} F={sim.FREEZE_TOKENS} cap={cfg.cap_share} of total")
     if "tloosy" in cfg.arms:
         log(f"TLOOSY_VERSION={sim.TLOOSY_VERSION} TLOOSY_SHARE={sim.TLOOSY_SHARE} of C")
     if "cdec" in cfg.arms:
         log(f"DEC_VERSION={sim.DEC_VERSION} DEC_KEEP={sim.DEC_KEEP} DEC_M={sim.DEC_M}")
         log(f"FRZM_KEEP={sim.FRZM_KEEP}")
+    if "qthresh" in cfg.arms or "cfrzg" in cfg.arms:
+        log(
+            f"QTHRESH_VERSION={sim.QTHRESH_VERSION} CFRZG_VERSION={sim.CFRZG_VERSION} "
+            f"CFRZG_GATE={sim.CFRZG_GATE} FRZM_KEEP={sim.FRZM_KEEP}"
+        )
     log(
         f"{'transcript':20s}{'tokens':>8s}{'turns':>6s}{'C':>7s}{'target':>7s}  checkpoints  thresh"
     )
@@ -302,6 +505,8 @@ def print_plan(cfg: SetCfg, plans: list[sim.TranscriptPlan], gen: exi.Model, max
         log(f"  {k:20s} {v}")
     total = sum(counts.values())
     log(f"  {'TOTAL (placeholder events)':26s} {total}   (cap --max-calls {max_calls})")
+    local_n, api_n = split_calls(cfg, gen, counts)
+    log(f"  local (mlx) {local_n}, API {api_n}")
     return total
 
 
@@ -320,15 +525,22 @@ def pending_counts(
                 out["summaries"] += 1
         for ck in p.checkpoints:
             label = ck_label(p, ck)
-            probes = probes_for(cfg, store, label, gen)
+            probes = probes_for(cfg, store, p, ck, gen)
             if not probes:
-                out["probe_gen"] += 1
+                jobs = checkpoint_probe_jobs(cfg, p, ck, gen)
+                out["probe_gen"] += sum(
+                    (rec := store.get(j.key)) is None
+                    or (j.validate is not None and not j.validate(str(rec["text"])))
+                    for j in jobs
+                )
                 continue
             for a, r in runs.items():
-                ans = dl.answer_job(label, cond(cfg, a), r.contexts[ck.t], probes)
+                ans = answer_job(cfg, label, a, r.contexts[ck.t], probes)
+                if cfg.answerer is QWEN and qwen_over(ans.prompt) is not None:
+                    continue
                 answered = ans.done_by(store.get(ans.key))
                 out["answers"] += not answered
-                grade = dl.grade_job(store, label, cond(cfg, a), probes) if answered else None
+                grade = grade_job(cfg, store, label, a, probes) if answered else None
                 out["grades"] += grade is None or not grade.done_by(store.get(grade.key))
     return out
 
@@ -373,46 +585,160 @@ def dry_run(cfg: SetCfg, plans: list[sim.TranscriptPlan]) -> None:
         runs[p.label] = {a: arm_run(cfg, a, p, None)[0] for a in cfg.arms}
         log(f"simulated {p.label}")
     table = cost_table(cfg, plans, runs)
-    (cfg.out / "dry_run").mkdir(parents=True, exist_ok=True)
-    (cfg.out / "dry_run" / "cost.txt").write_text(table + "\n", encoding="utf-8")
+    out = cfg.out / f"{cfg.prefix}dry_run"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "cost.txt").write_text(table + "\n", encoding="utf-8")
     p = plans[0]
     ck = p.checkpoints[1]
     for a in cfg.arms:
-        (cfg.out / "dry_run" / f"{p.label}@{ck.pct}__{a}.txt").write_text(
+        (out / f"{p.label}@{ck.pct}__{a}.txt").write_text(
             runs[p.label][a].contexts[ck.t], encoding="utf-8"
         )
     print(table, flush=True)
-    log(f"sample contexts for {p.label}@{ck.pct} in {cfg.out / 'dry_run'}")
+    log(f"sample contexts for {p.label}@{ck.pct} in {out}")
 
 
 # --------------------------------------------------------------------------- jobs
 
 
+_SEGMENTS: dict[tuple[Any, ...], list[tuple[str, str, int]]] = {}
+
+
+def probe_segments(
+    cfg: SetCfg, p: sim.TranscriptPlan, ck: sim.Checkpoint
+) -> list[tuple[str, str, int]]:
+    """(segment label, text, probes asked) for a chunked config; memoised because the report and
+    --plan look a checkpoint's probes up once per arm, and each lookup tokenises the history."""
+    assert cfg.probe_segment_tokens is not None
+    key = (ck_label(p, ck), ck.tail_from, cfg.probe_segment_tokens, local.nemo_tokens)
+    if key not in _SEGMENTS:
+        _SEGMENTS[key] = ps.segment_jobs(
+            ck_label(p, ck), p.turns[: ck.tail_from], local.nemo_tokens, cfg.probe_segment_tokens
+        )
+    return _SEGMENTS[key]
+
+
 def probes_for(
-    cfg: SetCfg, store: exi.Store, label: str, gen: exi.Model
+    cfg: SetCfg, store: exi.Store, p: sim.TranscriptPlan, ck: sim.Checkpoint, gen: exi.Model
 ) -> list[dict[str, str]] | None:
-    text = exi._text(store, label, f"probes{cfg.tag}.v{V}", gen.name, "probe_gen")
+    if cfg.probe_segment_tokens is not None:
+        return ps.assemble(
+            [(seg, n) for seg, _, n in probe_segments(cfg, p, ck)],
+            lambda seg: exi._text(store, seg, cfg.probes_key, gen.name, "probe_gen"),
+        )
+    text = exi._text(store, ck_label(p, ck), cfg.probes_key, gen.name, "probe_gen")
     return None if text is None else exi.parse_probes(text)
 
 
-def run_all(cfg: SetCfg, rt: exi.Runtime, plans: list[sim.TranscriptPlan], gen: exi.Model) -> None:
-    store = rt.store
-    gen_jobs = [
+def _probe_prompt(gen: exi.Model, text: str, n: int = exi.N_PROBES) -> str:
+    return local.probe_gen_prompt(text, n) if gen.cli == "mlx" else exi.probe_gen_prompt(text, n)
+
+
+def checkpoint_probe_jobs(
+    cfg: SetCfg, p: sim.TranscriptPlan, ck: sim.Checkpoint, gen: exi.Model
+) -> list[exi.Job]:
+    if cfg.probe_segment_tokens is None:
+        return [
+            exi.Job(
+                ck_label(p, ck),
+                cfg.probes_key,
+                gen,
+                "probe_gen",
+                _probe_prompt(gen, exi.render_turns(p.turns[: ck.tail_from])),
+                lambda t: exi.parse_probes(t) is not None,
+            )
+        ]
+    return [
         exi.Job(
-            ck_label(p, ck),
-            f"probes{cfg.tag}.v{V}",
+            seg,
+            cfg.probes_key,
             gen,
             "probe_gen",
-            exi.probe_gen_prompt(exi.render_turns(p.turns[: ck.tail_from])),
-            lambda t: exi.parse_probes(t) is not None,
+            _probe_prompt(gen, text, n),
+            lambda t, n=n: ps.parse_segment_probes(t, n) is not None,  # type: ignore[misc]
         )
-        for p in plans
-        for ck in p.checkpoints
+        for seg, text, n in probe_segments(cfg, p, ck)
     ]
-    log(f"probe generation: {len(gen_jobs)} jobs")
-    rt.run(gen_jobs)
-    summary_rounds(cfg, rt, plans)
+
+
+def probe_jobs(cfg: SetCfg, plans: list[sim.TranscriptPlan], gen: exi.Model) -> list[exi.Job]:
+    return [
+        j for p in plans for ck in p.checkpoints for j in checkpoint_probe_jobs(cfg, p, ck, gen)
+    ]
+
+
+def answer_job(
+    cfg: SetCfg, label: str, arm: str, context: str, probes: list[dict[str, str]]
+) -> exi.Job:
+    job = dl.answer_job(label, cond(cfg, arm), context, probes, answerer=cfg.answerer)
+    if cfg.answerer.cli == "mlx":
+        job = dataclasses.replace(job, prompt=local.prefilled(job.prompt, local.ANSWER_PREFILL))
+    return job
+
+
+def grade_job(
+    cfg: SetCfg, store: exi.Store, label: str, arm: str, probes: list[dict[str, str]]
+) -> exi.Job | None:
+    job = dl.grade_job(
+        store, label, cond(cfg, arm), probes, answerer=cfg.answerer, grader=cfg.grader
+    )
+    if job is not None and cfg.grader.cli == "mlx":
+        job = dataclasses.replace(job, prompt=local.prefilled(job.prompt, local.GRADE_PREFILL))
+    return job
+
+
+class ClosedModelError(RuntimeError):
+    """Not an exi.CallError on purpose: call_with_retry would retry it and Runtime would log it
+    as one failed call and carry on, where the open-weight run must stop."""
+
+
+def refuse_closed(model: exi.Model, prompt: str) -> exi.CallResult:
+    raise ClosedModelError(f"{model.name} is not a local open-weight model; this run is MLX only")
+
+
+HALTED = "halted by budget guard"
+
+
+class LocalGuard:
+    """dl.Guard's call cap and STOP handling in front of the MLX-only runner."""
+
+    def __init__(self, max_calls: int) -> None:
+        self.max_calls = max_calls
+        self.used = 0
+        self._run = local.dispatch(refuse_closed)
+
+    def runner(self, model: exi.Model, prompt: str) -> exi.CallResult:
+        if dl.STOP.is_set():
+            raise exi.CallError(HALTED)
+        if self.used >= self.max_calls:
+            dl.STOP.set()
+            log(f"!! --max-calls {self.max_calls} reached, stopping")
+            raise exi.CallError(HALTED)
+        self.used += 1
+        return self._run(model, prompt)
+
+
+def run_all(
+    cfg: SetCfg,
+    rt: exi.Runtime,
+    plans: list[sim.TranscriptPlan],
+    gen: exi.Model,
+    skip: frozenset[str] = frozenset(),
+) -> None:
+    """Probes, then summaries, then answers, then grades. Each phase uses one model, and local
+    weights are dropped between phases so two models are never resident (16 GB machine). Keys in
+    `skip` (failures recorded by an earlier run) are neither called nor recorded again."""
+    store = rt.store
+    gen_jobs = probe_jobs(cfg, plans, gen)
+    log(f"probe generation ({gen.name}): {len(gen_jobs)} jobs")
+    if held := sum(j.key in skip for j in gen_jobs):
+        log(f"  {held} skipped: failed in an earlier run (--retry-failed retries)")
+    rt.run([j for j in gen_jobs if j.key not in skip])
+    local.unload()
+    summary_rounds(cfg, rt, plans, skip)
     answers: list[exi.Job] = []
+    over: list[str] = []
+    held_answers = 0
     contexts: list[tuple[str, str, list[dict[str, str]]]] = []
     for p in plans:
         runs: dict[str, sim.ArmRun] = {}
@@ -420,36 +746,59 @@ def run_all(cfg: SetCfg, rt: exi.Runtime, plans: list[sim.TranscriptPlan], gen: 
             try:
                 runs[a], _ = arm_run(cfg, a, p, store, strict=True)
             except sim.MissingSummaryError:
-                log(f"{p.label}: thresh summaries incomplete, skipping the arm")
+                log(f"{p.label}: {a} summaries incomplete, skipping the arm")
         for ck in p.checkpoints:
-            probes = probes_for(cfg, store, ck_label(p, ck), gen)
+            probes = probes_for(cfg, store, p, ck, gen)
             if not probes:
                 continue
             for a, r in runs.items():
+                job = answer_job(cfg, ck_label(p, ck), a, r.contexts[ck.t], probes)
+                # Not queued: the runner would refuse it with a CallError, which call_with_retry
+                # retries (with sleeps) although the prompt can never fit.
+                if cfg.answerer is QWEN and (n := qwen_over(job.prompt)) is not None:
+                    over.append(job.key)
+                    if job.key not in skip:
+                        record_failure(cfg, job.key, f"over Qwen window: {n} tokens, not queued")
+                    continue
+                if job.key in skip:
+                    held_answers += 1
+                    continue
                 contexts.append((ck_label(p, ck), a, probes))
-                answers.append(
-                    dl.answer_job(ck_label(p, ck), cond(cfg, a), r.contexts[ck.t], probes)
-                )
-    log(f"answers (Haiku): {len(answers)} jobs")
+                answers.append(job)
+    if over:
+        log(f"answers over the Qwen window, not queued: {len(over)}")
+    if held_answers:
+        log(f"answers skipped, failed in an earlier run: {held_answers}")
+    log(f"answers ({cfg.answerer.name}): {len(answers)} jobs")
     if not dl.STOP.is_set():
         rt.run(answers)
-    grades = [j for lb, a, pr in contexts if (j := dl.grade_job(store, lb, cond(cfg, a), pr))]
-    log(f"grading (Sonnet): {len(grades)} jobs")
+    local.unload()
+    grades = [j for lb, a, pr in contexts if (j := grade_job(cfg, store, lb, a, pr))]
+    if held := sum(j.key in skip for j in grades):
+        log(f"grades skipped, failed in an earlier run: {held}")
+        grades = [j for j in grades if j.key not in skip]
+    log(f"grading ({cfg.grader.name}): {len(grades)} jobs")
     if not dl.STOP.is_set():
         rt.run(grades)
+    local.unload()
 
 
 # --------------------------------------------------------------------------- report
 
 
 def checkpoint_score(
-    cfg: SetCfg, store: exi.Store, label: str, arm: str, gen: exi.Model
+    cfg: SetCfg,
+    store: exi.Store,
+    p: sim.TranscriptPlan,
+    ck: sim.Checkpoint,
+    arm: str,
+    gen: exi.Model,
 ) -> float | None:
-    probes = probes_for(cfg, store, label, gen)
+    probes = probes_for(cfg, store, p, ck, gen)
     if not probes:
         return None
     n = len(probes)
-    text = exi._text(store, label, cond(cfg, arm), HAIKU.name, "grade_probe")
+    text = exi._text(store, ck_label(p, ck), cond(cfg, arm), cfg.answerer.name, cfg.grade_task)
     grades = exi.parse_probe_grades(text, n) if text else None
     return None if grades is None else float(np.mean(grades))
 
@@ -474,18 +823,43 @@ def report(cfg: SetCfg, store: exi.Store, plans: list[sim.TranscriptPlan], gen: 
         out.append(f"NOTE: probe generator fell back to {gen.name} (codex unavailable).")
     if dl.STOP.is_set():
         out.append("NOTE: the driver stopped on a spend limit or --max-calls; tables are partial.")
-    by_pct: dict[str, dict[int, dict[str, float]]] = {a: {} for a in cfg.arms}
-    scores: dict[str, dict[str, float]] = {a: {} for a in cfg.arms}
+    scores, by_pct = collect_scores(cfg, store, plans, gen)
+    cost, placeholder = arm_costs(cfg, store, plans)
+    out += arm_table(cfg, scores, cost)
+    if placeholder:
+        out.append("")
+        out.append("NOTE: thresh cost uses placeholder summaries where real ones are not cached.")
+    out += pair_table(cfg, scores) + pct_table(cfg, by_pct)
+    out += ["", f"Calls recorded in checkpoint: {len(store.records)}"]
+    return "\n".join(out) + "\n"
+
+
+Scores = dict[str, dict[str, float]]
+PctScores = dict[str, dict[int, dict[str, float]]]
+
+
+def collect_scores(
+    cfg: SetCfg, store: exi.Store, plans: list[sim.TranscriptPlan], gen: exi.Model
+) -> tuple[Scores, PctScores]:
+    """Per-arm transcript means (only transcripts with all checkpoints graded) and per-pct
+    checkpoint scores."""
+    by_pct: PctScores = {a: {} for a in cfg.arms}
+    scores: Scores = {a: {} for a in cfg.arms}
     for a in cfg.arms:
         for p in plans:
-            got = {
-                c.pct: checkpoint_score(cfg, store, ck_label(p, c), a, gen) for c in p.checkpoints
-            }
+            got = {c.pct: checkpoint_score(cfg, store, p, c, a, gen) for c in p.checkpoints}
             for pct, v in got.items():
                 if v is not None:
                     by_pct[a].setdefault(pct, {})[p.label] = v
             if all(v is not None for v in got.values()):
                 scores[a][p.label] = float(np.mean([v for v in got.values() if v is not None]))
+    return scores, by_pct
+
+
+def arm_costs(
+    cfg: SetCfg, store: exi.Store, plans: list[sim.TranscriptPlan]
+) -> tuple[dict[str, tuple[float, float]], bool]:
+    """(mean context, mean uncached) per arm, and whether any summary arm used placeholders."""
     cost: dict[str, tuple[float, float]] = {}
     placeholder = False
     for a in cfg.arms:
@@ -498,25 +872,295 @@ def report(cfg: SetCfg, store: exi.Store, plans: list[sim.TranscriptPlan], gen: 
             float(np.mean([r.mean_ctx() for r in rs])),
             float(np.mean([r.mean_uncached() for r in rs])),
         )
-    out += ["", "| arm | accuracy | mean context tokens/turn | mean uncached tokens/turn |"]
+    return cost, placeholder
+
+
+def arm_table(cfg: SetCfg, scores: Scores, cost: dict[str, tuple[float, float]]) -> list[str]:
+    out = ["", "| arm | accuracy | mean context tokens/turn | mean uncached tokens/turn |"]
     out.append("|---|---|---|---|")
     out += [
         f"| {a} | {dl.cell(list(scores[a].values()))} | {cost[a][0]:.0f} | {cost[a][1]:.0f} |"
         for a in cfg.arms
     ]
-    if placeholder:
-        out.append("")
-        out.append("NOTE: thresh cost uses placeholder summaries where real ones are not cached.")
-    out += ["", "| paired difference | delta accuracy |", "|---|---|"]
-    out += [f"| {a} - {b} | {dl.paired(scores[a], scores[b])} |" for a, b in cfg.pairs]
-    out += ["", "| arm | 50% | 75% | 100% |", "|---|---|---|---|"]
-    out += [
+    return out
+
+
+def pair_table(cfg: SetCfg, scores: Scores, by_pct: PctScores | None = None) -> list[str]:
+    """With `by_pct`, rows against full pair checkpoints rather than transcripts."""
+    out = ["", "| paired difference | delta accuracy |", "|---|---|"]
+    return out + [
+        f"| {a} - {b} | "
+        + (
+            paired_checkpoints(by_pct, a, b)
+            if by_pct and b == "full"
+            else dl.paired(scores[a], scores[b])
+        )
+        + " |"
+        for a, b in cfg.pairs
+    ]
+
+
+def paired_checkpoints(by_pct: PctScores, a: str, b: str) -> str:
+    """a - b over the checkpoints both arms have graded: averaged within a transcript first, so
+    the bootstrap and sign test still resample transcripts. For full, which is refused at the
+    checkpoints over Qwen's window and would otherwise lose those whole transcripts."""
+    diffs: dict[str, list[float]] = {}
+    for pct, row in sorted(by_pct[b].items()):
+        for label, vb in sorted(row.items()):
+            va = by_pct[a].get(pct, {}).get(label)
+            if va is not None:
+                diffs.setdefault(label, []).append(va - vb)
+    if not diffs:
+        return "-"
+    d = [float(np.mean(diffs[k])) for k in sorted(diffs)]
+    m, lo, hi = exi.bootstrap_ci(d)
+    n_ck = sum(len(v) for v in diffs.values())
+    return (
+        f"{m:+.3f} [{lo:+.2f},{hi:+.2f}] sign p={dl.sign_p(d):.3f} "
+        f"n={len(d)} transcripts, {n_ck} checkpoints"
+    )
+
+
+def pct_table(cfg: SetCfg, by_pct: PctScores) -> list[str]:
+    out = ["", "| arm | 50% | 75% | 100% |", "|---|---|---|---|"]
+    return out + [
         f"| {a} | "
         + " | ".join(dl.cell(list(by_pct[a].get(pct, {}).values())) for pct in (50, 75, 100))
         + " |"
         for a in cfg.arms
     ]
-    out += ["", f"Calls recorded in checkpoint: {len(store.records)}"]
+
+
+def qwen_over(prompt: str) -> int | None:
+    """The prompt's Qwen token count when it leaves less than MAX_TOKENS of Qwen's window."""
+    n = local.qwen_tokens(prompt)
+    return n if n > local.QWEN_WINDOW - local.MAX_TOKENS else None
+
+
+def over_window(
+    cfg: SetCfg, store: exi.Store | None, plans: list[sim.TranscriptPlan], gen: exi.Model
+) -> dict[str, list[str]]:
+    """Checkpoints whose answer prompt (the context alone while probes are missing) leaves Qwen
+    less than MAX_TOKENS of its window, per arm. The runner refuses those calls; they are listed,
+    never cut."""
+    out: dict[str, list[str]] = {a: [] for a in cfg.arms}
+    for p in plans:
+        for a in cfg.arms:
+            r, _ = arm_run(cfg, a, p, store)
+            for ck in p.checkpoints:
+                label = ck_label(p, ck)
+                probes = probes_for(cfg, store, p, ck, gen) if store is not None else None
+                ctx = r.contexts[ck.t]
+                text = exi.probe_answer_prompt(ctx, [x["q"] for x in probes]) if probes else ctx
+                if qwen_over(text) is not None:
+                    out[a].append(label)
+    return out
+
+
+def recorded_failures(cfg: SetCfg) -> dict[str, str]:
+    """key -> last recorded error, from both the Runtime's and record_failure's lines."""
+    path = cfg.out / f"{cfg.prefix}failures.jsonl"
+    out: dict[str, str] = {}
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict) and "key" in rec:
+            out[str(rec["key"])] = str(rec.get("error", ""))
+    return out
+
+
+def resume_skip(cfg: SetCfg) -> frozenset[str]:
+    """Keys a resume leaves alone: those whose last recorded error is a real failure. A budget
+    halt (--max-calls or a spend limit) is recorded like one, but the call was never made, and
+    skipping it would silently drop the rest of the phase."""
+    return frozenset(k for k, err in recorded_failures(cfg).items() if HALTED not in err)
+
+
+def open_failures(cfg: SetCfg, store: exi.Store) -> dict[str, str]:
+    """Recorded failures still unresolved: the failure log is append-only, so a key that a later
+    run completed stays in it, and probe failures of earlier probe versions never apply. A budget
+    halt is a call not made yet, not a failure."""
+    return {
+        k: v
+        for k, v in recorded_failures(cfg).items()
+        if k not in store.records
+        and HALTED not in v
+        and (not k.endswith("|probe_gen") or f"|{cfg.probes_key}|" in k)
+    }
+
+
+def failure_counts(failures: dict[str, str]) -> dict[str, int]:
+    out = {"probe": 0, "summary": 0, "answer": 0, "answer_over_window": 0, "grade": 0, "other": 0}
+    for key, err in failures.items():
+        if key.startswith("qsum|"):
+            out["summary"] += 1
+        elif key.endswith("|probe_gen"):
+            out["probe"] += 1
+        elif key.endswith("|probe"):
+            out["answer_over_window" if err.startswith("over Qwen window") else "answer"] += 1
+        elif "|grade_probe" in key:
+            out["grade"] += 1
+        else:
+            out["other"] += 1
+    return out
+
+
+def arm_counts(
+    cfg: SetCfg, store: exi.Store, plans: list[sim.TranscriptPlan], gen: exi.Model
+) -> dict[str, tuple[int, int, int]]:
+    """(expected, answered, graded) checkpoints per arm."""
+    out: dict[str, tuple[int, int, int]] = {}
+    for a in cfg.arms:
+        expected = answered = graded = 0
+        for p in plans:
+            for ck in p.checkpoints:
+                expected += 1
+                key = exi.call_key(ck_label(p, ck), cond(cfg, a), cfg.answerer.name, "probe")
+                answered += store.get(key) is not None
+                graded += checkpoint_score(cfg, store, p, ck, a, gen) is not None
+        out[a] = (expected, answered, graded)
+    return out
+
+
+def qsum_ratios(plans: list[sim.TranscriptPlan]) -> list[float]:
+    """Raw Qwen summary length over its target (o200k tokens) for every cached qthresh summary
+    the current schedule reads; above 1 means the summary was sentence-truncated to fit."""
+    ratios: list[float] = []
+
+    class Reader(QSummaries):
+        def lookup(self, k: int, text: str, budget: int) -> str | None:
+            rec = lsum.cached_record(QSUM_DIR, self.label, f"e{k}", text, budget, QSUM_MODEL_ID)
+            if rec is None:
+                return None
+            if rec.get("raw_tokens") and budget:
+                ratios.append(int(rec["raw_tokens"]) / budget)
+            return lsum.truncate_sentence(str(rec["raw"]), budget)
+
+    for p in plans:
+        sim.thresh_events(p, Reader(p.label, strict=False))
+    return ratios
+
+
+def largest_inputs(
+    cfg: SetCfg, store: exi.Store | None, plans: list[sim.TranscriptPlan], gen: exi.Model
+) -> tuple[tuple[str, int] | None, tuple[str, int] | None]:
+    """((segment label, Nemo tokens) of the largest probe-generation prompt, (checkpoint label,
+    Qwen tokens) of the largest `full` answer prompt that fits the window). For choosing the
+    --labels pilot."""
+    probe = None
+    if cfg.probe_segment_tokens is not None:
+        sizes = [(j.transcript, local.nemo_tokens(j.prompt)) for j in probe_jobs(cfg, plans, gen)]
+        probe = max(sizes, key=lambda x: x[1], default=None)
+    limit = local.QWEN_WINDOW - local.MAX_TOKENS
+    full: tuple[str, int] | None = None
+    for p in plans:
+        r, _ = arm_run(cfg, "full", p, store)
+        for ck in p.checkpoints:
+            probes = probes_for(cfg, store, p, ck, gen) if store is not None else None
+            ctx = r.contexts[ck.t]
+            text = exi.probe_answer_prompt(ctx, [x["q"] for x in probes]) if probes else ctx
+            n = local.qwen_tokens(text)
+            if n <= limit and (full is None or n > full[1]):
+                full = (ck_label(p, ck), n)
+    return probe, full
+
+
+def qwen_report(
+    cfg: SetCfg, store: exi.Store, plans: list[sim.TranscriptPlan], gen: exi.Model
+) -> str:
+    out = [
+        f"# Continuous compaction, open-weight replay on set F, written "
+        f"{time.strftime('%Y-%m-%d %H:%M')}",
+        "",
+        f"CONT_VERSION {V}, QTHRESH_VERSION {sim.QTHRESH_VERSION}, CFRZG_VERSION "
+        f"{sim.CFRZG_VERSION} (gate {sim.CFRZG_GATE} o200k tokens), cfrzm/cfrzg keep "
+        f"{sim.FRZM_KEEP}, tloosy share {sim.TLOOSY_SHARE}. {cfg.answerer.name} (4-bit MLX, "
+        f"greedy, thinking off) probe QA accuracy, graded by {cfg.grader.name}; probes by "
+        f"{gen.name} ({cfg.probes_key}); qthresh summaries by {QSUM_MODEL_ID} (lsum). Every "
+        "call is local and no closed model is used anywhere, so these numbers are a standalone "
+        "set, not comparable with the Claude-answered set F report. No full-context filter. In "
+        "the arm table and the pairs between compacted arms, a transcript counts for an arm only "
+        "if all three of its checkpoints are graded. Rows against full are paired per checkpoint "
+        "instead: the difference is taken only at checkpoints where full has a grade (full is "
+        "refused at checkpoints over Qwen's window), averaged within each transcript, and its n "
+        "gives both transcripts and checkpoints. Mean [95% bootstrap CI over transcripts].",
+    ]
+    if dl.STOP.is_set():
+        out.append("NOTE: the driver stopped on --max-calls; tables are partial.")
+    scores, by_pct = collect_scores(cfg, store, plans, gen)
+    cost, placeholder = arm_costs(cfg, store, plans)
+    out += arm_table(cfg, scores, cost)
+    out += [
+        "",
+        f"The full row covers only the transcripts whose three checkpoints all fit Qwen's window "
+        f"and were graded ({len(scores['full'])} of {len(plans)}); the rows against full below "
+        "pair per checkpoint instead.",
+    ]
+    if placeholder:
+        out += ["", "NOTE: qthresh cost uses placeholder summaries where Qwen's are not cached."]
+    counts = arm_counts(cfg, store, plans, gen)
+    out += [
+        "",
+        "Checkpoints per arm (an arm answers a checkpoint once its probes exist and it fits):",
+        "",
+        "| arm | expected | answered | graded |",
+        "|---|---|---|---|",
+    ]
+    out += [f"| {a} | {e} | {n} | {g} |" for a, (e, n, g) in counts.items()]
+    fails = failure_counts(open_failures(cfg, store))
+    out += [
+        "",
+        f"Recorded failures ({cfg.prefix}failures.jsonl, distinct keys): probe segments "
+        f"{fails['probe']}, qthresh summaries {fails['summary']}, answers {fails['answer']} "
+        f"(plus {fails['answer_over_window']} over the window, below), grades {fails['grade']}"
+        + (f", other {fails['other']}" if fails["other"] else "")
+        + ". A resume skips these keys unless run with --retry-failed.",
+    ]
+    ratios = qsum_ratios(plans)
+    if ratios:
+        out += [
+            "",
+            f"Qwen summary length / target (o200k, {len(ratios)} cached summaries): mean "
+            f"{np.mean(ratios):.2f}, min {min(ratios):.2f}, max {max(ratios):.2f}; "
+            f"{sum(r > 1 for r in ratios)} over 1 were sentence-truncated to the target.",
+        ]
+    ref = float(np.mean([arm_run(CFGS["F"], "thresh", p, store)[0].mean_ctx() for p in plans]))
+    off = cost["qthresh"][0] / ref - 1
+    out += [
+        "",
+        f"qthresh mean context {cost['qthresh'][0]:.0f} vs thresh (Sonnet summaries, set F) "
+        f"{ref:.0f}: {off:+.1%}.",
+    ]
+    if abs(off) > QTHRESH_TOL:
+        out.append(
+            f"FLAG: qthresh is more than {QTHRESH_TOL:.0%} off thresh's context size, so its "
+            "comparisons read as accuracy at the context size each arm reached."
+        )
+    out += pair_table(cfg, scores, by_pct)
+    out += ["", "Per checkpoint position:"] + pct_table(cfg, by_pct)
+    over = over_window(cfg, store, plans, gen)
+    n_ck = sum(len(p.checkpoints) for p in plans)
+    limit = local.QWEN_WINDOW - local.MAX_TOKENS
+    out += [
+        "",
+        f"Checkpoints over the Qwen window (answer prompt over {limit} Qwen tokens, i.e. "
+        f"{local.QWEN_WINDOW} less the {local.MAX_TOKENS}-token reply cap), out of {n_ck}. These "
+        "answers are never queued and the context is never cut; the checkpoint stays ungraded "
+        "for that arm (full's pairs skip it, see above):",
+        "",
+        "| arm | over window | checkpoints |",
+        "|---|---|---|",
+    ]
+    out += [f"| {a} | {len(over[a])} | {', '.join(over[a]) or '-'} |" for a in cfg.arms]
+    mine = sum(
+        r.get("caller") in (cfg.answerer.name, cfg.grader.name, gen.name)
+        for r in store.records.values()
+    )
+    out += ["", f"Local calls recorded in checkpoint: {mine}"]
     return "\n".join(out) + "\n"
 
 
@@ -581,6 +1225,14 @@ CAL_FRZM_KEEPS = (0.40, 0.45, 0.50, 0.55, 0.60)
 CAL_TOL = 0.05
 
 
+def filter_labels(plans: list[sim.TranscriptPlan], labels: str) -> list[sim.TranscriptPlan]:
+    """--labels: the named transcripts, in set order; plans are unchanged, so keys match."""
+    want = {x.strip() for x in labels.split(",") if x.strip()}
+    if unknown := sorted(want - {p.label for p in plans}):
+        raise SystemExit(f"--labels not in the set: {unknown}")
+    return [p for p in plans if p.label in want]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--set", dest="set_name", choices=sorted(CFGS), default="E")
@@ -593,19 +1245,81 @@ def main() -> None:
         "--calibrate-tloosy", action="store_true", help="offline tloosy target grid, set F"
     )
     ap.add_argument("--report", action="store_true", help="write the report from the checkpoint")
-    ap.add_argument("--max-calls", type=int, default=None, help="default 360 (E) / 1000 (F)")
+    ap.add_argument(
+        "--max-calls", type=int, default=None, help="default 360 (E) / 1000 (F) / 2000 (qwen3-8b)"
+    )
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument(
+        "--answerer",
+        choices=sorted(ANSWERER_CFGS),
+        default=None,
+        help="open-weight replay of set F, all local (workers forced to 1)",
+    )
+    ap.add_argument(
+        "--labels",
+        default=None,
+        help="with --answerer: only these transcripts (comma-separated); keys match the full run",
+    )
+    ap.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="with --answerer: call keys recorded in the failures file again",
+    )
+    ap.add_argument(
+        "--probe-max-tokens",
+        type=int,
+        help="with --answerer: token cap for local probe writing (default: the 1536 reply cap)",
+    )
+    ap.add_argument(
+        "--probe-repetition-penalty",
+        type=float,
+        help="with --answerer: repetition penalty for local probe writing (default: none).\n"
+        "Both probe options change new probes without changing their key; fresh runs only",
+    )
     args = ap.parse_args()
 
-    cfg = CFGS[args.set_name]
+    if args.answerer is not None:
+        if args.set_name != "F":
+            raise SystemExit("--answerer runs on set F only")
+        cfg = ANSWERER_CFGS[args.answerer]
+        workers = 1
+    else:
+        cfg = CFGS[args.set_name]
+        workers = args.workers
     max_calls = args.max_calls or cfg.max_calls
-    gen = dl.CODEX_PROBER if shutil.which("codex") else HAIKU
+    gen = cfg.prober or (dl.CODEX_PROBER if shutil.which("codex") else HAIKU)
+    write_report = qwen_report if cfg.answerer is QWEN else report
+    if (args.labels or args.retry_failed) and cfg.answerer is not QWEN:
+        raise SystemExit("--labels and --retry-failed need --answerer")
+    if args.probe_max_tokens is not None or args.probe_repetition_penalty is not None:
+        if cfg.answerer is not QWEN:
+            raise SystemExit("--probe-max-tokens and --probe-repetition-penalty need --answerer")
+        try:
+            local.PROBE_GEN = local.ProbeGenOptions(
+                args.probe_max_tokens, args.probe_repetition_penalty
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        log(f"probe writing options: {local.PROBE_GEN}")
     plans = select_plans(cfg)
+    if args.labels:
+        plans = filter_labels(plans, args.labels)
     total = print_plan(cfg, plans, gen, max_calls)
     if args.plan:
         if cfg.calls.exists():
             pend = pending_counts(cfg, plans, gen, exi.Store(cfg.calls))
             log(f"pending against {cfg.calls.name}: {pend} = {sum(pend.values())} new calls")
+        if cfg.answerer is QWEN:
+            store = exi.Store(cfg.calls) if cfg.calls.exists() else None
+            over = over_window(cfg, store, plans, gen)
+            log(f"checkpoints over the Qwen window: { {a: len(v) for a, v in over.items()} }")
+            if n_failed := len(recorded_failures(cfg)):
+                log(f"recorded failures, skipped unless --retry-failed: {n_failed}")
+            probe, full = largest_inputs(cfg, store, plans, gen)
+            if probe is not None:
+                log(f"largest Nemo probe-generation prompt: {probe[0]} ({probe[1]} Nemo tokens)")
+            if full is not None:
+                log(f"largest queued Qwen full answer prompt: {full[0]} ({full[1]} Qwen tokens)")
         return
     if args.calibrate:
         calibrate(cfg, plans)
@@ -617,23 +1331,32 @@ def main() -> None:
         dry_run(cfg, plans)
         return
     store = exi.Store(cfg.calls)
+    # A --labels pilot's report covers a few transcripts; it must not replace the full one.
+    local_report = cfg.out / f"{cfg.prefix}{'labels_' if args.labels else ''}report.md"
     if args.report:
-        text = report(cfg, store, plans, gen)
-        cfg.report.write_text(text, encoding="utf-8")
-        (cfg.out / "report.md").write_text(text, encoding="utf-8")
+        text = write_report(cfg, store, plans, gen)
+        if not args.labels:
+            cfg.report.write_text(text, encoding="utf-8")
+        local_report.write_text(text, encoding="utf-8")
         print(text, flush=True)
         return
     if total > max_calls and not cfg.calls.exists():
         raise SystemExit(f"planned {total} calls exceeds --max-calls {max_calls}")
-    guard = dl.Guard(max_calls)
-    rt = exi.Runtime(store, guard.runner, cfg.out / "failures.jsonl", workers=args.workers)
+    guard: dl.Guard | LocalGuard = (
+        LocalGuard(max_calls) if cfg.answerer.cli == "mlx" else dl.Guard(max_calls)
+    )
+    failures = cfg.out / f"{cfg.prefix}failures.jsonl"
+    rt = exi.Runtime(store, guard.runner, failures, workers=workers)
     rt.sleep = dl.guarded_sleep
     rt.log = lambda m: print(m, flush=True)
+    skip = frozenset() if cfg.answerer is not QWEN or args.retry_failed else resume_skip(cfg)
     try:
-        run_all(cfg, rt, plans, gen)
+        run_all(cfg, rt, plans, gen, skip)
     finally:
-        text = report(cfg, store, plans, gen)
-        (cfg.out / "report.md").write_text(text, encoding="utf-8")
+        text = write_report(cfg, store, plans, gen)
+        local_report.write_text(text, encoding="utf-8")
+        if cfg.answerer is QWEN and not args.labels:
+            cfg.report.write_text(text, encoding="utf-8")
         print(text, flush=True)
         log(
             f"DONE: {rt.new_calls} new calls, {rt.failed} failed, runner invocations "

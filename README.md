@@ -114,6 +114,70 @@ Registration, timeouts and command install are in
 the adapters were tested against Claude Code 2.1.296 and codex-cli 0.158.0, and a newer CLI
 still forks, with a warning.
 
+### Continuous compaction for local models
+
+`loosy-goose proxy` is a localhost proxy that sits between an agent and a local model server
+that speaks the chat API format local servers speak (mlx_lm.server, Ollama, LM Studio,
+llama.cpp's server). Every `POST /v1/chat/completions` is compacted continuously, in freeze
+mode (see [Continuous compaction](#continuous-compaction-2026-11-16) for why this mode): each
+4k-token chunk is compressed once as it ages out of a verbatim recent tail of at least 4k tokens,
+and never touched again, so the prompt prefix stays cacheable. Every other `/v1/` path is
+forwarded unchanged.
+
+```
+uv sync --extra embed --extra proxy
+uv run loosy-goose proxy --upstream http://127.0.0.1:8080 --window 32768
+# then point the agent's base URL at http://127.0.0.1:8765/v1
+```
+
+Quick start with `mlx_lm.server` on Apple silicon (the commands the live test runs):
+
+```
+uv sync --extra embed --extra proxy --extra slot
+uv run mlx_lm.server --model Qwen/Qwen3-4B-MLX-4bit --port 8080 \
+  --chat-template-args '{"enable_thinking": false}' --prompt-cache-bytes 1073741824
+uv run loosy-goose proxy --upstream http://127.0.0.1:8080   # second terminal
+```
+
+Cap `--prompt-cache-bytes`: the server's default prompt cache is unbounded, and on a 16 GB Mac
+it ran out of Metal memory around 10k-token prompts. `uv run pytest -m live -s tests/test_proxy_live.py`
+runs a 12-turn loop through both (opt-in, needs the GPU).
+
+| Flag | Meaning |
+| --- | --- |
+| `--upstream URL` | the local server's base URL, without `/v1` (required); a URL ending in `/v1` is rejected, not rewritten |
+| `--port N` | listen port, default 8765 |
+| `--host H` | bind address, default `127.0.0.1`; anything that is not loopback is refused |
+| `--window N` | the model's context window in tokens; enables decay of older chunks near it |
+| `--start-at F` | pass requests through untouched until they exceed F × `--window` (needs `--window`); default 0, freeze from the first turn, because a gated start measured no different (−0.001) in the [open-weight replay](#open-weight-replay-of-continuous-compaction-2026-11-17-to-11-22) |
+| `--state-dir PATH` | per-conversation state, default `~/.cache/loosy-goose/continuous/` |
+
+What it does and does not do:
+
+- Compacted requests carry a header line saying the earlier part was compressed extractively,
+  folded into the following user message when there is one. Nothing is rewritten silently.
+- A conversation is identified by its system messages and first user message. Its frozen chunks
+  are stored as one JSON file in the state dir, which holds conversation text: the dir is
+  set to mode 0700 (an existing one is tightened; POSIX only, Windows relies on the user profile's ACLs), and files untouched for 7 days are deleted when the proxy starts.
+  Editing earlier history discards the chunks from the edit on.
+  Known limitation: two conversations that start with the same system messages and the same
+  first user message share one state file. The output stays correct, because a chunk is reused
+  only when its source messages match, but each conversation discards the other's chunks and
+  recompresses, so neither keeps a stable prefix while both are active.
+- Requests for the same conversation are compacted one at a time; compaction runs off the
+  event loop.
+- `Authorization` and every other end-to-end request header are passed to the upstream; `Host`,
+  `Content-Length` and the hop-by-hop headers are not. Message content and header values are
+  never logged, and the access log is off, since paths and query strings can carry keys.
+- A request whose body is not a chat request, or whose conversation needs no compaction yet, is
+  forwarded byte for byte.
+- Responses, streamed or not, are relayed as they arrive, with the upstream's status, headers
+  and bytes.
+- Only `Host` values `127.0.0.1`, `localhost` and `[::1]` (any port) are served; anything else
+  gets 403, so a web page that rebinds its own domain to 127.0.0.1 cannot reach the proxy.
+- Passthrough paths that would leave `/v1/` once decoded (an encoded `..`, `?`, `#` or `\`) get
+  404. `--host localhost` binds `127.0.0.1`.
+
 ## How it works
 
 The design borrows the shape of an image codec. A transcript is split into units, a transform
@@ -259,6 +323,7 @@ against a 20,236-token earlier stretch.
 | 2026-10-23 | Falsification | Three pre-registered tests before retiring the idea (user) | Niche found: no-frontier-model compaction |
 | 2026-11-15/16 | Local size curve | Qwen3 1.7B → 4B → 8B local summaries | Gap to loosy barely narrows (0.26–0.32 at 8B) |
 | 2026-11-16 | Continuous compaction | Run loosy after every turn instead of at a threshold; user picked recompute vs freeze, a replay pilot, no full-context probe filter, then a decaying (recency-biased) arm | Pilot: freeze within 0.03 of `/compact`-style at ~20% fewer uncached tokens; recompute loses; per-chunk budget ablation negative. Scaled run (set F): threshold summary dominates on accuracy and cache cost; decay is null. No frontier model: continuous loosy beats threshold loosy by +0.04 (p ≈ 0.02) |
+| 2026-11-17/22 | Open-weight replay | Set F with Qwen3-8B answering and Mistral-Nemo grading, no closed model (user) | Freeze matches full context (−0.004) and beats Qwen self-summary by +0.11 |
 
 ### Origin: compress text the way JPEG compresses pixels
 
@@ -491,6 +556,54 @@ So the best way to use loosy in its niche (offline, free, deterministic, no fron
 continuously, in freeze mode, not as a drop-in `/compact`. The shipped `/loosy` handoff is
 threshold-style today; adding a continuous mode is an open product decision (see Future research).
 
+### Open-weight replay of continuous compaction (2026-11-17 to 11-22)
+
+The no-frontier result above still used Claude models to answer and grade. The user asked for the
+same comparison with no closed model anywhere, which is the setting the feature is for. Set F
+was replayed with local Qwen3-8B (4-bit MLX) answering, Mistral-Nemo-12B writing and grading
+the probes, and a new arm, `qthresh`: threshold compaction where Qwen summarises its own
+history. Every call ran on one 16 GB Mac, so these numbers stand alone and are not comparable
+with the Claude-answered tables.
+[Results](docs/results/exp_continuous_qwen.md); spec and running log:
+[2026-11-17-continuous-local-design.md](docs/superpowers/specs/2026-11-17-continuous-local-design.md).
+
+| arm | accuracy | context tokens/turn | uncached tokens/turn |
+| --- | --- | --- | --- |
+| full (15 of 75 checkpoints over Qwen's 32k window) | 0.717 | 18.8k | 0.96k |
+| freeze, size-matched (continuous loosy) | 0.710 | 12.4k | 1.52k |
+| freeze, gated start | 0.710 | 12.7k | 1.57k |
+| threshold loosy | 0.677 | 12.5k | 1.52k |
+| threshold Qwen self-summary (`qthresh`) | 0.595 | 11.8k | 1.19k |
+
+All 359 answered checkpoints are graded, so the pairs between compacted arms cover 24–25 of the
+25 transcripts. The full row averages only the 14 transcripts whose three checkpoints all fit
+the window; the comparisons against full below pair per checkpoint over all 25. Every row kept
+its sign and size across the interim reports (n = 13–14, 18–20, 21–23).
+
+- **Freeze matches full context.** −0.004 per checkpoint (p = 0.65) at about a third fewer
+  tokens per turn, and it never overflowed the window, which full context did on 15 checkpoints.
+- **Freeze beats Qwen's own summaries by +0.113** (p < 0.001, n = 24). The self-summary arm
+  falls to about 0.53 from the 75% point on. This reverses the Sonnet result on the same set,
+  where the threshold summary led: a small open-weight model summarising itself loses more
+  than extractive selection does.
+- **Freeze beats threshold loosy by +0.034** (p = 0.007, n = 25), close to the +0.041 measured
+  with Claude answering.
+- **Gating the start changes nothing** (−0.001, p = 1.0), so the feature freezes from the first
+  turn (user's call, 2026-11-22).
+
+How the run got there is part of the result. Nemo ignored JSON-only instructions until its
+reply was prefilled with the opening of the object; greedy retries repeat themselves, so
+retries sample; and Nemo grades an `UNKNOWN` answer with the label `UNKNOWN`, which the user
+ruled is read as wrong. Validators stayed strict throughout.
+
+**Prefill latency (three transcripts).** Replaying each arm's context stream through Qwen3-8B
+with a prompt cache, the three compacted arms cost about the same per turn: 2.6–2.9 s on the 86
+turns all of them timed. The order between arms changes from transcript to transcript, so no
+arm is shown to be faster. The self-summary arm prefills about 13% fewer new tokens per turn;
+freeze is the only arm that fit Qwen's window on every turn. A first replay was discarded
+because another GPU job overlapped it and made the same turns five to seven times slower.
+[Results](docs/results/exp_continuous_latency.md).
+
 ## Methodology and lessons learned
 
 - **Proxies ranked variants backwards, twice.** Offline string-match survival ordered the
@@ -566,10 +679,9 @@ fresh held-out set, a non-summarising probe writer, and a fixed call cap.
 8. **Personalisation prior.** A background prior built from a user's own sessions to stabilise
    small-context SVD was in the original design and never built. Test: a prior from held-out
    sessions, measured on proxies and then downstream.
-9. **Continuous freeze mode in the product.** Measured as the better no-frontier policy above.
-   Open: how to run it in a live agent (a per-turn hook, or a proxy between agent and model) and
-   whether live task success agrees with the replay. Test: live SWE-Gym runs with freeze vs
-   threshold loosy vs `/compact`.
+9. **Continuous freeze mode on live tasks.** Measured as the better no-frontier policy above and
+   built as `loosy-goose proxy`. Open: whether live task success agrees with the replay. Test:
+   live SWE-Gym runs through the proxy with freeze vs threshold loosy vs `/compact`.
 10. **Packaging.** A PyPI release (with the CUDA-torch problem for plain pip users solved) and a
    Claude Code plugin/marketplace entry.
 

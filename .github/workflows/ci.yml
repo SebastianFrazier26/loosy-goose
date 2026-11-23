@@ -20,7 +20,7 @@ jobs:
           # Explicit: setup-uv's "auto" skips the cache on tag and release events.
           enable-cache: true
       - run: uv python install 3.12
-      - run: uv sync --dev --extra embed --extra mcp
+      - run: uv sync --dev --extra embed --extra mcp --extra proxy
       # uv's cache does not cover models that sentence-transformers fetches into the HF hub cache.
       - id: hf
         shell: pwsh

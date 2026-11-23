@@ -30,6 +30,10 @@ CONT_VERSION = 1
 DEC_VERSION = 1
 # Covers the threshold-compaction-with-loosy simulation; goes into every tloosy record key.
 TLOOSY_VERSION = 1
+# Covers the Qwen-summarizer threshold simulation; goes into every qthresh record key.
+QTHRESH_VERSION = 1
+# Covers the gated-freeze simulation; goes into every cfrzg record key.
+CFRZG_VERSION = 1
 
 KEEP = LEVELS["medium"]
 FREEZE_TOKENS = 4_000
@@ -38,6 +42,7 @@ SUMMARY_SHARE = 0.33
 CHECKPOINT_SHARES = (0.5, 0.75, 1.0)
 ARMS = ("full", "thresh", "crec", "cfrz")
 F_ARMS = ("full", "thresh", "cfrz", "cfrzm", "cdec", "tloosy")
+Q_ARMS = ("full", "qthresh", "tloosy", "cfrzm", "cfrzg")
 E_SEED = exi.SEED + 4
 E_N = 10
 MIN_THRESH_EVENTS = 2
@@ -52,6 +57,8 @@ FRZM_KEEP = 0.6
 # tloosy's compaction target as a share of the cap C (thresh's is SUMMARY_SHARE); chosen by
 # run.py --calibrate against thresh's real mean context.
 TLOOSY_SHARE = 0.33
+# cfrzg stays equal to full while the whole context is at most this many tokens.
+CFRZG_GATE = 16_000
 
 HEADERS = {
     "full": exi.EARLIER_HEADER["full"],
@@ -69,6 +76,8 @@ HEADERS["cdec"] = (
 )
 
 HEADERS["tloosy"] = HEADERS["cfrz"]
+HEADERS["qthresh"] = HEADERS["thresh"]
+HEADERS["cfrzg"] = HEADERS["cfrz"]
 
 Summarizer = Callable[[int, str, int], str]
 Compressor = exi.Compressor
@@ -441,13 +450,16 @@ def _views(
     frzm_keep: float = FRZM_KEEP,
     tloosy_share: float = TLOOSY_SHARE,
 ) -> Iterator[tuple[int, View, Event | None]]:
-    if arm == "thresh":
+    if arm in ("thresh", "qthresh"):
         yield from _thresh_views(p, summarize)
         return
     if arm == "tloosy":
         yield from _tloosy_views(p, compressor, tloosy_share)
         return
-    freezer = Freezer(p.turns, p.per_turn, compressor, keep=frzm_keep if arm == "cfrzm" else KEEP)
+    freezer = Freezer(
+        p.turns, p.per_turn, compressor, keep=frzm_keep if arm in ("cfrzm", "cfrzg") else KEEP
+    )
+    gate_open = False
     decayer = Decayer(p.turns, p.per_turn, compressor, *dec)
     memo: dict[int, str] = {}
     for t in p.boundaries:
@@ -461,6 +473,13 @@ def _views(
         elif arm == "cdec":
             decayer.advance(tail_from)
             view = View(HEADERS["cdec"], decayer.text(), decayer.upto, tail_from)
+        elif arm == "cfrzg":
+            gate_open = gate_open or p.before[t] > CFRZG_GATE
+            if gate_open:
+                freezer.advance(tail_from)
+                view = View(HEADERS["cfrzg"], freezer.text(), freezer.upto, tail_from)
+            else:
+                view = View(HEADERS["full"], "", 0, tail_from)
         else:
             freezer.advance(tail_from)
             view = View(HEADERS["cfrz"], freezer.text(), freezer.upto, tail_from)

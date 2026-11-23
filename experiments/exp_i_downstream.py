@@ -104,7 +104,7 @@ TASKS: tuple[str, ...] = ("probe", "next")
 GRADE_PROBE_SCORE: dict[str, float] = {"correct": 1.0, "partial": 0.5, "wrong": 0.0}
 GRADE_NEXT_SCORE: dict[str, float] = {"same": 1.0, "partial": 0.5, "different": 0.0}
 
-Cli = Literal["claude", "codex"]
+Cli = Literal["claude", "codex", "mlx"]
 
 
 @dataclass(frozen=True)
@@ -120,7 +120,12 @@ MODELS: tuple[Model, ...] = (
     Model("gpt-6-luna", "codex", "gpt-6-luna"),
     Model("gpt-6-sol", "codex", "gpt-6-sol"),
 )
-MODEL_BY_NAME = {m.name: m for m in MODELS}
+# Kept out of MODELS: the grid loops over MODELS and cli_runner would send an mlx model to codex.
+LOCAL_MODELS: tuple[Model, ...] = (
+    Model("qwen3-8b", "mlx", "Qwen/Qwen3-8B-MLX-4bit"),
+    Model("mistral-nemo-12b", "mlx", "mlx-community/Mistral-Nemo-Instruct-2407-4bit"),
+)
+MODEL_BY_NAME = {m.name: m for m in (*MODELS, *LOCAL_MODELS)}
 # Writes the probes and summaries, grades every answer, and its full-context probe answers are
 # the filter that keeps a probe: one model, so a probe it cannot answer from the full context is
 # a bad probe rather than a compression loss.
@@ -822,7 +827,12 @@ def call_with_retry(
 ) -> tuple[CallResult, int]:
     """Usage-limit and rate errors back off exponentially up to ~30 min and keep trying; other
     errors and invalid replies get a few quick retries. Raises CallFailedError when out of
-    attempts — the caller logs it and moves on, and a rerun picks the key up again."""
+    attempts — the caller logs it and moves on, and a rerun picks the key up again. Local `mlx`
+    models decode greedily, so a retry would repeat the same reply: they get one attempt for
+    non-transient errors and invalid replies (2026-11-17), unless the prompt object carries its own
+    `max_attempts` and the runner varies the decoding between attempts (local probe_gen,
+    2026-11-21)."""
+    max_other = getattr(prompt, "max_attempts", 1 if model.cli == "mlx" else MAX_OTHER_ATTEMPTS)
     transient = other = 0
     delay = BACKOFF_START_S
     while True:
@@ -836,13 +846,13 @@ def call_with_retry(
                 sleep(delay)
                 delay = min(delay * 2, BACKOFF_MAX_S)
                 continue
-            if not exc.transient and other + 1 < MAX_OTHER_ATTEMPTS:
+            if not exc.transient and other + 1 < max_other:
                 other += 1
                 sleep(10.0)
                 continue
             raise CallFailedError(str(exc)) from exc
         if validate is not None and not validate(result.text):
-            if other + 1 < MAX_OTHER_ATTEMPTS:
+            if other + 1 < max_other:
                 other += 1
                 continue
             raise CallFailedError(f"invalid reply after {attempts} attempts: {result.text[:200]!r}")
