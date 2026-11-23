@@ -293,3 +293,14 @@ its own code.
     resume. Not yet exercised on the GPU: only the option plumbing is unit-tested.
   - **`--max-calls` halt.** A budget halt was written to the failures file and then skipped by the next resume, which would
     drop the rest of a phase. `run.resume_skip` leaves halted keys out; the test failed before the fix.
+- **2026-11-22 (21:35) — full latency replay and probe-option smoke test (user: run both).**
+  - **Replay.** `latency.py --set F --n 3`, idle GPU, 13 minutes, written to `latency_full_2026-11-22.json`. Common-turn means
+    over 86 turns: qthresh 2.63 s, tloosy 2.92 s, cfrzm 2.75 s; new tokens per turn 1,514 / 1,754 / 1,750. Per transcript
+    the order changes (cfrzm fastest on row118, slowest on row119), so the arms are not separable on prefill time. Row118
+    repeated within 11% of the diagnostic. The latency claim is now: about equal cost, qthresh prefills 13% fewer tokens,
+    and only cfrzm fits the window on every turn. n = 3, no interval.
+  - **Smoke test.** One Nemo probe-writing call on synthetic text with `ProbeGenOptions(max_tokens=300,
+    repetition_penalty=1.1)`: 9.5 s, 62 tokens out, 3 valid probes on the first attempt. This shows the option path runs; it
+    does not measure whether the penalty removes the 1,536-token loops, which needs a segment that loops without it.
+  - **Install line.** `CLAUDE.md` now lists `--extra slot`: a `uv sync` without it uninstalled mlx-lm and spaCy during the
+    merge (restored at once).

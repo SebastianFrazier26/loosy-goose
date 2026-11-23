@@ -592,12 +592,13 @@ reply was prefilled with the opening of the object; greedy retries repeat themse
 retries sample; and Nemo grades an `UNKNOWN` answer with the label `UNKNOWN`, which the user
 ruled is read as wrong. Validators stayed strict throughout.
 
-**Prefill latency (one transcript, diagnostic).** Replaying one transcript's context stream
-through Qwen3-8B with a prompt cache, the three compacted arms cost about the same per turn:
-2.7–3.2 s on the 38 turns all of them timed, with freeze prefilling slightly more new tokens
-on shorter contexts. No arm is shown to be faster. A first replay was discarded because another
-GPU job overlapped it and made the same workload six to nine times slower; the 3-transcript
-replay has not been rerun. [Results](docs/results/exp_continuous_latency.md).
+**Prefill latency (three transcripts).** Replaying each arm's context stream through Qwen3-8B
+with a prompt cache, the three compacted arms cost about the same per turn: 2.6–2.9 s on the 86
+turns all of them timed. The order between arms changes from transcript to transcript, so no
+arm is shown to be faster. The self-summary arm prefills about 13% fewer new tokens per turn;
+freeze is the only arm that fit Qwen's window on every turn. A first replay was discarded
+because another GPU job overlapped it and made the same turns five to seven times slower.
+[Results](docs/results/exp_continuous_latency.md).
 
 ## Methodology and lessons learned
 

@@ -8,9 +8,11 @@ Read [docs/DESIGN.md](docs/DESIGN.md) before changing the algorithm and
 
 ## Commands
 
-- `uv sync --dev --extra embed --extra mcp --extra proxy` — install (Python 3.12 pinned via `.python-version`). The CLI
+- `uv sync --dev --extra embed --extra mcp --extra proxy --extra slot` — install (Python 3.12 pinned via `.python-version`). The CLI
   alone needs `uv sync --extra embed`; the experiments also need the dev group, which carries
-  scikit-learn (TF-IDF baselines)
+  scikit-learn (TF-IDF baselines).
+  `uv sync` removes anything outside the extras it is given: `slot` carries mlx-lm and spaCy, which
+  the local-model experiments need, so leaving it off uninstalls them
 - `uv run pytest` — tests
 - `uv run loosy-goose-mcp` — the MCP server on stdio
 - `uv run loosy-goose proxy --upstream http://127.0.0.1:8080 [--window N --start-at F]` — localhost continuous-compaction proxy (`proxy` + `embed` extras)
