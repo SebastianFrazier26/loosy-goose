@@ -269,3 +269,27 @@ its own code.
   - **Reading.** Same as the interim entries: freeze is level with full context, ahead of threshold loosy, and well ahead of
     Qwen's self-summary, which drops to about 0.53 from the 75% checkpoint on. The freeze - tloosy gap narrowed from the
     interim +0.043 to +0.034 as the last transcripts came in. Still open: the latency rerun.
+- **2026-11-22 (21:09) — latency diagnostic on an idle GPU (user: one transcript first).**
+  - **Run.** `latency.py --labels swe-gym_row118` at chunk 2,048 and 512, three arms, about 7 minutes each, no other model job
+    on the GPU. Results: `docs/results/exp_continuous_latency.md`.
+  - **Finding.** Timings are stable and the contention explanation holds. Totals were 113 / 144 / 140 s (qthresh / tloosy /
+    cfrzm) against 696 / 1,269 / 1,500 s in the discarded run. Small turns took 0.2-2.0 s, throughput 510-640 tokens/s, the
+    two chunk sizes agree within 10%, and peak MLX memory was 8.0-8.9 GB at both, so chunk size is not the lever and memory
+    alone did not cause the slow turns.
+  - **Fair table.** `latency.table` now also averages over the boundaries every arm timed (38 here). Common-turn means:
+    qthresh 2.78 s, tloosy 3.18 s, cfrzm 2.65 s at chunk 2,048; 2.81 / 2.93 / 2.75 s at 512. The arms are not separable.
+  - **Not done.** The 3-transcript replay was launched next and the launch was refused by the session's permission system,
+    so the latency claim stays a one-transcript diagnostic.
+- **2026-11-22 — owner decisions and follow-ups.**
+  - **One branch.** `feat/continuous-proxy` merged into `feat/continuous-local` (CHANGELOG conflict: both sides kept, date
+    order). Gates on the merge: 1,389 passed, 1 skipped; ruff and mypy clean.
+  - **Proxy choices confirmed by the owner (keep both).** `--upstream` ending in `/v1` is rejected, not rewritten. A missing
+    `embed` extra fails when the proxy starts, not on the first request. Rejected: silently normalising the URL; loading the
+    embedding model lazily.
+  - **`start_at`.** The README example no longer passes `--start-at 0.5`; the default is 0 (no gate), as ruled.
+  - **Probe-writing limits (owner: add it).** `--probe-max-tokens` and `--probe-repetition-penalty`
+    (`local.ProbeGenOptions`) apply to local probe generation only. Off by default, so `probes.nemo4` reproduces. They
+    change what Nemo writes without changing the probe key, so they are for a fresh set or a new probe version, never a
+    resume. Not yet exercised on the GPU: only the option plumbing is unit-tested.
+  - **`--max-calls` halt.** A budget halt was written to the failures file and then skipped by the next resume, which would
+    drop the rest of a phase. `run.resume_skip` leaves halted keys out; the test failed before the fix.

@@ -126,7 +126,7 @@ forwarded unchanged.
 
 ```
 uv sync --extra embed --extra proxy
-uv run loosy-goose proxy --upstream http://127.0.0.1:8080 --window 32768 --start-at 0.5
+uv run loosy-goose proxy --upstream http://127.0.0.1:8080 --window 32768
 # then point the agent's base URL at http://127.0.0.1:8765/v1
 ```
 
@@ -145,11 +145,11 @@ runs a 12-turn loop through both (opt-in, needs the GPU).
 
 | Flag | Meaning |
 | --- | --- |
-| `--upstream URL` | the local server's base URL, without `/v1` (required) |
+| `--upstream URL` | the local server's base URL, without `/v1` (required); a URL ending in `/v1` is rejected, not rewritten |
 | `--port N` | listen port, default 8765 |
 | `--host H` | bind address, default `127.0.0.1`; anything that is not loopback is refused |
 | `--window N` | the model's context window in tokens; enables decay of older chunks near it |
-| `--start-at F` | pass requests through untouched until they exceed F × `--window` (needs `--window`) |
+| `--start-at F` | pass requests through untouched until they exceed F × `--window` (needs `--window`); default 0, freeze from the first turn, because a gated start measured no different (−0.001) in the [open-weight replay](#open-weight-replay-of-continuous-compaction-2026-11-17-to-11-22) |
 | `--state-dir PATH` | per-conversation state, default `~/.cache/loosy-goose/continuous/` |
 
 What it does and does not do:
@@ -590,9 +590,14 @@ its sign and size across the interim reports (n = 13–14, 18–20, 21–23).
 How the run got there is part of the result. Nemo ignored JSON-only instructions until its
 reply was prefilled with the opening of the object; greedy retries repeat themselves, so
 retries sample; and Nemo grades an `UNKNOWN` answer with the label `UNKNOWN`, which the user
-ruled is read as wrong. Validators stayed strict throughout. A prefill-latency replay was run
-once and its timings were discarded: another GPU job overlapped it and the same workload
-varied 7× in speed. Accuracy does not depend on timing; the latency table waits for an idle GPU.
+ruled is read as wrong. Validators stayed strict throughout.
+
+**Prefill latency (one transcript, diagnostic).** Replaying one transcript's context stream
+through Qwen3-8B with a prompt cache, the three compacted arms cost about the same per turn:
+2.7–3.2 s on the 38 turns all of them timed, with freeze prefilling slightly more new tokens
+on shorter contexts. No arm is shown to be faster. A first replay was discarded because another
+GPU job overlapped it and made the same workload six to nine times slower; the 3-transcript
+replay has not been rerun. [Results](docs/results/exp_continuous_latency.md).
 
 ## Methodology and lessons learned
 
@@ -669,10 +674,9 @@ fresh held-out set, a non-summarising probe writer, and a fixed call cap.
 8. **Personalisation prior.** A background prior built from a user's own sessions to stabilise
    small-context SVD was in the original design and never built. Test: a prior from held-out
    sessions, measured on proxies and then downstream.
-9. **Continuous freeze mode in the product.** Measured as the better no-frontier policy above.
-   Open: how to run it in a live agent (a per-turn hook, or a proxy between agent and model) and
-   whether live task success agrees with the replay. Test: live SWE-Gym runs with freeze vs
-   threshold loosy vs `/compact`.
+9. **Continuous freeze mode on live tasks.** Measured as the better no-frontier policy above and
+   built as `loosy-goose proxy`. Open: whether live task success agrees with the replay. Test:
+   live SWE-Gym runs through the proxy with freeze vs threshold loosy vs `/compact`.
 10. **Packaging.** A PyPI release (with the CUDA-torch problem for plain pip users solved) and a
    Claude Code plugin/marketplace entry.
 
