@@ -79,12 +79,18 @@ def source_sha(messages: Sequence[Mapping[str, Any]]) -> str:
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 
-def conversation_id(messages: Sequence[Mapping[str, Any]]) -> str:
+def conversation_id(messages: Sequence[Mapping[str, Any]], session: str | None = None) -> str:
     """Identity of a conversation across requests: its leading system messages and first user
-    message, which later turns only ever append after."""
+    message, which later turns only ever append after, scoped by a client-chosen session id
+    when one is given. Two conversations with the same opening are told apart only by that id."""
     first_user = next((m for m in messages if m.get("role") == "user"), None)
+    key: list[Any] = [list(messages[: system_prefix(messages)]), first_user]
+    # Appended only when given, so ids without a session match state files written before
+    # sessions existed.
+    if session is not None:
+        key.append(session)
     canon = json.dumps(
-        [list(messages[: system_prefix(messages)]), first_user],
+        key,
         sort_keys=True,
         ensure_ascii=False,
         separators=(",", ":"),

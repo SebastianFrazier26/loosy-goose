@@ -46,6 +46,10 @@ _HOP_BY_HOP = frozenset(
 # Host-header allowlist: a DNS-rebinding page reaches a loopback port with its own Host name.
 _ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "[::1]"})
 _LOOPBACK_ORIGIN_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+# Addressed to the proxy, never forwarded. Visible ASCII only, so the value cannot smuggle a
+# separator into anything that prints or hashes it.
+SESSION_HEADER = "x-loosy-goose-session"
+_SESSION = re.compile(r"[\x21-\x7e]{1,128}")
 _METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
 
 
@@ -157,7 +161,7 @@ def create_app(
 
     async def forward(request: Request, path: str, content: bytes) -> Response:
         in_headers = request.headers.items()
-        drop = _drop_set(in_headers) | {"host", "content-length"}
+        drop = _drop_set(in_headers) | {"host", "content-length", SESSION_HEADER}
         url = httpx.URL(base + path)
         if query := request.scope.get("query_string"):
             url = url.copy_with(query=query)
@@ -215,6 +219,17 @@ def create_app(
             return JSONResponse(
                 {"error": {"message": "loosy-goose: content-type must be application/json"}}, 415
             )
+        sessions = request.headers.getlist(SESSION_HEADER)
+        if len(sessions) > 1 or not all(_SESSION.fullmatch(v) for v in sessions):
+            return JSONResponse(
+                {
+                    "error": {
+                        "message": f"loosy-goose: {SESSION_HEADER} must be one value of 1-128 "
+                        "visible ASCII characters"
+                    }
+                },
+                400,
+            )
         raw = await request.body()
         try:
             body = json.loads(raw)
@@ -230,7 +245,7 @@ def create_app(
             return JSONResponse(
                 {"error": {"message": "loosy-goose: request body is not valid unicode"}}, 400
             )
-        cid = conversation_id(msgs)
+        cid = conversation_id(msgs, sessions[0] if sessions else None)
         lock = locks.get(cid)
         if lock is None:
             lock = locks[cid] = asyncio.Lock()

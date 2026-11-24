@@ -497,3 +497,10 @@ def test_unmatched_tool_id_stays_with_its_assistant_at_cuts() -> None:
         assert rest == msgs[len(msgs) - len(rest) :]
         assert rest[0]["role"] != "tool"
         assert all(msgs[ch.span[1]]["role"] != "tool" for ch in c.chunks)
+
+
+def test_conversation_id_scoped_by_session() -> None:
+    full = _messages(40)
+    ids = {conversation_id(full), conversation_id(full, "a"), conversation_id(full, "b")}
+    assert len(ids) == 3
+    assert conversation_id(full[:10], "a") == conversation_id(full, "a")
