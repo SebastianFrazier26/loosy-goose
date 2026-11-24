@@ -156,18 +156,21 @@ What it does and does not do:
 
 - Compacted requests carry a header line saying the earlier part was compressed extractively,
   folded into the following user message when there is one. Nothing is rewritten silently.
-- A conversation is identified by its system messages and first user message. Its frozen chunks
+- A conversation is identified by its system messages and first user message, scoped by the
+  `X-Loosy-Goose-Session` request header when the client sends one. Its frozen chunks
   are stored as one JSON file in the state dir, which holds conversation text: the dir is
   set to mode 0700 (an existing one is tightened; POSIX only, Windows relies on the user profile's ACLs), and files untouched for 7 days are deleted when the proxy starts.
   Editing earlier history discards the chunks from the edit on.
-  Known limitation: two conversations that start with the same system messages and the same
-  first user message share one state file. The output stays correct, because a chunk is reused
-  only when its source messages match, but each conversation discards the other's chunks and
-  recompresses, so neither keeps a stable prefix while both are active.
+  Two conversations that start with the same system messages and the same first user message
+  are kept apart only by that header: send a distinct value per conversation (1 to 128 visible
+  ASCII characters; a malformed or repeated header gets 400). Without it they share one state
+  file. The output stays correct either way, because a chunk is reused only when its source
+  messages match, but sharing conversations discard each other's chunks and recompress, so
+  neither keeps a stable prefix while both are active.
 - Requests for the same conversation are compacted one at a time; compaction runs off the
   event loop.
 - `Authorization` and every other end-to-end request header are passed to the upstream; `Host`,
-  `Content-Length` and the hop-by-hop headers are not. Message content and header values are
+  `Content-Length`, `X-Loosy-Goose-Session` and the hop-by-hop headers are not. Message content and header values are
   never logged, and the access log is off, since paths and query strings can carry keys.
 - A request whose body is not a chat request, or whose conversation needs no compaction yet, is
   forwarded byte for byte.

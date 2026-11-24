@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from loosy_goose.cli import main  # noqa: E402
 from loosy_goose.continuous import HEADER, ContinuousConfig, StateStore  # noqa: E402
-from loosy_goose.proxy import create_app, prepare_state_dir  # noqa: E402
+from loosy_goose.proxy import SESSION_HEADER, create_app, prepare_state_dir  # noqa: E402
 from loosy_goose.segment import Segment, segment  # noqa: E402
 from loosy_goose.transcript import Transcript  # noqa: E402
 
@@ -376,3 +376,112 @@ def test_warms_embedding_model_only_without_injected_compressor(
     with _client(tmp_path, Upstream()):
         pass
     assert calls == [1]
+
+
+def _counting_client(tmp_path: Path, upstream: Upstream, calls: list[int]) -> TestClient:
+    def counted(t: Transcript, keep: float) -> list[Segment]:
+        calls.append(1)
+        return keep_every_third(t, keep)
+
+    app = create_app(
+        UPSTREAM,
+        SMALL,
+        StateStore(tmp_path / "state"),
+        transport=httpx.MockTransport(upstream),
+        compress=counted,
+    )
+    return TestClient(app, base_url="http://127.0.0.1:8765")
+
+
+def _same_opening_pair() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    a = _messages(14)
+    b = a[:2] + [{"role": m["role"], "content": str(m["content"]).replace("x", "y")} for m in a[2:]]
+    return a, b
+
+
+def _interleave(
+    tmp_path: Path, sessions: tuple[str, str] | None
+) -> tuple[int, int, list[dict[str, Any]]]:
+    """Compress calls for A's second turn when B, same opening, ran in between, and for the
+    same turn without B; plus what A's second turn sent upstream with B in between."""
+    a, b = _same_opening_pair()
+    ha, hb = ({SESSION_HEADER: s} for s in sessions) if sessions else ({}, {})
+    up = Upstream()
+    calls: list[int] = []
+    with _counting_client(tmp_path / "mixed", up, calls) as c:
+        c.post("/v1/chat/completions", json={"messages": a[:-2]}, headers=ha)
+        c.post("/v1/chat/completions", json={"messages": b[:-2]}, headers=hb)
+        before = len(calls)
+        c.post("/v1/chat/completions", json={"messages": a}, headers=ha)
+        mixed = len(calls) - before
+    sent = json.loads(up.requests[-1].content)["messages"]
+    alone_calls: list[int] = []
+    with _counting_client(tmp_path / "alone", Upstream(), alone_calls) as c:
+        c.post("/v1/chat/completions", json={"messages": a[:-2]}, headers=ha)
+        before = len(alone_calls)
+        c.post("/v1/chat/completions", json={"messages": a}, headers=ha)
+        alone = len(alone_calls) - before
+    return mixed, alone, sent
+
+
+def test_same_opening_conversations_isolated_by_session_header(tmp_path: Path) -> None:
+    mixed, alone, _ = _interleave(tmp_path, ("conv-a", "conv-b"))
+    assert mixed == alone
+    assert len(list((tmp_path / "mixed" / "state").glob("*.json"))) == 2
+
+
+def test_same_opening_conversations_without_header_still_share_state(tmp_path: Path) -> None:
+    mixed, alone, _ = _interleave(tmp_path, None)
+    assert mixed > alone
+    assert len(list((tmp_path / "mixed" / "state").glob("*.json"))) == 1
+
+
+def test_session_isolation_does_not_change_output(tmp_path: Path) -> None:
+    _, _, with_sessions = _interleave(tmp_path / "s", ("conv-a", "conv-b"))
+    _, _, without = _interleave(tmp_path / "n", None)
+    assert with_sessions == without
+
+
+def test_session_header_not_forwarded(tmp_path: Path) -> None:
+    up = Upstream()
+    with _client(tmp_path, up) as c:
+        c.post(
+            "/v1/chat/completions", json={"messages": _messages(12)}, headers={SESSION_HEADER: "s1"}
+        )
+        c.get("/v1/models", headers={SESSION_HEADER: "s1"})
+    assert all(SESSION_HEADER not in r.headers for r in up.requests)
+
+
+@pytest.mark.parametrize("value", ["", "has space", "x" * 129, "café"])
+def test_malformed_session_header_refused(tmp_path: Path, value: str) -> None:
+    up = Upstream()
+    with _client(tmp_path, up) as c:
+        r = c.post(
+            "/v1/chat/completions",
+            json={"messages": _messages(12)},
+            headers=[(SESSION_HEADER.encode(), value.encode("latin-1"))],  # type: ignore[arg-type]
+        )
+    assert r.status_code == 400
+    assert not up.requests
+
+
+def test_repeated_session_header_refused(tmp_path: Path) -> None:
+    up = Upstream()
+    with _client(tmp_path, up) as c:
+        r = c.post(
+            "/v1/chat/completions",
+            json={"messages": _messages(12)},
+            headers=[(SESSION_HEADER, "a"), (SESSION_HEADER, "b")],
+        )
+    assert r.status_code == 400
+    assert not up.requests
+
+
+def test_cross_origin_refused_before_session_checked(tmp_path: Path) -> None:
+    with _client(tmp_path, Upstream()) as c:
+        r = c.post(
+            "/v1/chat/completions",
+            json={"messages": []},
+            headers={"origin": "https://evil.example", SESSION_HEADER: "bad value"},
+        )
+    assert r.status_code == 403
