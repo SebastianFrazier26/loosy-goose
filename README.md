@@ -166,7 +166,9 @@ What it does and does not do:
   ASCII characters; a malformed or repeated header gets 400). Without it they share one state
   file. The output stays correct either way, because a chunk is reused only when its source
   messages match, but sharing conversations discard each other's chunks and recompress, so
-  neither keeps a stable prefix while both are active.
+  neither keeps a stable prefix while both are active. By design the proxy does not guess which
+  conversation a header-less request belongs to: an edit to earlier history and a new
+  conversation with the same opening look the same, so only the client can say.
 - Requests for the same conversation are compacted one at a time; compaction runs off the
   event loop.
 - `Authorization` and every other end-to-end request header are passed to the upstream; `Host`,
