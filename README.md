@@ -161,8 +161,8 @@ uv run loosy-goose proxy --upstream http://127.0.0.1:8080 --window 32768
 
 It binds loopback only, refuses non-local `Host` and cross-origin requests, never logs message
 content, and marks compacted requests with a header line, so nothing is rewritten silently.
-Flags, the state directory and the known limitations are in the
-[writeup](docs/WRITEUP.md#continuous-compaction-for-local-models).
+Flags, the state directory, the optional `X-Loosy-Goose-Session` per-conversation header and
+the known limitations are in the [writeup](docs/WRITEUP.md#continuous-compaction-for-local-models).
 
 ## How it works
 
